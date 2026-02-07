@@ -68,6 +68,7 @@ class CRUDModelConfig(CRUDPlus[ModelConfig]):
                 ModelConfig.supports_vision,
                 ModelConfig.priority,
                 ModelConfig.enabled,
+                ModelConfig.visible,
                 ModelConfig.input_cost_per_1k,
                 ModelConfig.output_cost_per_1k,
             )
@@ -89,6 +90,7 @@ class CRUDModelConfig(CRUDPlus[ModelConfig]):
             select(ModelConfig)
             .options(selectinload(ModelConfig.provider))
             .where(ModelConfig.enabled)
+            .where(ModelConfig.visible)
             .order_by(ModelConfig.priority.desc())
         )
         result = await db.execute(stmt)

@@ -59,9 +59,9 @@ async def anthropic_models(request: Request, db: CurrentSession):
     anthropic_models = []
     for model in models_data:
         anthropic_models.append({
-            'id': model.get('model_name') or model.get('id'),
-            'display_name': model.get('display_name') or model.get('model_name'),
-            'created_at': model.get('created_at', '2024-01-01T00:00:00Z'),
+            'id': model.model_id,
+            'display_name': model.display_name or model.model_id,
+            'created_at': '2024-01-01T00:00:00Z',
             'type': 'model',
         })
     

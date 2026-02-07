@@ -26,6 +26,7 @@ class ModelConfigBase(SchemaBase):
     tpm_limit: int | None = Field(default=None, description='模型 TPM 限制')
     priority: int = Field(default=0, description='优先级(越大越优先)')
     enabled: bool = Field(default=True, description='是否启用')
+    visible: bool = Field(default=True, description='是否对用户可见')
 
 
 class CreateModelConfigParam(ModelConfigBase):
@@ -50,6 +51,7 @@ class UpdateModelConfigParam(SchemaBase):
     tpm_limit: int | None = Field(default=None, description='模型 TPM 限制')
     priority: int | None = Field(default=None, description='优先级(越大越优先)')
     enabled: bool | None = Field(default=None, description='是否启用')
+    visible: bool | None = Field(default=None, description='是否对用户可见')
 
 
 class GetModelConfigDetail(ModelConfigBase):
@@ -79,6 +81,7 @@ class GetModelConfigList(SchemaBase):
     output_cost_per_1k: Decimal = Decimal(0)
     priority: int
     enabled: bool
+    visible: bool
 
 
 class GetAvailableModel(SchemaBase):
@@ -94,3 +97,4 @@ class GetAvailableModel(SchemaBase):
     supports_tools: bool = Field(default=True, description='支持工具调用')
     priority: int = Field(default=0, description='优先级(越大越优先)')
     enabled: bool = Field(default=True, description='是否启用')
+    visible: bool = Field(default=True, description='是否对用户可见')

@@ -40,6 +40,7 @@ class ModelConfig(Base):
     tpm_limit: Mapped[int | None] = mapped_column(default=None, comment='模型 TPM 限制')
     priority: Mapped[int] = mapped_column(default=0, comment='优先级(越大越优先)')
     enabled: Mapped[bool] = mapped_column(default=True, index=True, comment='是否启用')
+    visible: Mapped[bool] = mapped_column(default=True, index=True, comment='是否对用户可见')
 
     # 关系
     provider: Mapped['ModelProvider'] = relationship(init=False, lazy='selectin')

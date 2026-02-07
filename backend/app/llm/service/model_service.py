@@ -97,6 +97,7 @@ class ModelService:
                 supports_tools=m.supports_tools,
                 priority=m.priority,
                 enabled=m.enabled,
+                visible=m.visible,
             )
             for m in models
         ]
