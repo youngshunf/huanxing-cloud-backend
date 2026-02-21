@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from backend.app.llm.api.v1 import api_keys, model_alias, model_groups, models, providers, proxy, rate_limits, usage
+from backend.app.llm.api.v1 import api_keys, images, media_tasks, model_alias, model_groups, models, providers, proxy, rate_limits, usage, videos
 
 from backend.core.conf import settings
 
@@ -31,3 +31,12 @@ v1.include_router(proxy.router, prefix='/proxy', tags=['LLM 代理'])
 
 # 用量统计
 v1.include_router(usage.router, prefix='/usage', tags=['LLM 用量统计'])
+
+# 媒体任务管理
+v1.include_router(media_tasks.router, prefix='/media-tasks', tags=['LLM 媒体任务管理'])
+
+# 图像生成 API
+v1.include_router(images.router, prefix='/proxy/v1/images', tags=['媒体生成 - 图像'])
+
+# 视频生成 API
+v1.include_router(videos.router, prefix='/proxy/v1/videos', tags=['媒体生成 - 视频'])

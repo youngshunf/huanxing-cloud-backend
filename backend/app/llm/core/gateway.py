@@ -295,16 +295,73 @@ class LLMGateway:
 
         log.info(f'[LLM Gateway] 检测到模型别名: {model_name} -> {[m.model_name for m in mapped_models]}')
 
-        # 获取每个模型的供应商信息，过滤掉不可用的
+        # 获取每个模型的供应商信息，过滤掉禁用的（熔断检查留给调用方）
         result = []
         for model in mapped_models:
             provider = await provider_dao.get(db, model.provider_id)
             if provider and provider.enabled:
-                breaker = self._get_circuit_breaker(provider.name)
-                if breaker.allow_request():
-                    result.append((model, provider))
+                result.append((model, provider))
 
         return result, model_name
+
+    async def _resolve_models(
+        self, db: AsyncSession, model_name: str
+    ) -> tuple[list[tuple[ModelConfig, ModelProvider]], str | None]:
+        """
+        统一模型解析：精确匹配 → 别名映射 → 同类型降级
+
+        Returns:
+            (候选模型列表, 原始别名或 None)
+        """
+        models_with_providers: list[tuple[ModelConfig, ModelProvider]] = []
+        original_alias = None
+        first_model_type = None
+        first_model_id = None
+
+        # 第一步：精确匹配 model_config 表
+        model = await model_config_dao.get_by_name(db, model_name)
+        if model and model.enabled:
+            provider = await provider_dao.get(db, model.provider_id)
+            if provider and provider.enabled:
+                breaker = self._get_circuit_breaker(provider.name)
+                if breaker.allow_request():
+                    models_with_providers.append((model, provider))
+                # 即使熔断也记录类型，用于后续降级
+                first_model_type = model.model_type
+                first_model_id = model.id
+
+        # 第二步：别名映射（精确匹配未命中或命中但供应商熔断时）
+        if not models_with_providers:
+            alias_models, original_alias = await self._resolve_model_alias(db, model_name)
+            if alias_models:
+                models_with_providers = alias_models
+                if not first_model_type:
+                    first_model_type = alias_models[0][0].model_type
+                    first_model_id = alias_models[0][0].id
+            elif original_alias and not first_model_type:
+                # 别名存在但所有映射模型不可用，从原始映射中获取类型信息用于降级
+                raw_models = await model_alias_dao.get_mapped_models(db, model_name)
+                if raw_models:
+                    first_model_type = raw_models[0].model_type
+                    first_model_id = raw_models[0].id
+
+        # 第三步：同类型降级（追加 fallback 模型到候选列表末尾）
+        if first_model_type:
+            fallback_models = await self._get_fallback_models(
+                db, first_model_type, first_model_id or 0
+            )
+            existing_ids = {m.id for m, _ in models_with_providers}
+            for m, p in fallback_models:
+                if m.id not in existing_ids:
+                    models_with_providers.append((m, p))
+
+        # 非熔断模型排前面，熔断模型排后面（保持各组内原有顺序）
+        if models_with_providers:
+            models_with_providers.sort(
+                key=lambda mp: 0 if self._get_circuit_breaker(mp[1].name).allow_request() else 1
+            )
+
+        return models_with_providers, original_alias
 
     async def _get_provider(self, db: AsyncSession, provider_id: int) -> ModelProvider:
         """获取供应商"""
@@ -333,9 +390,7 @@ class LLMGateway:
             if model and model.enabled:
                 provider = await provider_dao.get(db, model.provider_id)
                 if provider and provider.enabled:
-                    breaker = self._get_circuit_breaker(provider.name)
-                    if breaker.allow_request():
-                        fallback_models.append((model, provider))
+                    fallback_models.append((model, provider))
 
         return fallback_models
 
@@ -676,24 +731,15 @@ class LLMGateway:
         # 检查用户积分 (LLM 调用前检查)
         await credit_service.check_credits(db, user_id)
 
-        # OpenAI 格式请求直接使用模型名称，不做别名映射
-        model_config = await self._get_model_config(db, request.model)
-        provider = await self._get_provider(db, model_config.provider_id)
+        # 统一模型解析：精确匹配 → 别名映射 → 同类型降级
+        models_with_providers, original_alias = await self._resolve_models(db, request.model)
+        if not models_with_providers:
+            raise ModelNotFoundError(request.model)
 
-        # 获取模型积分费率
+        # 使用第一个可用模型
+        model_config, provider = models_with_providers[0]
         credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
-
-        # 检查熔断器
         breaker = self._get_circuit_breaker(provider.name)
-        if not breaker.allow_request():
-            # 尝试故障转移
-            fallback_models = await self._get_fallback_models(db, model_config.model_type, model_config.id)
-            if not fallback_models:
-                raise ProviderUnavailableError(provider.name)
-            model_config, provider = fallback_models[0]
-            breaker = self._get_circuit_breaker(provider.name)
-            # 更新积分费率
-            credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
 
         # 构建请求参数
         params = self._build_litellm_params(model_config, provider, request)
@@ -819,10 +865,12 @@ class LLMGateway:
                 )
             )
 
+        response_model_name = original_alias or model_config.model_name
+
         return ChatCompletionResponse(
             id=request_id,
             created=int(time.time()),
-            model=model_config.model_name,
+            model=response_model_name,
             choices=choices,
             usage=ChatCompletionUsage(
                 prompt_tokens=input_tokens,
@@ -867,23 +915,16 @@ class LLMGateway:
         # 检查用户积分 (LLM 调用前检查)
         await credit_service.check_credits(db, user_id)
 
-        # OpenAI 格式请求直接使用模型名称，不做别名映射
-        model_config = await self._get_model_config(db, request.model)
-        provider = await self._get_provider(db, model_config.provider_id)
+        # 统一模型解析：精确匹配 → 别名映射 → 同类型降级
+        models_with_providers, original_alias = await self._resolve_models(db, request.model)
+        if not models_with_providers:
+            raise ModelNotFoundError(request.model)
 
-        # 获取模型积分费率
+        # 使用第一个可用模型
+        model_config, provider = models_with_providers[0]
         credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
-
-        # 检查熔断器
+        response_model_name = original_alias or model_config.model_name
         breaker = self._get_circuit_breaker(provider.name)
-        if not breaker.allow_request():
-            fallback_models = await self._get_fallback_models(db, model_config.model_type, model_config.id)
-            if not fallback_models:
-                raise ProviderUnavailableError(provider.name)
-            model_config, provider = fallback_models[0]
-            breaker = self._get_circuit_breaker(provider.name)
-            # 更新积分费率
-            credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
 
         # 构建请求参数
         params = self._build_litellm_params(model_config, provider, request)
@@ -915,7 +956,7 @@ class LLMGateway:
                 chunk_data = ChatCompletionChunk(
                     id=request_id,
                     created=int(time.time()),
-                    model=model_config.model_name,
+                    model=response_model_name,
                     choices=[
                         ChatCompletionChunkChoice(
                             index=0,
@@ -1151,47 +1192,8 @@ class LLMGateway:
         # 检查用户积分
         await credit_service.check_credits(db, user_id)
 
-        # 构建候选模型列表
-        models_with_providers: list[tuple[ModelConfig, ModelProvider]] = []
-        original_alias = None
-        first_model_type = None
-        first_model_id = None
-
-        # 尝试解析模型别名
-        alias_models, original_alias = await self._resolve_model_alias(db, request.model)
-
-        if alias_models:
-            models_with_providers = alias_models
-            first_model_type = alias_models[0][0].model_type
-            first_model_id = alias_models[0][0].id
-            log.info(
-                f'[LLM Gateway] Anthropic 请求使用别名映射: {original_alias} -> '
-                f'{[m.model_name for m, _ in alias_models]}'
-            )
-        else:
-            # 不是别名，获取单一模型
-            model_config = await self._get_model_config(db, request.model)
-            provider = await self._get_provider(db, model_config.provider_id)
-            
-            # 检查熔断器
-            breaker = self._get_circuit_breaker(provider.name)
-            if breaker.allow_request():
-                models_with_providers.append((model_config, provider))
-            
-            first_model_type = model_config.model_type
-            first_model_id = model_config.id
-
-        # 如果有模型类型信息，获取同类型的 fallback 模型
-        if first_model_type:
-            fallback_models = await self._get_fallback_models(
-                db, first_model_type, first_model_id or 0
-            )
-            # 过滤掉已在候选列表中的模型
-            existing_model_ids = {m.id for m, _ in models_with_providers}
-            for model, provider in fallback_models:
-                if model.id not in existing_model_ids:
-                    models_with_providers.append((model, provider))
-
+        # 统一模型解析：精确匹配 → 别名映射 → 同类型降级
+        models_with_providers, original_alias = await self._resolve_models(db, request.model)
         if not models_with_providers:
             raise ProviderUnavailableError(
                 f'No available models for request: {request.model}'
@@ -1327,47 +1329,8 @@ class LLMGateway:
         # 检查用户积分
         await credit_service.check_credits(db, user_id)
         
-        # 构建候选模型列表
-        models_with_providers: list[tuple[ModelConfig, ModelProvider]] = []
-        original_alias = None
-        first_model_type = None
-        first_model_id = None
-
-        # 尝试解析模型别名
-        alias_models, original_alias = await self._resolve_model_alias(db, request.model)
-
-        if alias_models:
-            models_with_providers = alias_models
-            first_model_type = alias_models[0][0].model_type
-            first_model_id = alias_models[0][0].id
-            log.info(
-                f'[LLM Gateway] Anthropic 流式请求使用别名映射: {original_alias} -> '
-                f'{[m.model_name for m, _ in alias_models]}'
-            )
-        else:
-            # 不是别名，获取单一模型
-            model_config = await self._get_model_config(db, request.model)
-            provider = await self._get_provider(db, model_config.provider_id)
-            
-            # 检查熔断器
-            breaker = self._get_circuit_breaker(provider.name)
-            if breaker.allow_request():
-                models_with_providers.append((model_config, provider))
-            
-            first_model_type = model_config.model_type
-            first_model_id = model_config.id
-
-        # 如果有模型类型信息，获取同类型的 fallback 模型
-        if first_model_type:
-            fallback_models = await self._get_fallback_models(
-                db, first_model_type, first_model_id or 0
-            )
-            # 过滤掉已在候选列表中的模型
-            existing_model_ids = {m.id for m, _ in models_with_providers}
-            for model, provider in fallback_models:
-                if model.id not in existing_model_ids:
-                    models_with_providers.append((model, provider))
-
+        # 统一模型解析：精确匹配 → 别名映射 → 同类型降级
+        models_with_providers, original_alias = await self._resolve_models(db, request.model)
         if not models_with_providers:
             raise ProviderUnavailableError(
                 f'No available models for request: {request.model}'
@@ -1471,16 +1434,10 @@ class LLMGateway:
             api_base_url = provider_info.get('api_base_url')
             
             tried_models.append(model_name)
-            
-            # 检查熔断器
+
+            # 获取熔断器（用于记录成功/失败，不做硬跳过）
             breaker = self._get_circuit_breaker(provider_name)
-            if not breaker.allow_request():
-                log.warning(
-                    f'[LLM Gateway] Anthropic 流式跳过熔断模型: {model_name} '
-                    f'(供应商: {provider_name})'
-                )
-                continue
-            
+
             log.info(
                 f'[LLM Gateway] Anthropic 流式故障转移尝试模型: {model_name} '
                 f'(供应商: {provider_name})'

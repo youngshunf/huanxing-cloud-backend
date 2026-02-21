@@ -85,7 +85,8 @@ async def update_api_key(
     request: Request, db: CurrentSession, pk: int, obj: UpdateUserApiKeyParam
 ) -> ResponseSchemaModel:
     user_id = request.user.id
-    await api_key_service.update(db, pk, obj, user_id)
+    is_admin = request.user.is_superuser
+    await api_key_service.update(db, pk, obj, user_id, is_admin)
     return response_base.success()
 
 
@@ -96,5 +97,6 @@ async def update_api_key(
 )
 async def delete_api_key(request: Request, db: CurrentSession, pk: int) -> ResponseSchemaModel:
     user_id = request.user.id
-    await api_key_service.delete(db, pk, user_id)
+    is_admin = request.user.is_superuser
+    await api_key_service.delete(db, pk, user_id, is_admin)
     return response_base.success()

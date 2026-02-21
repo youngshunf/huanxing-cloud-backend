@@ -1,5 +1,6 @@
 """LLM 数据模型模块"""
 
+from backend.app.llm.model.media_task import MediaTask
 from backend.app.llm.model.model_alias import ModelAlias
 from backend.app.llm.model.model_config import ModelConfig
 from backend.app.llm.model.model_group import ModelGroup
@@ -9,6 +10,7 @@ from backend.app.llm.model.usage_log import UsageLog
 from backend.app.llm.model.user_api_key import UserApiKey
 
 __all__ = [
+    'MediaTask',
     'ModelAlias',
     'ModelConfig',
     'ModelGroup',

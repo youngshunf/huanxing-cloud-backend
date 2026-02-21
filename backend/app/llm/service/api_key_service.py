@@ -123,12 +123,13 @@ class ApiKeyService:
         )
 
     @staticmethod
-    async def update(db: AsyncSession, pk: int, obj: UpdateUserApiKeyParam, user_id: int) -> int:
+    async def update(db: AsyncSession, pk: int, obj: UpdateUserApiKeyParam, user_id: int, is_admin: bool = False) -> int:
         """更新 API Key"""
         api_key = await user_api_key_dao.get(db, pk)
         if not api_key:
             raise errors.NotFoundError(msg='API Key 不存在')
-        if api_key.user_id != user_id:
+        # 非管理员只能修改自己的 API Key
+        if not is_admin and api_key.user_id != user_id:
             raise errors.ForbiddenError(msg='无权修改此 API Key')
 
         # 检查速率限制配置是否存在
@@ -140,12 +141,13 @@ class ApiKeyService:
         return await user_api_key_dao.update(db, pk, obj)
 
     @staticmethod
-    async def delete(db: AsyncSession, pk: int, user_id: int) -> int:
+    async def delete(db: AsyncSession, pk: int, user_id: int, is_admin: bool = False) -> int:
         """删除 API Key"""
         api_key = await user_api_key_dao.get(db, pk)
         if not api_key:
             raise errors.NotFoundError(msg='API Key 不存在')
-        if api_key.user_id != user_id:
+        # 非管理员只能删除自己的 API Key
+        if not is_admin and api_key.user_id != user_id:
             raise errors.ForbiddenError(msg='无权删除此 API Key')
         return await user_api_key_dao.delete(db, pk)
 
@@ -271,8 +273,8 @@ class ApiKeyService:
         # 默认限制
         default_limits = {
             'rpm_limit': 60,
-            'daily_token_limit': 1000000,
-            'monthly_token_limit': 10000000,
+            'daily_token_limit': 30000000,      # 日限额：3000万 tokens
+            'monthly_token_limit': 1000000000,  # 月限额：10亿 tokens
         }
 
         # 如果有自定义限制，使用自定义限制

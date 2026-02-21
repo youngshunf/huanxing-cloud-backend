@@ -19,6 +19,10 @@ class CRUDModelConfig(CRUDPlus[ModelConfig]):
     async def get_by_name(self, db: AsyncSession, model_name: str) -> ModelConfig | None:
         return await self.select_model_by_column(db, model_name=model_name)
 
+    async def get_by_name_and_type(self, db: AsyncSession, model_name: str, model_type: str) -> ModelConfig | None:
+        """按模型名称和类型查询"""
+        return await self.select_model_by_column(db, model_name=model_name, model_type=model_type, enabled=True)
+
     async def get_by_provider_and_name(
         self, db: AsyncSession, provider_id: int, model_name: str
     ) -> ModelConfig | None:

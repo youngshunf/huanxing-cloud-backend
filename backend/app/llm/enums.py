@@ -62,3 +62,32 @@ class CircuitState(StrEnum):
     CLOSED = 'CLOSED'
     OPEN = 'OPEN'
     HALF_OPEN = 'HALF_OPEN'
+
+
+class MediaTaskStatus(StrEnum):
+    """媒体任务状态"""
+
+    PENDING = 'pending'
+    PROCESSING = 'processing'
+    COMPLETED = 'completed'
+    FAILED = 'failed'
+
+
+class MediaErrorCode(StrEnum):
+    """媒体生成错误码"""
+
+    CONTENT_POLICY = 'content_policy'
+    RATE_LIMITED = 'rate_limited'
+    QUOTA_EXCEEDED = 'quota_exceeded'
+    INVALID_PARAMS = 'invalid_params'
+    MODEL_UNAVAILABLE = 'model_unavailable'
+    VENDOR_ERROR = 'vendor_error'
+    TIMEOUT = 'timeout'
+    OSS_UPLOAD_FAILED = 'oss_upload_failed'
+
+
+class MediaType(StrEnum):
+    """媒体类型"""
+
+    IMAGE = 'image'
+    VIDEO = 'video'

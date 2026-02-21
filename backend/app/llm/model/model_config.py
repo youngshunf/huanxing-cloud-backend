@@ -42,5 +42,13 @@ class ModelConfig(Base):
     enabled: Mapped[bool] = mapped_column(default=True, index=True, comment='是否启用')
     visible: Mapped[bool] = mapped_column(default=True, index=True, comment='是否对用户可见')
 
+    # === 媒体生成计费字段 ===
+    cost_per_generation: Mapped[Decimal | None] = mapped_column(
+        sa.Numeric(10, 4), default=None, comment='每次生成费用（图像用）'
+    )
+    cost_per_second: Mapped[Decimal | None] = mapped_column(
+        sa.Numeric(10, 4), default=None, comment='每秒费用（视频按时长用）'
+    )
+
     # 关系
     provider: Mapped['ModelProvider'] = relationship(init=False, lazy='selectin')
