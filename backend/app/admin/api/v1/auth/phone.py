@@ -6,7 +6,7 @@ import random
 import string
 
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi_limiter.depends import RateLimiter
+from pyrate_limiter import Duration, Rate
 
 from backend.app.admin.crud.crud_user import user_dao
 from backend.app.admin.model import User
@@ -28,6 +28,7 @@ from backend.common.sms import sms_service
 from backend.core.conf import settings
 from backend.database.db import CurrentSession, CurrentSessionTransaction
 from backend.database.redis import redis_client
+from backend.utils.limiter import RateLimiter
 from backend.utils.timezone import timezone
 
 router = APIRouter()
@@ -46,13 +47,13 @@ def generate_code(length: int = 6) -> str:
     '/send-code',
     summary='发送验证码',
     description='发送手机验证码，用于登录或注册',
-    dependencies=[Depends(RateLimiter(times=1, minutes=1))],  # 每分钟最多发送 1 次
+    dependencies=[Depends(RateLimiter(Rate(1, Duration.MINUTE)))],
 )
 async def send_verification_code(obj: SendCodeParam) -> ResponseSchemaModel[SendCodeResponse]:
     """
     发送手机验证码
 
-    - 每分钟最多发送 1 次（通过 RateLimiter 控制）
+    - 每分钟最多发送 1 次
     - 验证码有效期 5 分钟
     """
     phone = obj.phone
@@ -75,7 +76,8 @@ async def send_verification_code(obj: SendCodeParam) -> ResponseSchemaModel[Send
     '/phone-login',
     summary='手机号登录',
     description='使用手机号和验证码登录，新用户自动注册',
-    dependencies=[Depends(RateLimiter(times=5, minutes=1))],  # 每分钟最多尝试 5 次
+    # 登录限流通过 Redis 在业务层控制
+    dependencies=[Depends(RateLimiter(Rate(5, Duration.MINUTE)))],
 )
 async def phone_login(
     db: CurrentSessionTransaction,
