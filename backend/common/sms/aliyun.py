@@ -39,8 +39,12 @@ class AliyunSmsService:
 
     async def send_code(self, phone: str, code: str) -> bool:
         """发送验证码"""
+        # 开发环境直接打印验证码
+        if settings.ENVIRONMENT == 'dev':
+            print(f'[DEV SMS] {phone} -> {code}')
+            return True
 
-        # 检查配置是否完整
+        # 生产环境检查配置
         if not all([self.access_key_id, self.access_key_secret, self.sign_name, self.template_code]):
             missing = []
             if not self.access_key_id:
