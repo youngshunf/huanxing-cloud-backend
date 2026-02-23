@@ -132,8 +132,8 @@ async def phone_login(
         await db.flush()
         await db.refresh(user)
 
-        # 自动创建 API Key
-        await api_key_service.create_default_key(db, user.id)
+        # 自动创建 API Key（新用户默认为免费用户，Key 有效期 7 天）
+        await api_key_service.create_default_key(db, user.id, is_free_user=True)
 
         # 初始化订阅和赠送积分
         from backend.app.user_tier.service.credit_service import credit_service

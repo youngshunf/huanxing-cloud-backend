@@ -178,7 +178,7 @@ class ApiKeyService:
         if record.expires_at and record.expires_at < timezone.now():
             # 更新状态为过期
             await user_api_key_dao.update(db, record.id, UpdateUserApiKeyParam(status=ApiKeyStatus.EXPIRED))
-            raise errors.AuthorizationError(msg='API Key has expired')
+            raise errors.AuthorizationError(msg='API Key has expired, please upgrade your subscription to continue using the service / API Key 已过期，请升级订阅以继续使用服务')
 
         # 更新最后使用时间
         await user_api_key_dao.update_last_used(db, record.id)
@@ -186,21 +186,27 @@ class ApiKeyService:
         return record
 
     @staticmethod
-    async def create_default_key(db: AsyncSession, user_id: int) -> UserApiKey:
+    async def create_default_key(db: AsyncSession, user_id: int, *, is_free_user: bool = True) -> UserApiKey:
         """
         为用户创建默认 API Key
 
         :param db: 数据库会话
         :param user_id: 用户 ID
+        :param is_free_user: 是否为免费用户，免费用户的 Key 有效期为 7 天
         :return: 创建的 API Key 记录
         """
+        from datetime import timedelta
+
         # 生成 API Key
         full_key, display_prefix = key_encryption.generate_api_key()
         key_hash = key_encryption.hash_key(full_key)
         key_encrypted = key_encryption.encrypt(full_key)
 
+        # 免费用户设置 7 天过期
+        expires_at = timezone.now() + timedelta(days=7) if is_free_user else None
+
         # 创建默认 Key 参数
-        obj = CreateUserApiKeyParam(name='Default Key')
+        obj = CreateUserApiKeyParam(name='Default Key', expires_at=expires_at)
 
         # 创建记录
         api_key = await user_api_key_dao.create(

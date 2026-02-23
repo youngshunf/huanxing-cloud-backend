@@ -1,4 +1,4 @@
-"""年度订阅积分发放定时任务
+"""定时任务：年度订阅积分发放 + API Key 过期检查
 @author Ysf
 """
 
@@ -6,8 +6,10 @@ from datetime import timedelta
 from decimal import Decimal
 
 from celery import shared_task
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, update
 
+from backend.app.llm.enums import ApiKeyStatus
+from backend.app.llm.model.user_api_key import UserApiKey
 from backend.app.user_tier.model import UserSubscription, UserCreditBalance, CreditTransaction
 from backend.app.user_tier.crud.crud_subscription_tier import subscription_tier_dao
 from backend.common.log import log
@@ -135,4 +137,35 @@ async def grant_yearly_subscription_credits() -> str:
     
     result_msg = f'年度订阅积分发放完成: 成功 {granted_count} 个, 失败 {error_count} 个'
     log.info(f'[YearlyGrant] {result_msg}')
+    return result_msg
+
+
+@shared_task(name='check_expired_api_keys')
+async def check_expired_api_keys() -> str:
+    """
+    每日检查并标记过期的 API Key
+
+    查找所有状态为 ACTIVE 但 expires_at < now 的 Key，
+    将其状态更新为 EXPIRED。
+    """
+    now = timezone.now()
+
+    async with async_db_session.begin() as db:
+        # 批量更新过期的 API Key
+        stmt = (
+            update(UserApiKey)
+            .where(
+                and_(
+                    UserApiKey.status == ApiKeyStatus.ACTIVE,
+                    UserApiKey.expires_at.isnot(None),
+                    UserApiKey.expires_at < now,
+                )
+            )
+            .values(status=ApiKeyStatus.EXPIRED)
+        )
+        result = await db.execute(stmt)
+        expired_count = result.rowcount
+
+    result_msg = f'API Key 过期检查完成: {expired_count} 个 Key 已标记为过期'
+    log.info(f'[ExpiredKeyCheck] {result_msg}')
     return result_msg
