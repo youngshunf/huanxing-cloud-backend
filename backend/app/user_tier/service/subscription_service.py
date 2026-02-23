@@ -23,6 +23,7 @@ class SubscriptionService:
         user_id: int,
         new_tier: str,
         subscription_type: str = 'monthly',
+        app_code: str = 'huanxing',
     ) -> None:
         """
         升级用户订阅，并自动续期/激活用户的 API Key
@@ -31,11 +32,17 @@ class SubscriptionService:
         :param user_id: 用户 ID
         :param new_tier: 新的订阅等级 (basic/pro/enterprise)
         :param subscription_type: 订阅类型 (monthly/yearly)
+        :param app_code: 应用标识
         """
         now = timezone.now()
 
         # 1. 更新订阅信息
-        sub_stmt = select(UserSubscription).where(UserSubscription.user_id == user_id)
+        sub_stmt = select(UserSubscription).where(
+            and_(
+                UserSubscription.user_id == user_id,
+                UserSubscription.app_code == app_code,
+            )
+        )
         result = await db.execute(sub_stmt)
         subscription = result.scalar_one_or_none()
 
@@ -85,18 +92,24 @@ class SubscriptionService:
         )
 
     @staticmethod
-    async def downgrade_to_free(db: AsyncSession, user_id: int) -> None:
+    async def downgrade_to_free(db: AsyncSession, user_id: int, app_code: str = 'huanxing') -> None:
         """
         降级用户到免费版，所有活跃 API Key 设置 7 天过期
 
         :param db: 数据库会话
         :param user_id: 用户 ID
+        :param app_code: 应用标识
         """
         now = timezone.now()
         expires_at = now + timedelta(days=7)
 
         # 1. 更新订阅为免费版
-        sub_stmt = select(UserSubscription).where(UserSubscription.user_id == user_id)
+        sub_stmt = select(UserSubscription).where(
+            and_(
+                UserSubscription.user_id == user_id,
+                UserSubscription.app_code == app_code,
+            )
+        )
         result = await db.execute(sub_stmt)
         subscription = result.scalar_one_or_none()
 

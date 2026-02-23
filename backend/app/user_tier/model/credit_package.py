@@ -14,6 +14,7 @@ class CreditPackage(Base):
     __tablename__ = 'credit_package'
 
     id: Mapped[id_key] = mapped_column(init=False)
+    app_code: Mapped[str] = mapped_column(sa.String(32), default='huanxing', comment='应用标识 (huanxing:唤星/zhixiaoya:知小鸦)')
     package_name: Mapped[str] = mapped_column(sa.String(64), default='', comment='积分包名称')
     credits: Mapped[Decimal] = mapped_column(sa.NUMERIC(), default=None, comment='基础积分数量')
     price: Mapped[Decimal] = mapped_column(sa.NUMERIC(), default=None, comment='价格')

@@ -8,6 +8,7 @@ from backend.common.schema import SchemaBase
 
 class UserSubscriptionSchemaBase(SchemaBase):
     """用户订阅基础模型"""
+    app_code: str = 'huanxing'
     user_id: int = Field(description='用户 ID')
     tier: str = Field(description='订阅等级 (free:免费版/basic:基础版/pro:专业版/enterprise:企业版)')
     subscription_type: str = Field(default='monthly', description='订阅类型 (monthly:月度/yearly:年度)')

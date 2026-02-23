@@ -8,6 +8,7 @@ from backend.common.schema import SchemaBase
 
 class CreditTransactionSchemaBase(SchemaBase):
     """积分交易记录基础模型"""
+    app_code: str = 'huanxing'
     user_id: int = Field(description='用户 ID')
     transaction_type: str = Field(description='交易类型 (usage:使用/purchase:购买/refund:退款/monthly_grant:月度赠送/bonus:奖励)')
     credits: Decimal = Field(description='积分变动数量')

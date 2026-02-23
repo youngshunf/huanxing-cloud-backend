@@ -97,6 +97,8 @@ async def chat_completions(
     log.info(f'[Proxy API] 收到 OpenAI 格式请求: /v1/chat/completions, model={body.model}, stream={body.stream}')
     ip_address = _get_client_ip(request)
 
+    app_code = getattr(request.state, 'app_code', 'huanxing')
+
     if body.stream:
         return StreamingResponse(
             gateway_service.chat_completion_stream(
@@ -104,6 +106,7 @@ async def chat_completions(
                 api_key=x_api_key,
                 request=body,
                 ip_address=ip_address,
+                app_code=app_code,
             ),
             media_type='text/event-stream',
             headers={
@@ -118,6 +121,7 @@ async def chat_completions(
         api_key=x_api_key,
         request=body,
         ip_address=ip_address,
+        app_code=app_code,
     )
 
 
@@ -211,6 +215,7 @@ async def anthropic_messages(
     log.info(f"[DEBUG] Proxy received Key: {masked_key}")
     
     ip_address = _get_client_ip(request)
+    app_code = getattr(request.state, 'app_code', 'huanxing')
 
     # 根据是否流式请求选择错误响应函数
     error_response_fn = _anthropic_stream_error_response if body.stream else _anthropic_error_response
@@ -223,6 +228,7 @@ async def anthropic_messages(
                 api_key=x_api_key,
                 request=body,
                 ip_address=ip_address,
+                app_code=app_code,
             )
             # 流式响应不需要数据库
             return StreamingResponse(
@@ -240,6 +246,7 @@ async def anthropic_messages(
             api_key=x_api_key,
             request=body,
             ip_address=ip_address,
+            app_code=app_code,
         )
     except RateLimitExceeded as e:
         log.warning(f'[Proxy API] Anthropic 请求被限流: {e.detail}')

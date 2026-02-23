@@ -25,6 +25,7 @@ from backend.core.path_conf import STATIC_DIR, UPLOAD_DIR
 from backend.database.db import create_tables
 from backend.database.redis import redis_client
 from backend.middleware.access_middleware import AccessMiddleware
+from backend.middleware.app_context_middleware import AppContextMiddleware
 from backend.middleware.i18n_middleware import I18nMiddleware
 from backend.middleware.jwt_auth_middleware import JwtAuthMiddleware
 from backend.middleware.opera_log_middleware import OperaLogMiddleware
@@ -134,6 +135,9 @@ def register_middleware(app: FastAPI) -> None:
     """
     # Opera log
     app.add_middleware(OperaLogMiddleware)
+
+    # App context (解析 X-App-Code)
+    app.add_middleware(AppContextMiddleware)
 
     # State
     app.add_middleware(StateMiddleware)

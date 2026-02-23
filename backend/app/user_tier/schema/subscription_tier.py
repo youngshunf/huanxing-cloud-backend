@@ -8,6 +8,7 @@ from backend.common.schema import SchemaBase
 
 class SubscriptionTierSchemaBase(SchemaBase):
     """订阅等级配置基础模型"""
+    app_code: str = 'huanxing'
     tier_name: str = Field(description='等级标识 (free:免费版/basic:基础版/pro:专业版/enterprise:企业版)')
     display_name: str = Field(description='显示名称')
     monthly_credits: Decimal = Field(description='每月赠送积分')

@@ -15,6 +15,7 @@ class SubscriptionTier(Base):
     __tablename__ = 'subscription_tier'
 
     id: Mapped[id_key] = mapped_column(init=False)
+    app_code: Mapped[str] = mapped_column(sa.String(32), default='huanxing', comment='应用标识 (huanxing:唤星/zhixiaoya:知小鸦)')
     tier_name: Mapped[str] = mapped_column(sa.String(32), default='', comment='等级标识 (free:免费版/basic:基础版/pro:专业版/enterprise:企业版)')
     display_name: Mapped[str] = mapped_column(sa.String(64), default='', comment='显示名称')
     monthly_credits: Mapped[Decimal] = mapped_column(sa.NUMERIC(), default=None, comment='每月赠送积分')

@@ -15,6 +15,7 @@ class UserSubscription(Base):
     __tablename__ = 'user_subscription'
 
     id: Mapped[id_key] = mapped_column(init=False)
+    app_code: Mapped[str] = mapped_column(sa.String(32), default='huanxing', comment='应用标识 (huanxing:唤星/zhixiaoya:知小鸦)')
     user_id: Mapped[int] = mapped_column(sa.BIGINT(), default=0, comment='用户 ID')
     tier: Mapped[str] = mapped_column(sa.String(32), default='', comment='订阅等级 (free:免费版/basic:基础版/pro:专业版/enterprise:企业版)')
     subscription_type: Mapped[str] = mapped_column(sa.String(16), default='monthly', comment='订阅类型 (monthly:月度/yearly:年度)')

@@ -8,6 +8,7 @@ from backend.common.schema import SchemaBase
 
 class ModelCreditRateSchemaBase(SchemaBase):
     """模型积分费率基础模型"""
+    app_code: str = 'huanxing'
     model_id: int = Field(description='模型 ID')
     base_credit_per_1k_tokens: Decimal = Field(description='基准积分费率')
     input_multiplier: Decimal = Field(description='输入倍率')

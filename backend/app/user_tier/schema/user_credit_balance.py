@@ -9,6 +9,7 @@ from backend.common.schema import SchemaBase
 class UserCreditBalanceSchemaBase(SchemaBase):
     """用户积分余额基础模型"""
 
+    app_code: str = 'huanxing'
     user_id: int = Field(description='用户 ID')
     credit_type: str = Field(
         description='积分类型 (monthly:月度赠送:blue/purchased:购买积分:green/bonus:活动赠送:orange)'

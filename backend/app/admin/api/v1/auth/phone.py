@@ -64,6 +64,12 @@ async def send_verification_code(obj: SendCodeParam) -> ResponseSchemaModel[Send
     # 存储到 Redis
     await redis_client.setex(f'{SMS_CODE_PREFIX}:{phone}', SMS_CODE_EXPIRE, code)
 
+    # 开发环境在控制台输出验证码
+    if settings.ENVIRONMENT == 'dev':
+        print(f'\n{"=" * 40}')
+        print(f'📱 验证码 [{phone}]: {code}')
+        print(f'{"=" * 40}\n')
+
     # 发送短信验证码
     success = await sms_service.send_code(phone, code)
     if not success and settings.ENVIRONMENT != 'dev':

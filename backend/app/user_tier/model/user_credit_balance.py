@@ -15,6 +15,7 @@ class UserCreditBalance(Base):
     __tablename__ = 'user_credit_balance'
 
     id: Mapped[id_key] = mapped_column(init=False)
+    app_code: Mapped[str] = mapped_column(sa.String(32), default='huanxing', comment='应用标识 (huanxing:唤星/zhixiaoya:知小鸦)')
     user_id: Mapped[int] = mapped_column(sa.BIGINT(), default=0, comment='用户 ID')
     credit_type: Mapped[str] = mapped_column(
         sa.String(32),

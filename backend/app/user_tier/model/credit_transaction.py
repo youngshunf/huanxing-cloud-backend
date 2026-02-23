@@ -15,6 +15,7 @@ class CreditTransaction(Base):
     __tablename__ = 'credit_transaction'
 
     id: Mapped[id_key] = mapped_column(init=False)
+    app_code: Mapped[str] = mapped_column(sa.String(32), default='huanxing', comment='应用标识 (huanxing:唤星/zhixiaoya:知小鸦)')
     user_id: Mapped[int] = mapped_column(sa.BIGINT(), default=0, comment='用户 ID')
     transaction_type: Mapped[str] = mapped_column(sa.String(32), default='', comment='交易类型 (usage:使用/purchase:购买/refund:退款/monthly_grant:月度赠送/bonus:奖励)')
     credits: Mapped[Decimal] = mapped_column(sa.NUMERIC(), default=None, comment='积分变动数量')

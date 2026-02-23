@@ -138,9 +138,10 @@ async def get_my_subscription_info(
 ) -> ResponseSchemaModel[SubscriptionInfoResponse]:
     """获取订阅信息"""
     user_id = request.user.id
-    
+    app_code = request.state.app_code
+
     # 获取完整的积分信息（包含 balances）
-    info = await credit_service.get_user_credits_info(db, user_id)
+    info = await credit_service.get_user_credits_info(db, user_id, app_code)
     
     # 转换 balances 为 CreditBalanceItem
     balances = [
@@ -193,9 +194,10 @@ async def get_credit_balance_history(
 ) -> ResponseSchemaModel[list[CreditBalanceItem]]:
     """获取历史积分记录"""
     user_id = request.user.id
-    
+    app_code = request.state.app_code
+
     # 获取已过期的积分记录
-    expired_balances = await credit_service.get_user_expired_balances(db, user_id)
+    expired_balances = await credit_service.get_user_expired_balances(db, user_id, app_code)
     
     items = [
         CreditBalanceItem(
@@ -217,20 +219,21 @@ async def get_credit_balance_history(
 
 @router.get(
     '/tiers',
-    summary='获取订阅等级列表',
-    description='获取所有可用的订阅等级',
-    dependencies=[DependsJwtAuth],
+    summary='获取订阅等级列表（公开）',
+    description='获取所有可用的订阅等级，无需登录',
 )
 async def get_subscription_tiers(
+    request: Request,
     db: CurrentSession,
 ) -> ResponseSchemaModel[list[SubscriptionTierItem]]:
     """获取订阅等级列表"""
     from sqlalchemy import select
     from backend.app.user_tier.model import SubscriptionTier
-    
+
+    app_code = request.state.app_code
     stmt = (
         select(SubscriptionTier)
-        .where(SubscriptionTier.enabled == True)
+        .where(SubscriptionTier.enabled == True, SubscriptionTier.app_code == app_code)
         .order_by(SubscriptionTier.sort_order)
     )
     result = await db.execute(stmt)
@@ -255,20 +258,21 @@ async def get_subscription_tiers(
 
 @router.get(
     '/packages',
-    summary='获取积分包列表',
-    description='获取所有可购买的积分包',
-    dependencies=[DependsJwtAuth],
+    summary='获取积分包列表（公开）',
+    description='获取所有可购买的积分包，无需登录',
 )
 async def get_credit_packages(
+    request: Request,
     db: CurrentSession,
 ) -> ResponseSchemaModel[list[CreditPackageItem]]:
     """获取积分包列表"""
     from sqlalchemy import select
     from backend.app.user_tier.model import CreditPackage
-    
+
+    app_code = request.state.app_code
     stmt = (
         select(CreditPackage)
-        .where(CreditPackage.enabled == True)
+        .where(CreditPackage.enabled == True, CreditPackage.app_code == app_code)
         .order_by(CreditPackage.sort_order)
     )
     result = await db.execute(stmt)
@@ -330,9 +334,10 @@ async def calculate_upgrade_price(
 ) -> ResponseSchemaModel[UpgradePriceResult]:
     """计算升级价格"""
     user_id = request.user.id
-    
+    app_code = request.state.app_code
+
     # 获取目标等级
-    target_tier = await subscription_tier_dao.select_model_by_column(db, tier_name=body.tier_name, enabled=True)
+    target_tier = await subscription_tier_dao.select_model_by_column(db, tier_name=body.tier_name, enabled=True, app_code=app_code)
     if not target_tier:
         return response_base.success(data=UpgradePriceResult(
             can_upgrade=False,
@@ -349,11 +354,11 @@ async def calculate_upgrade_price(
         ))
     
     # 获取用户当前订阅
-    subscription = await credit_service.get_or_create_subscription(db, user_id)
+    subscription = await credit_service.get_or_create_subscription(db, user_id, app_code)
     current_subscription_type = getattr(subscription, 'subscription_type', 'monthly') or 'monthly'
-    
+
     # 获取当前等级配置
-    current_tier_config = await subscription_tier_dao.select_model_by_column(db, tier_name=subscription.tier)
+    current_tier_config = await subscription_tier_dao.select_model_by_column(db, tier_name=subscription.tier, app_code=app_code)
     current_price = Decimal('0')
     if current_tier_config:
         if current_subscription_type == 'yearly' and current_tier_config.yearly_price:
@@ -475,9 +480,10 @@ async def upgrade_subscription(
 ) -> ResponseSchemaModel[PaymentResult]:
     """升级订阅"""
     user_id = request.user.id
-    
+    app_code = request.state.app_code
+
     # 获取目标等级
-    target_tier = await subscription_tier_dao.select_model_by_column(db, tier_name=body.tier_name, enabled=True)
+    target_tier = await subscription_tier_dao.select_model_by_column(db, tier_name=body.tier_name, enabled=True, app_code=app_code)
     if not target_tier:
         return response_base.fail(data=PaymentResult(
             success=False,
@@ -486,11 +492,11 @@ async def upgrade_subscription(
         ))
     
     # 获取用户当前订阅
-    subscription = await credit_service.get_or_create_subscription(db, user_id)
+    subscription = await credit_service.get_or_create_subscription(db, user_id, app_code)
     current_subscription_type = getattr(subscription, 'subscription_type', 'monthly') or 'monthly'
-    
+
     # 获取当前等级配置
-    current_tier_config = await subscription_tier_dao.select_model_by_column(db, tier_name=subscription.tier)
+    current_tier_config = await subscription_tier_dao.select_model_by_column(db, tier_name=subscription.tier, app_code=app_code)
     current_price = Decimal('0')
     if current_tier_config:
         if current_subscription_type == 'yearly' and current_tier_config.yearly_price:
@@ -566,7 +572,7 @@ async def upgrade_subscription(
              f'order_id={order_id}, original_price={original_price}, remaining_value={remaining_value}, final_price={final_price}')
     
     # 获取当前总可用积分
-    balance_before = await credit_service.get_total_available_credits(db, user_id)
+    balance_before = await credit_service.get_total_available_credits(db, user_id, app_code)
     
     # 计算订阅时间
     now = timezone.now()
@@ -596,6 +602,7 @@ async def upgrade_subscription(
     # 创建新的积分余额记录（第一次赠送的积分）
     from backend.app.user_tier.model import CreditTransaction, UserCreditBalance
     upgrade_balance = UserCreditBalance(
+        app_code=app_code,
         user_id=user_id,
         credit_type='monthly',
         original_amount=target_tier.monthly_credits,
@@ -615,6 +622,7 @@ async def upgrade_subscription(
     
     # 记录交易
     transaction = CreditTransaction(
+        app_code=app_code,
         user_id=user_id,
         transaction_type='subscription_upgrade',
         credits=target_tier.monthly_credits,
@@ -663,7 +671,8 @@ async def purchase_credits(
 ) -> ResponseSchemaModel[PaymentResult]:
     """购买积分包"""
     user_id = request.user.id
-    
+    app_code = request.state.app_code
+
     # 获取积分包
     package = await credit_package_dao.select_model(db, pk=body.package_id)
     if not package or not package.enabled:
@@ -690,6 +699,7 @@ async def purchase_credits(
         reference_type='payment',
         description=f'购买积分包: {package.package_name} ({package.credits}+{package.bonus_credits})',
         is_purchased=True,
+        app_code=app_code,
     )
     
     log.info(f'[Subscription] 积分购买成功: user_id={user_id}, credits={total_credits}, balance={subscription.current_credits}')

@@ -32,6 +32,7 @@ class GatewayService:
         api_key: str,
         request: ChatCompletionRequest,
         ip_address: str | None = None,
+        app_code: str = 'huanxing',
     ) -> ChatCompletionResponse:
         """
         OpenAI 格式聊天补全（非流式）
@@ -48,6 +49,7 @@ class GatewayService:
             daily_limit=rate_limits['daily_token_limit'],
             monthly_limit=rate_limits['monthly_token_limit'],
             ip_address=ip_address,
+            app_code=app_code,
         )
 
     async def chat_completion_stream(
@@ -57,6 +59,7 @@ class GatewayService:
         api_key: str,
         request: ChatCompletionRequest,
         ip_address: str | None = None,
+        app_code: str = 'huanxing',
     ) -> AsyncIterator[str]:
         """
         OpenAI 格式聊天补全（流式）
@@ -86,6 +89,7 @@ class GatewayService:
                 daily_limit=daily_limit,
                 monthly_limit=monthly_limit,
                 ip_address=ip_address,
+                app_code=app_code,
             ):
                 yield chunk
 
@@ -96,6 +100,7 @@ class GatewayService:
         api_key: str,
         request: AnthropicMessageRequest,
         ip_address: str | None = None,
+        app_code: str = 'huanxing',
     ) -> AnthropicMessageResponse:
         """
         Anthropic Messages API（非流式）
@@ -117,6 +122,7 @@ class GatewayService:
             daily_limit=rate_limits['daily_token_limit'],
             monthly_limit=rate_limits['monthly_token_limit'],
             ip_address=ip_address,
+            app_code=app_code,
         )
         
         # 调试日志：记录返回给前端的 Anthropic 格式响应
@@ -143,6 +149,7 @@ class GatewayService:
         api_key: str,
         request: AnthropicMessageRequest,
         ip_address: str | None = None,
+        app_code: str = 'huanxing',
     ) -> dict:
         """
         准备 Anthropic 流式响应所需的所有数据（在数据库会话内完成）
@@ -159,6 +166,7 @@ class GatewayService:
             daily_limit=rate_limits['daily_token_limit'],
             monthly_limit=rate_limits['monthly_token_limit'],
             ip_address=ip_address,
+            app_code=app_code,
         )
 
     async def execute_anthropic_stream(

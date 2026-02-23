@@ -706,6 +706,7 @@ class LLMGateway:
         daily_limit: int,
         monthly_limit: int,
         ip_address: str | None = None,
+        app_code: str = 'huanxing',
     ) -> ChatCompletionResponse:
         """
         聊天补全（非流式）
@@ -729,7 +730,7 @@ class LLMGateway:
         )
 
         # 检查用户积分 (LLM 调用前检查)
-        await credit_service.check_credits(db, user_id)
+        await credit_service.check_credits(db, user_id, app_code=app_code)
 
         # 统一模型解析：精确匹配 → 别名映射 → 同类型降级
         models_with_providers, original_alias = await self._resolve_models(db, request.model)
@@ -805,6 +806,7 @@ class LLMGateway:
                     'input_tokens': input_tokens,
                     'output_tokens': output_tokens,
                 },
+                app_code=app_code,
             )
 
         # 记录用量
@@ -890,6 +892,7 @@ class LLMGateway:
         daily_limit: int,
         monthly_limit: int,
         ip_address: str | None = None,
+        app_code: str = 'huanxing',
     ) -> AsyncIterator[str]:
         """
         聊天补全（流式）
@@ -913,7 +916,7 @@ class LLMGateway:
         )
 
         # 检查用户积分 (LLM 调用前检查)
-        await credit_service.check_credits(db, user_id)
+        await credit_service.check_credits(db, user_id, app_code=app_code)
 
         # 统一模型解析：精确匹配 → 别名映射 → 同类型降级
         models_with_providers, original_alias = await self._resolve_models(db, request.model)
@@ -1003,6 +1006,7 @@ class LLMGateway:
                         'output_tokens': output_tokens,
                         'streaming': True,
                     },
+                    app_code=app_code,
                 )
 
             # 记录用量
@@ -1166,6 +1170,7 @@ class LLMGateway:
         daily_limit: int,
         monthly_limit: int,
         ip_address: str | None = None,
+        app_code: str = 'huanxing',
     ) -> 'AnthropicMessageResponse':
         """
         Anthropic 格式聊天补全（非流式）- 支持故障转移
@@ -1190,7 +1195,7 @@ class LLMGateway:
         )
 
         # 检查用户积分
-        await credit_service.check_credits(db, user_id)
+        await credit_service.check_credits(db, user_id, app_code=app_code)
 
         # 统一模型解析：精确匹配 → 别名映射 → 同类型降级
         models_with_providers, original_alias = await self._resolve_models(db, request.model)
@@ -1240,6 +1245,7 @@ class LLMGateway:
                     'input_tokens': input_tokens,
                     'output_tokens': output_tokens,
                 },
+                app_code=app_code,
             )
 
         # 记录用量
@@ -1312,6 +1318,7 @@ class LLMGateway:
         daily_limit: int,
         monthly_limit: int,
         ip_address: str | None = None,
+        app_code: str = 'huanxing',
     ) -> dict[str, Any]:
         """
         准备 Anthropic 流式响应所需的所有信息（在数据库会话内完成）- 支持故障转移
@@ -1327,7 +1334,7 @@ class LLMGateway:
         )
         
         # 检查用户积分
-        await credit_service.check_credits(db, user_id)
+        await credit_service.check_credits(db, user_id, app_code=app_code)
         
         # 统一模型解析：精确匹配 → 别名映射 → 同类型降级
         models_with_providers, original_alias = await self._resolve_models(db, request.model)
@@ -1375,6 +1382,7 @@ class LLMGateway:
             'user_id': user_id,
             'api_key_id': api_key_id,
             'ip_address': ip_address,
+            'app_code': app_code,
         }
 
     async def execute_anthropic_stream(
@@ -1397,6 +1405,7 @@ class LLMGateway:
         user_id = context.get('user_id')
         api_key_id = context.get('api_key_id')
         ip_address = context.get('ip_address')
+        app_code = context.get('app_code', 'huanxing')
         
         # 向后兼容：如果没有 candidates，使用旧格式
         if not candidates and 'params' in context:
@@ -1572,6 +1581,7 @@ class LLMGateway:
                                         'output_tokens': output_tokens,
                                         'streaming': True,
                                     },
+                                    app_code=app_code,
                                 )
                             
                             # 记录使用量

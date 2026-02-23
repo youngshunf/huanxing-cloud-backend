@@ -239,13 +239,13 @@ class ApiKeyService:
         # 返回第一个有效的 Key
         for key in keys:
             if key.status == ApiKeyStatus.ACTIVE:
-                # 解密 Key
-                key._decrypted_key = key_encryption.decrypt(key.key_encrypted)
-                
-                # [DEBUG] 验证 Hash 一致性
-                cal_hash = key_encryption.hash_key(key._decrypted_key)
-                log.info(f"[DEBUG] get_default_key: id={key.id}, db_hash={key.key_hash}, cal_hash={cal_hash}, match={key.key_hash == cal_hash}")
-                
+                try:
+                    key._decrypted_key = key_encryption.decrypt(key.key_encrypted)
+                except Exception:
+                    # 加密密钥变更导致无法解密，标记为失效
+                    log.warning(f'API Key id={key.id} 解密失败，可能是加密密钥变更，跳过该 Key')
+                    key.status = ApiKeyStatus.REVOKED
+                    continue
                 return key
 
         return None

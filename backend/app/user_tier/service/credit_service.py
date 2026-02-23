@@ -130,39 +130,43 @@ class CreditService:
         self,
         db: AsyncSession,
         user_id: int,
+        app_code: str = 'huanxing',
     ) -> UserSubscription:
         """
         获取用户订阅，如果不存在则创建免费订阅
 
         :param db: 数据库会话
         :param user_id: 用户 ID
+        :param app_code: 应用标识
         :return: 用户订阅
         """
         # 查询用户订阅
-        subscription = await user_subscription_dao.select_model_by_column(db, user_id=user_id)
+        subscription = await user_subscription_dao.select_model_by_column(db, user_id=user_id, app_code=app_code)
 
         if subscription:
             return subscription
 
         # 创建免费订阅
-        log.info(f'[Credit] Creating free subscription for user {user_id}')
-        subscription = await self._create_free_subscription(db, user_id)
+        log.info(f'[Credit] Creating free subscription for user {user_id}, app_code={app_code}')
+        subscription = await self._create_free_subscription(db, user_id, app_code)
         return subscription
 
     async def _create_free_subscription(
         self,
         db: AsyncSession,
         user_id: int,
+        app_code: str = 'huanxing',
     ) -> UserSubscription:
         """创建免费订阅"""
         # 获取免费等级配置
-        free_tier = await subscription_tier_dao.select_model_by_column(db, tier_name='free')
+        free_tier = await subscription_tier_dao.select_model_by_column(db, tier_name='free', app_code=app_code)
         monthly_credits = free_tier.monthly_credits if free_tier else Decimal('500')  # 默认 500 积分
 
         now = timezone.now()
         cycle_end = now + timedelta(days=30)
 
         subscription = UserSubscription(
+            app_code=app_code,
             user_id=user_id,
             tier='free',
             subscription_type='monthly',
@@ -192,6 +196,7 @@ class CreditService:
             expires_at=cycle_end,
             source_type='subscription_grant',
             description='免费版月度赠送积分',
+            app_code=app_code,
         )
 
         # 记录月度赠送交易
@@ -203,6 +208,7 @@ class CreditService:
             balance_before=Decimal('0'),
             balance_after=monthly_credits,
             description='免费版月度赠送积分',
+            app_code=app_code,
         )
 
         return subscription
@@ -310,6 +316,7 @@ class CreditService:
         db: AsyncSession,
         user_id: int,
         estimated_credits: Decimal | None = None,
+        app_code: str = 'huanxing',
     ) -> UserSubscription:
         """
         检查用户积分是否足够
@@ -317,12 +324,13 @@ class CreditService:
         :param db: 数据库会话
         :param user_id: 用户 ID
         :param estimated_credits: 预估需要的积分 (可选)
+        :param app_code: 应用标识
         :return: 用户订阅
         :raises SubscriptionNotFoundError: 订阅未找到
         :raises SubscriptionExpiredError: 订阅已过期
         :raises InsufficientCreditsError: 积分不足
         """
-        subscription = await self.get_or_create_subscription(db, user_id)
+        subscription = await self.get_or_create_subscription(db, user_id, app_code)
 
         # 检查订阅状态
         if subscription.status != 'active':
@@ -335,7 +343,7 @@ class CreditService:
             subscription = await self._refresh_billing_cycle(db, subscription)
 
         # 从 balance 表获取总可用积分
-        total_credits = await self.get_total_available_credits(db, user_id)
+        total_credits = await self.get_total_available_credits(db, user_id, app_code)
 
         # 检查积分余额
         # 1. 如果指定了预估积分，检查是否足够
@@ -355,6 +363,7 @@ class CreditService:
         reference_type: str = 'llm_usage',
         description: str | None = None,
         extra_data: dict | None = None,
+        app_code: str = 'huanxing',
     ) -> UserSubscription:
         """
         扣除用户积分 (原子操作)
@@ -367,11 +376,12 @@ class CreditService:
         :param reference_type: 关联类型
         :param description: 交易描述
         :param extra_data: 扩展数据
+        :param app_code: 应用标识
         :return: 更新后的订阅
         :raises InsufficientCreditsError: 积分不足
         """
         # 获取用户有效的积分余额记录（按过期时间升序，NULL 放最后）
-        balances = await self._get_active_balances_for_update(db, user_id)
+        balances = await self._get_active_balances_for_update(db, user_id, app_code)
 
         # 计算总可用积分
         total_available = sum(b.remaining_amount for b in balances)
@@ -380,7 +390,7 @@ class CreditService:
             raise InsufficientCreditsError(total_available, credits)
 
         # 获取订阅记录（用于记录交易和更新汇总）
-        subscription = await self.get_or_create_subscription(db, user_id)
+        subscription = await self.get_or_create_subscription(db, user_id, app_code)
         balance_before = total_available
 
         # 按顺序从各个 balance 记录中扣除
@@ -416,9 +426,10 @@ class CreditService:
             reference_type=reference_type,
             description=description,
             extra_data=extra_data,
+            app_code=app_code,
         )
 
-        log.info(f'[Credit] Deducted {credits} credits from user {user_id}, '
+        log.info(f'[Credit] Deducted {credits} credits from user {user_id} (app={app_code}), '
                  f'balance: {balance_before} -> {subscription.current_credits}')
 
         return subscription
@@ -434,6 +445,7 @@ class CreditService:
         description: str | None = None,
         is_purchased: bool = True,
         expires_at: datetime | None = None,
+        app_code: str = 'huanxing',
     ) -> UserSubscription:
         """
         增加用户积分
@@ -447,12 +459,13 @@ class CreditService:
         :param description: 交易描述
         :param is_purchased: 是否为购买的积分 (购买的积分不会过期)
         :param expires_at: 过期时间 (None 表示永不过期)
+        :param app_code: 应用标识
         :return: 更新后的订阅
         """
-        subscription = await self.get_or_create_subscription(db, user_id)
+        subscription = await self.get_or_create_subscription(db, user_id, app_code)
 
         # 获取当前总积分
-        balance_before = await self.get_total_available_credits(db, user_id)
+        balance_before = await self.get_total_available_credits(db, user_id, app_code)
 
         # 创建积分余额记录
         credit_type = 'purchased' if is_purchased else 'bonus'
@@ -466,6 +479,7 @@ class CreditService:
             source_type=source_type,
             source_reference_id=reference_id,
             description=description,
+            app_code=app_code,
         )
 
         # 更新 subscription 汇总字段（保持兼容性）
@@ -484,9 +498,10 @@ class CreditService:
             reference_id=reference_id,
             reference_type=reference_type,
             description=description,
+            app_code=app_code,
         )
 
-        log.info(f'[Credit] Added {credits} credits to user {user_id}, '
+        log.info(f'[Credit] Added {credits} credits to user {user_id} (app={app_code}), '
                  f'balance: {balance_before} -> {balance_before + credits}')
 
         return subscription
@@ -503,6 +518,8 @@ class CreditService:
         :param subscription: 用户订阅
         :return: 更新后的订阅
         """
+        app_code = getattr(subscription, 'app_code', 'huanxing') or 'huanxing'
+
         # 年度订阅用户由定时任务处理，不自动刷新
         subscription_type = getattr(subscription, 'subscription_type', 'monthly') or 'monthly'
         if subscription_type == 'yearly':
@@ -516,11 +533,11 @@ class CreditService:
 
         # 以下是月度订阅的刷新逻辑
         # 获取等级配置
-        tier = await subscription_tier_dao.select_model_by_column(db, tier_name=subscription.tier)
+        tier = await subscription_tier_dao.select_model_by_column(db, tier_name=subscription.tier, app_code=app_code)
         monthly_credits = tier.monthly_credits if tier else Decimal('500')  # 默认 500 积分
 
         # 获取当前总可用积分
-        balance_before = await self.get_total_available_credits(db, subscription.user_id)
+        balance_before = await self.get_total_available_credits(db, subscription.user_id, app_code)
 
         now = timezone.now()
         cycle_end = now + timedelta(days=30)
@@ -542,6 +559,7 @@ class CreditService:
             expires_at=cycle_end,
             source_type='subscription_grant',
             description=f'{subscription.tier}版月度赠送积分',
+            app_code=app_code,
         )
 
         # 更新 subscription 汇总字段（保持兼容性）
@@ -558,9 +576,10 @@ class CreditService:
             balance_before=balance_before,
             balance_after=new_total,
             description=f'{subscription.tier}版月度赠送积分',
+            app_code=app_code,
         )
 
-        log.info(f'[Credit] Refreshed billing cycle for user {subscription.user_id}, '
+        log.info(f'[Credit] Refreshed billing cycle for user {subscription.user_id} (app={app_code}), '
                  f'granted {monthly_credits} credits')
 
         return subscription
@@ -577,9 +596,11 @@ class CreditService:
         reference_type: str | None = None,
         description: str | None = None,
         extra_data: dict | None = None,
+        app_code: str = 'huanxing',
     ) -> CreditTransaction:
         """记录积分交易"""
         transaction = CreditTransaction(
+            app_code=app_code,
             user_id=user_id,
             transaction_type=transaction_type,
             credits=credits,
@@ -598,23 +619,25 @@ class CreditService:
         self,
         db: AsyncSession,
         user_id: int,
+        app_code: str = 'huanxing',
     ) -> dict[str, Any]:
         """
         获取用户积分信息
 
         :param db: 数据库会话
         :param user_id: 用户 ID
+        :param app_code: 应用标识
         :return: 积分信息
         """
-        subscription = await self.get_or_create_subscription(db, user_id)
+        subscription = await self.get_or_create_subscription(db, user_id, app_code)
 
         # 获取等级配置
-        tier = await subscription_tier_dao.select_model_by_column(db, tier_name=subscription.tier)
+        tier = await subscription_tier_dao.select_model_by_column(db, tier_name=subscription.tier, app_code=app_code)
 
         # 从 balance 表获取详细积分信息（有效期内的所有记录，不管是否用完）
-        balances = await self.get_user_valid_balances(db, user_id)
+        balances = await self.get_user_valid_balances(db, user_id, app_code)
         # 获取有剩余的记录用于计算可用积分
-        active_balances = await self.get_user_active_balances(db, user_id)
+        active_balances = await self.get_user_active_balances(db, user_id, app_code)
         
         total_credits = sum(b.remaining_amount for b in active_balances)
         total_used = sum(b.used_amount for b in balances)
@@ -667,9 +690,11 @@ class CreditService:
         source_type: str,
         source_reference_id: str | None = None,
         description: str | None = None,
+        app_code: str = 'huanxing',
     ) -> UserCreditBalance:
         """创建积分余额记录"""
         balance = UserCreditBalance(
+            app_code=app_code,
             user_id=user_id,
             credit_type=credit_type,
             original_amount=amount,
@@ -683,7 +708,7 @@ class CreditService:
         )
         db.add(balance)
         await db.flush()
-        log.info(f'[Credit] Created balance record for user {user_id}: '
+        log.info(f'[Credit] Created balance record for user {user_id} (app={app_code}): '
                  f'type={credit_type}, amount={amount}, expires_at={expires_at}')
         return balance
 
@@ -691,17 +716,20 @@ class CreditService:
         self,
         db: AsyncSession,
         user_id: int,
+        app_code: str = 'huanxing',
     ) -> Decimal:
         """
         获取用户总可用积分（从 balance 表计算）
 
         :param db: 数据库会话
         :param user_id: 用户 ID
+        :param app_code: 应用标识
         :return: 总可用积分
         """
         now = timezone.now()
         stmt = select(func.coalesce(func.sum(UserCreditBalance.remaining_amount), 0)).where(
             and_(
+                UserCreditBalance.app_code == app_code,
                 UserCreditBalance.user_id == user_id,
                 UserCreditBalance.remaining_amount > 0,
                 or_(
@@ -718,12 +746,14 @@ class CreditService:
         self,
         db: AsyncSession,
         user_id: int,
+        app_code: str = 'huanxing',
     ) -> Sequence[UserCreditBalance]:
         """
         获取用户有效的积分余额记录列表（未过期且有剩余）
 
         :param db: 数据库会话
         :param user_id: 用户 ID
+        :param app_code: 应用标识
         :return: 积分余额记录列表
         """
         now = timezone.now()
@@ -731,6 +761,7 @@ class CreditService:
             select(UserCreditBalance)
             .where(
                 and_(
+                    UserCreditBalance.app_code == app_code,
                     UserCreditBalance.user_id == user_id,
                     UserCreditBalance.remaining_amount > 0,
                     or_(
@@ -749,12 +780,14 @@ class CreditService:
         self,
         db: AsyncSession,
         user_id: int,
+        app_code: str = 'huanxing',
     ) -> Sequence[UserCreditBalance]:
         """
         获取用户有效期内的所有积分余额记录（不管是否用完）
 
         :param db: 数据库会话
         :param user_id: 用户 ID
+        :param app_code: 应用标识
         :return: 积分余额记录列表
         """
         now = timezone.now()
@@ -762,6 +795,7 @@ class CreditService:
             select(UserCreditBalance)
             .where(
                 and_(
+                    UserCreditBalance.app_code == app_code,
                     UserCreditBalance.user_id == user_id,
                     or_(
                         UserCreditBalance.expires_at.is_(None),
@@ -778,12 +812,14 @@ class CreditService:
         self,
         db: AsyncSession,
         user_id: int,
+        app_code: str = 'huanxing',
     ) -> Sequence[UserCreditBalance]:
         """
         获取用户已过期的积分余额记录（历史记录）
 
         :param db: 数据库会话
         :param user_id: 用户 ID
+        :param app_code: 应用标识
         :return: 积分余额记录列表
         """
         now = timezone.now()
@@ -791,6 +827,7 @@ class CreditService:
             select(UserCreditBalance)
             .where(
                 and_(
+                    UserCreditBalance.app_code == app_code,
                     UserCreditBalance.user_id == user_id,
                     UserCreditBalance.expires_at.isnot(None),
                     UserCreditBalance.expires_at <= now,
@@ -805,12 +842,14 @@ class CreditService:
         self,
         db: AsyncSession,
         user_id: int,
+        app_code: str = 'huanxing',
     ) -> Sequence[UserCreditBalance]:
         """
         获取用户有效的积分余额记录并锁定（用于扣除操作）
 
         :param db: 数据库会话
         :param user_id: 用户 ID
+        :param app_code: 应用标识
         :return: 积分余额记录列表
         """
         now = timezone.now()
@@ -818,6 +857,7 @@ class CreditService:
             select(UserCreditBalance)
             .where(
                 and_(
+                    UserCreditBalance.app_code == app_code,
                     UserCreditBalance.user_id == user_id,
                     UserCreditBalance.remaining_amount > 0,
                     or_(

@@ -8,6 +8,7 @@ from backend.common.schema import SchemaBase
 
 class CreditPackageSchemaBase(SchemaBase):
     """积分包配置基础模型"""
+    app_code: str = 'huanxing'
     package_name: str = Field(description='积分包名称')
     credits: Decimal = Field(description='基础积分数量')
     price: Decimal = Field(description='价格')
