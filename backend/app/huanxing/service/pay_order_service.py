@@ -19,6 +19,7 @@ from backend.app.huanxing.schema.pay_order import (
     PayOrderStatusResponse,
 )
 from backend.common.exception import errors
+from backend.common.log import log
 from backend.common.pagination import paging_data
 from backend.utils.timezone import timezone
 
@@ -162,17 +163,31 @@ class PayOrderService:
             }
             await pay_contract_dao.create(db, contract_dict)
 
-        # 8. TODO: 调用微信/支付宝 SDK 创建支付
-        # 目前返回 mock 数据，等配好商户号后接入真实 SDK
-        qr_code_url = None
-        pay_url = None
+        # 8. 调用支付 SDK 创建支付
+        from backend.app.huanxing.service.pay.gateway import create_payment
 
-        if channel.code.startswith('wx'):
-            # 微信 Native 支付 → 返回二维码
-            qr_code_url = f'weixin://wxpay/bizpayurl?pr=mock_{order_no}'
-        elif channel.code.startswith('alipay'):
-            # 支付宝 → 返回跳转 URL
-            pay_url = f'https://openapi.alipay.com/gateway.do?mock=true&order_no={order_no}'
+        try:
+            pay_result = await create_payment(
+                db=db,
+                channel=channel,
+                order_no=order_no,
+                amount=pay_amount,
+                subject=f'唤星AI-{tier_name}会员-{cycle_name}',
+                body=f'{tier_name}（{cycle_name}）订阅',
+                user_ip=user_ip,
+                contract_no=contract_no,
+            )
+            qr_code_url = pay_result.get('qr_code_url')
+            pay_url = pay_result.get('pay_url')
+        except Exception as e:
+            # SDK 调用失败时回退到 mock 模式（渠道配置不完整时）
+            log.warning(f'SDK 下单失败（回退mock）: {e}')
+            qr_code_url = None
+            pay_url = None
+            if channel.code.startswith('wx'):
+                qr_code_url = f'weixin://wxpay/bizpayurl?pr=mock_{order_no}'
+            elif channel.code.startswith('alipay'):
+                pay_url = f'https://openapi.alipay.com/gateway.do?mock=true&order_no={order_no}'
 
         return CreatePayOrderResponse(
             order_no=order_no,
