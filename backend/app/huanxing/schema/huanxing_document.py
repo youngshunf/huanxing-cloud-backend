@@ -16,6 +16,7 @@ class CreateHuanxingDocumentParam(SchemaBase):
     """创建唤星文档参数"""
     title: str = Field(description='文档标题')
     content: str = Field(description='Markdown内容')
+    folder_id: Optional[int] = Field(None, description='目录ID（空=根目录）')
     tags: Optional[list[str]] = Field(None, description='标签列表')
     status: str = Field(default='draft', description='状态(draft/published/archived)')
     auto_share: Optional[AutoShareConfig] = Field(None, description='自动分享配置')
@@ -47,6 +48,7 @@ class HuanxingDocumentSchemaBase(SchemaBase):
     """唤星文档基础模型"""
     uuid: str = Field(description='文档UUID')
     user_id: int = Field(description='用户ID')
+    folder_id: int | None = Field(None, description='目录ID（NULL=根目录）')
     title: str = Field(description='文档标题')
     content: str | None = Field(None, description='Markdown内容')
     summary: str | None = Field(None, description='摘要（自动截取或手动设置）')

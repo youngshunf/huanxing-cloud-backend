@@ -15,6 +15,7 @@ class HuanxingDocument(Base):
     id: Mapped[id_key] = mapped_column(init=False)
     uuid: Mapped[str] = mapped_column(sa.String(36), default='', comment='文档UUID')
     user_id: Mapped[int] = mapped_column(sa.BIGINT(), default=0, comment='用户ID')
+    folder_id: Mapped[int | None] = mapped_column(sa.BIGINT(), default=None, comment='目录ID（NULL=根目录）')
     title: Mapped[str] = mapped_column(sa.String(255), default='', comment='文档标题')
     content: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='Markdown内容')
     summary: Mapped[str | None] = mapped_column(sa.String(500), default=None, comment='摘要（自动截取或手动设置）')

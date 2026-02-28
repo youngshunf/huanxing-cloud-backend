@@ -3,3 +3,4 @@ from backend.app.huanxing.model.huanxing_user import HuanxingUser as HuanxingUse
 from backend.app.huanxing.model.huanxing_document import HuanxingDocument as HuanxingDocument
 from backend.app.huanxing.model.huanxing_document_version import HuanxingDocumentVersion as HuanxingDocumentVersion
 from backend.app.huanxing.model.huanxing_document_autosave import HuanxingDocumentAutosave as HuanxingDocumentAutosave
+from backend.app.huanxing.model.huanxing_document_folder import HuanxingDocumentFolder as HuanxingDocumentFolder

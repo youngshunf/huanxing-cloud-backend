@@ -112,6 +112,7 @@ class HuanxingDocumentService:
         doc_data = {
             'uuid': str(uuid.uuid4()),
             'user_id': user_id,
+            'folder_id': obj.folder_id,
             'title': obj.title,
             'content': obj.content,
             'tags': tags_str,

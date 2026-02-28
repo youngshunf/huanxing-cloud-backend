@@ -8,16 +8,18 @@ from backend.app.huanxing.api.v1.admin.user import router as admin_user_router
 from backend.app.huanxing.api.v1.admin.document import router as admin_document_router
 from backend.app.huanxing.api.v1.admin.document_version import router as admin_doc_version_router
 from backend.app.huanxing.api.v1.admin.document_autosave import router as admin_doc_autosave_router
+from backend.app.huanxing.api.v1.admin.document_folder import router as admin_doc_folder_router
 from backend.app.huanxing.api.v1.admin.dashboard import router as admin_dashboard_router
 
 # --- app/ 用户端（仅 JWT）---
 from backend.app.huanxing.api.v1.app.document import router as app_document_router
+from backend.app.huanxing.api.v1.app.folder import router as app_folder_router
 
 # --- open/ 公开（无需认证）---
 from backend.app.huanxing.api.v1.open.share import router as open_share_router
 
-# --- agent/ Agent（后续启用）---
-# from backend.app.huanxing.api.v1.agent.document import router as agent_document_router
+# --- agent/ Agent ---
+from backend.app.huanxing.api.v1.agent.document import router as agent_document_router
 
 
 # ========================================
@@ -31,6 +33,7 @@ v1.include_router(admin_user_router, prefix='/users', tags=['唤星管理-用户
 v1.include_router(admin_document_router, prefix='/documents', tags=['唤星管理-文档'])
 v1.include_router(admin_doc_version_router, prefix='/document/versions', tags=['唤星管理-文档版本'])
 v1.include_router(admin_doc_autosave_router, prefix='/document/autosaves', tags=['唤星管理-自动保存'])
+v1.include_router(admin_doc_folder_router, prefix='/document-folders', tags=['唤星管理-文档目录'])
 v1.include_router(admin_dashboard_router, prefix='/dashboard', tags=['唤星管理-数据看板'])
 
 # ========================================
@@ -40,6 +43,7 @@ v1.include_router(admin_dashboard_router, prefix='/dashboard', tags=['唤星管�
 app = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/huanxing/app', tags=['唤星用户端'])
 
 app.include_router(app_document_router, prefix='/docs', tags=['唤星用户端-文档'])
+app.include_router(app_folder_router, prefix='/folders', tags=['唤星用户端-目录'])
 
 # ========================================
 # 公开 API（无需认证）
@@ -50,8 +54,9 @@ open_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/huanxing/open', tag
 open_api.include_router(open_share_router, tags=['唤星公开-分享'])
 
 # ========================================
-# Agent API（后续启用）
+# Agent API
 # 路径前缀: /api/v1/huanxing/agent/
 # ========================================
-# agent = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/huanxing/agent', tags=['唤星Agent'])
-# agent.include_router(agent_document_router, prefix='/docs', tags=['唤星Agent-文档'])
+agent = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/huanxing/agent', tags=['唤星Agent'])
+
+agent.include_router(agent_document_router, prefix='/docs', tags=['唤星Agent-文档'])

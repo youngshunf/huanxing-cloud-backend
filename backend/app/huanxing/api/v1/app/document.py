@@ -10,7 +10,9 @@ from backend.app.huanxing.schema.huanxing_document import (
     UpdateHuanxingDocumentParam,
     AutosaveParam,
 )
+from backend.app.huanxing.schema.huanxing_document_folder import MoveDocumentParam
 from backend.app.huanxing.service.huanxing_document_service import huanxing_document_service
+from backend.app.huanxing.service.huanxing_document_folder_service import huanxing_document_folder_service
 from backend.common.exception import errors
 from backend.common.pagination import DependsPagination, PageData
 from backend.common.response.response_schema import ResponseModel, ResponseSchemaModel, response_base
@@ -299,3 +301,27 @@ async def export_document(
         media_type=mime_type,
         headers={'Content-Disposition': f"attachment; filename*=UTF-8''{encoded_filename}"},
     )
+
+
+# ============================================================
+# 移动文档到目录
+# ============================================================
+
+@router.post(
+    '/{pk}/move',
+    summary='移动文档到指定目录',
+    dependencies=[DependsJwtAuth],
+)
+async def move_document(
+    request: Request,
+    db: CurrentSessionTransaction,
+    pk: Annotated[int, Path(description='文档 ID')],
+    obj: MoveDocumentParam,
+) -> ResponseModel:
+    user_id = request.user.id
+    count = await huanxing_document_folder_service.move_document(
+        db=db, document_id=pk, target_folder_id=obj.target_folder_id, user_id=user_id
+    )
+    if count > 0:
+        return response_base.success()
+    return response_base.fail()
