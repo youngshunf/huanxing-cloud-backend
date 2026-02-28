@@ -1,4 +1,4 @@
-from backend.app.huanxing.api.router import v1 as huanxing_v1
+from backend.app.huanxing.api.router import v1 as huanxing_v1, app as huanxing_app, open_api as huanxing_open
 from backend.app.marketplace.api.router import v1 as marketplace_v1, client as marketplace_client, publish as marketplace_publish
 from backend.app.user_tier.api.router import v1 as user_tier_v1
 from backend.app.projects.api.router import v1 as projects_v1
@@ -24,3 +24,5 @@ router.include_router(marketplace_publish)  # 发布 API
 router.include_router(admin_client)  # 桌面端版本检测公开 API
 
 router.include_router(huanxing_v1)
+router.include_router(huanxing_app)       # 唤星用户端 API
+router.include_router(huanxing_open)      # 唤星公开 API

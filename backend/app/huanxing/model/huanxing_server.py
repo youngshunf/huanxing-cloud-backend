@@ -21,7 +21,7 @@ class HuanxingServer(Base):
     region: Mapped[str | None] = mapped_column(sa.String(64), default=None, comment='地域（如 cn-north-1）')
     provider: Mapped[str | None] = mapped_column(sa.String(64), default=None, comment='云服务商（如 jdcloud/aliyun/tencent）')
     max_users: Mapped[int | None] = mapped_column(sa.INTEGER(), default=None, comment='最大用户容量')
-    status: Mapped[int | None] = mapped_column(sa.SMALLINT(), default=None, comment='状态：1-启用 0-禁用')
+    status: Mapped[str | None] = mapped_column(sa.String(20), default=None, comment='状态(published已发布/disabled禁用/draft草稿/archived已归档)')
     gateway_status: Mapped[str | None] = mapped_column(sa.String(16), default=None, comment='Gateway状态: running/stopped/unknown')
     last_heartbeat: Mapped[datetime | None] = mapped_column(TimeZone, default=None, comment='最后心跳时间')
     config: Mapped[dict | None] = mapped_column(postgresql.JSONB(), default=None, comment='服务器配置信息（JSON）')

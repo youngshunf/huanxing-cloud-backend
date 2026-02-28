@@ -59,14 +59,20 @@ class HuanxingDocumentService:
         return huanxing_document
 
     @staticmethod
-    async def get_list(db: AsyncSession) -> dict[str, Any]:
+    async def get_list(db: AsyncSession, user_id: int | None = None) -> dict[str, Any]:
         """
         获取唤星文档列表
 
         :param db: 数据库会话
+        :param user_id: 用户ID（传入时只返回该用户的文档，不传则返回全部）
         :return:
         """
         huanxing_document_select = await huanxing_document_dao.get_select()
+        if user_id is not None:
+            from backend.app.huanxing.model.huanxing_document import HuanxingDocument
+            huanxing_document_select = huanxing_document_select.where(
+                HuanxingDocument.user_id == user_id
+            )
         return await paging_data(db, huanxing_document_select)
 
     @staticmethod

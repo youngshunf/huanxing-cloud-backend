@@ -13,7 +13,7 @@ class HuanxingServerSchemaBase(SchemaBase):
     region: str | None = Field(None, description='地域（如 cn-north-1）')
     provider: str | None = Field(None, description='云服务商（如 jdcloud/aliyun/tencent）')
     max_users: int | None = Field(None, description='最大用户容量')
-    status: int | None = Field(None, description='状态：1-启用 0-禁用')
+    status: str | None = Field(None, description='状态(published/disabled/draft/archived)')
     gateway_status: str | None = Field(None, description='Gateway状态: running/stopped/unknown')
     last_heartbeat: datetime | None = Field(None, description='最后心跳时间')
     config: dict | None = Field(None, description='服务器配置信息（JSON）')
