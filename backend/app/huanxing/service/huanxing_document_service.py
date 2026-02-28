@@ -3,11 +3,11 @@ import re
 import secrets
 import json
 import uuid
+import hashlib
 from datetime import datetime, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from passlib.context import CryptContext
 
 from backend.app.huanxing.crud.crud_huanxing_document import huanxing_document_dao
 from backend.app.huanxing.model import HuanxingDocument
@@ -16,17 +16,22 @@ from backend.common.exception import errors
 from backend.common.pagination import paging_data
 from backend.utils.timezone import timezone as tz
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 def generate_share_token() -> str:
     """生成分享token"""
     return secrets.token_urlsafe(24)
 
 
+import hashlib
+
 def hash_password(password: str) -> str:
-    """加密密码"""
-    return pwd_context.hash(password)
+    """加密密码（SHA256，适用于分享密码场景）"""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    """验证密码"""
+    return hashlib.sha256(plain.encode('utf-8')).hexdigest() == hashed
 
 
 def calculate_word_count(markdown_content: str) -> int:
@@ -173,10 +178,18 @@ class HuanxingDocumentService:
                 'content': old_doc.content,
                 'created_by': user_id
             })
-            obj.current_version = old_doc.current_version + 1
         
         # 更新 word_count 和 summary
-        update_data = obj.dict(exclude_unset=True)
+        update_data = obj.model_dump(exclude_unset=True)
+        # save_version 不是数据库字段，移除
+        update_data.pop('save_version', None)
+        # append 已经合并到 content，移除
+        update_data.pop('append', None)
+        
+        # 版本号递增
+        if should_save_version:
+            update_data['current_version'] = old_doc.current_version + 1
+        
         if obj.content:
             update_data['word_count'] = calculate_word_count(obj.content)
             update_data['summary'] = generate_summary(obj.content)
@@ -374,7 +387,7 @@ class HuanxingDocumentService:
         if row[7]:  # share_password
             if not password:
                 raise errors.ForbiddenError(msg='需要密码才能访问')
-            if not pwd_context.verify(password, row[7]):
+            if not verify_password(password, row[7]):
                 raise errors.ForbiddenError(msg='密码错误')
         
         # 返回文档内容
