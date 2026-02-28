@@ -1,6 +1,6 @@
-from backend.app.huanxing.api.router import v1 as huanxing_v1, app as huanxing_app, open_api as huanxing_open
+from backend.app.huanxing.api.router import v1 as huanxing_v1, app as huanxing_app, open_api as huanxing_open, agent as huanxing_agent
 from backend.app.marketplace.api.router import v1 as marketplace_v1, client as marketplace_client, publish as marketplace_publish
-from backend.app.user_tier.api.router import v1 as user_tier_v1
+from backend.app.user_tier.api.router import v1 as user_tier_v1, app as user_tier_app, open_api as user_tier_open, agent as user_tier_agent
 from backend.app.projects.api.router import v1 as projects_v1
 from backend.app.openclaw.api.router import v1 as openclaw_v1
 from fastapi import APIRouter
@@ -18,6 +18,9 @@ router.include_router(openclaw_v1)  # Openclaw Gateway API
 
 router.include_router(projects_v1)
 router.include_router(user_tier_v1)
+router.include_router(user_tier_app)      # 订阅积分-用户端 API
+router.include_router(user_tier_open)     # 订阅积分-公开 API
+router.include_router(user_tier_agent)    # 订阅积分-Agent API
 router.include_router(marketplace_v1)
 router.include_router(marketplace_client)  # 桌面端市场公开 API
 router.include_router(marketplace_publish)  # 发布 API
@@ -26,3 +29,4 @@ router.include_router(admin_client)  # 桌面端版本检测公开 API
 router.include_router(huanxing_v1)
 router.include_router(huanxing_app)       # 唤星用户端 API
 router.include_router(huanxing_open)      # 唤星公开 API
+router.include_router(huanxing_agent)     # 唤星Agent API
