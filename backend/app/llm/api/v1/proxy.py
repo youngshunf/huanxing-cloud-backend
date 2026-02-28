@@ -19,6 +19,8 @@ from backend.app.llm.schema.proxy import (
     AnthropicMessageResponse,
     ChatCompletionRequest,
     ChatCompletionResponse,
+    EmbeddingRequest,
+    EmbeddingResponse,
 )
 from backend.app.llm.service.gateway_service import gateway_service
 from backend.app.user_tier.service.credit_service import InsufficientCreditsError
@@ -122,6 +124,64 @@ async def chat_completions(
         request=body,
         ip_address=ip_address,
         app_code=app_code,
+    )
+
+
+@router.post(
+    '/v1/embeddings',
+    summary='OpenAI 兼容 Embedding',
+    description='兼容 OpenAI Embeddings API 格式，支持 x-api-key 或 Authorization: Bearer 认证',
+    response_model=EmbeddingResponse,
+    response_model_exclude_none=True,
+)
+async def embeddings(
+    request: Request,
+    db: CurrentSession,
+    body: EmbeddingRequest,
+    x_api_key: Annotated[str | None, Header(alias='x-api-key', description='LLM API Key')] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> EmbeddingResponse:
+    # 从 x-api-key 或 Authorization: Bearer 中提取 API Key
+    api_key = x_api_key
+    if not api_key and authorization:
+        if authorization.startswith('Bearer '):
+            api_key = authorization[7:]
+    if not api_key:
+        from backend.common.exception import errors
+        raise errors.AuthorizationError(msg='Missing API key. Use x-api-key header or Authorization: Bearer.')
+
+    log.info(f'[Proxy API] 收到 Embedding 请求: /v1/embeddings, model={body.model}')
+    ip_address = _get_client_ip(request)
+    app_code = getattr(request.state, 'app_code', 'huanxing')
+
+    response = await gateway_service.embedding(
+        db,
+        api_key=api_key,
+        model=body.model,
+        input_text=body.input,
+        encoding_format=body.encoding_format,
+        dimensions=body.dimensions,
+        ip_address=ip_address,
+        app_code=app_code,
+    )
+
+    # litellm 返回的是 EmbeddingResponse 对象，转为 dict
+    data = []
+    for item in response.data:
+        data.append({
+            'object': 'embedding',
+            'embedding': item['embedding'],
+            'index': item['index'],
+        })
+
+    usage = getattr(response, 'usage', None)
+    return EmbeddingResponse(
+        data=data,
+        model=body.model,
+        usage={
+            'prompt_tokens': getattr(usage, 'prompt_tokens', 0) if usage else 0,
+            'total_tokens': getattr(usage, 'total_tokens', 0) if usage else 0,
+        },
     )
 
 

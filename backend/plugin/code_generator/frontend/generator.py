@@ -412,8 +412,9 @@ class FrontendGenerator:
         project_root = backend_root.parent  # /.../clound-backend
 
         candidates = [
-            project_root.parent / 'clound-frontend',  # monorepo 根下的 clound-frontend
-            project_root / 'clound-frontend',        # 备用：同项目下的 clound-frontend
+            project_root.parent / 'huanxing-cloud-frontend',  # monorepo 根下的 huanxing-cloud-frontend
+            project_root.parent / 'clound-frontend',          # 兼容旧名
+            project_root / 'clound-frontend',                 # 备用：同项目下
         ]
 
         for candidate in candidates:

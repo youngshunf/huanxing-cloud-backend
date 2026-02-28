@@ -166,6 +166,42 @@ class AnthropicMessageResponse(SchemaBase):
     usage: AnthropicUsage
 
 
+# ==================== Embedding 格式 ====================
+
+
+class EmbeddingRequest(SchemaBase):
+    """OpenAI Embedding 请求"""
+
+    model: str = Field(description='Embedding 模型名称')
+    input: str | list[str] = Field(description='输入文本')
+    encoding_format: str | None = Field(default=None, description='编码格式 (float/base64)')
+    dimensions: int | None = Field(default=None, description='输出维度')
+
+
+class EmbeddingData(SchemaBase):
+    """单条 Embedding 结果"""
+
+    object: str = 'embedding'
+    embedding: list[float] = Field(description='向量')
+    index: int = Field(description='索引')
+
+
+class EmbeddingUsage(SchemaBase):
+    """Embedding 用量"""
+
+    prompt_tokens: int = 0
+    total_tokens: int = 0
+
+
+class EmbeddingResponse(SchemaBase):
+    """OpenAI Embedding 响应"""
+
+    object: str = 'list'
+    data: list[EmbeddingData] = Field(description='Embedding 结果列表')
+    model: str = Field(description='模型名称')
+    usage: EmbeddingUsage = Field(default_factory=EmbeddingUsage)
+
+
 # ==================== 通用错误响应 ====================
 
 

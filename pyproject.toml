@@ -1,5 +1,5 @@
 [project]
-name = "fastapi_best_architecture"
+name = "huanxing-backend"
 description = "FastAPI 企业级后端架构解决方案"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -67,6 +67,7 @@ dependencies = [
   "tiktoken>=0.7.0",
   # S3 插件依赖
   "opendal>=0.46.0",
+  "passlib>=1.7.4",
 ]
 dynamic = ["version"]
 

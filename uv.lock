@@ -1157,146 +1157,6 @@ standard-no-fastapi-cloud-cli = [
 ]
 
 [[package]]
-name = "fastapi-best-architecture"
-source = { editable = "." }
-dependencies = [
-    { name = "alembic" },
-    { name = "asgiref" },
-    { name = "asyncmy" },
-    { name = "asyncpg" },
-    { name = "backoff" },
-    { name = "bcrypt" },
-    { name = "cachebox" },
-    { name = "cappa" },
-    { name = "celery" },
-    { name = "celery-aio-pool" },
-    { name = "cryptography" },
-    { name = "dulwich" },
-    { name = "fast-captcha" },
-    { name = "fastapi", extra = ["standard-no-fastapi-cloud-cli"] },
-    { name = "fastapi-pagination" },
-    { name = "flower" },
-    { name = "gevent" },
-    { name = "granian" },
-    { name = "ip2loc" },
-    { name = "itsdangerous" },
-    { name = "jinja2" },
-    { name = "litellm", extra = ["proxy"] },
-    { name = "loguru" },
-    { name = "msgspec" },
-    { name = "opendal" },
-    { name = "opentelemetry-exporter-otlp-proto-grpc" },
-    { name = "opentelemetry-instrumentation-asyncio" },
-    { name = "opentelemetry-instrumentation-celery" },
-    { name = "opentelemetry-instrumentation-fastapi" },
-    { name = "opentelemetry-instrumentation-httpx" },
-    { name = "opentelemetry-instrumentation-logging" },
-    { name = "opentelemetry-instrumentation-redis" },
-    { name = "opentelemetry-instrumentation-sqlalchemy" },
-    { name = "opentelemetry-sdk" },
-    { name = "orjson" },
-    { name = "prometheus-client" },
-    { name = "psutil" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pwdlib" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pymysql" },
-    { name = "pyrate-limiter" },
-    { name = "python-jose" },
-    { name = "python-socketio" },
-    { name = "redis", extra = ["hiredis"] },
-    { name = "rtoml" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-    { name = "sqlalchemy-crud-plus" },
-    { name = "sqlparse" },
-    { name = "starlette-context" },
-    { name = "tiktoken" },
-    { name = "user-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-sugar" },
-]
-lint = [
-    { name = "prek" },
-]
-server = [
-    { name = "aio-pika" },
-    { name = "wait-for-it" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alembic", specifier = ">=1.18.4" },
-    { name = "asgiref", specifier = ">=3.11.1" },
-    { name = "asyncmy", specifier = ">=0.2.11" },
-    { name = "asyncpg", specifier = ">=0.31.0" },
-    { name = "backoff", specifier = ">=2.2.0" },
-    { name = "bcrypt", specifier = ">=5.0.0" },
-    { name = "cachebox", specifier = ">=5.2.2" },
-    { name = "cappa", specifier = ">=0.31.0" },
-    { name = "celery", specifier = ">=5.6.2" },
-    { name = "celery-aio-pool", specifier = ">=0.1.0rc8" },
-    { name = "cryptography", specifier = ">=46.0.5" },
-    { name = "dulwich", specifier = ">=1.0.0" },
-    { name = "fast-captcha", specifier = ">=0.3.2" },
-    { name = "fastapi", extras = ["standard-no-fastapi-cloud-cli"], specifier = ">=0.129.0" },
-    { name = "fastapi-pagination", specifier = ">=0.15.10" },
-    { name = "flower", specifier = ">=2.0.1" },
-    { name = "gevent", specifier = ">=25.9.1" },
-    { name = "granian", specifier = ">=2.7.1" },
-    { name = "ip2loc", specifier = ">=1.0.0" },
-    { name = "itsdangerous", specifier = ">=2.2.0" },
-    { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "litellm", extras = ["proxy"], specifier = ">=1.50.0" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "msgspec", specifier = ">=0.20.0" },
-    { name = "opendal", specifier = ">=0.46.0" },
-    { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.39.1" },
-    { name = "opentelemetry-instrumentation-asyncio", specifier = ">=0.60b1" },
-    { name = "opentelemetry-instrumentation-celery", specifier = ">=0.60b1" },
-    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.60b1" },
-    { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.60b1" },
-    { name = "opentelemetry-instrumentation-logging", specifier = ">=0.60b1" },
-    { name = "opentelemetry-instrumentation-redis", specifier = ">=0.60b1" },
-    { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.60b1" },
-    { name = "opentelemetry-sdk", specifier = ">=1.39.1" },
-    { name = "orjson", specifier = ">=3.10.0" },
-    { name = "prometheus-client", specifier = ">=0.24.1" },
-    { name = "psutil", specifier = ">=7.2.2" },
-    { name = "psycopg", extras = ["binary"], specifier = "==3.2.10" },
-    { name = "pwdlib", specifier = ">=0.3.0" },
-    { name = "pydantic", specifier = ">=2.12.5" },
-    { name = "pydantic-settings", specifier = ">=2.12.0" },
-    { name = "pymysql", specifier = ">=1.1.2" },
-    { name = "pyrate-limiter", specifier = ">=4.0.2" },
-    { name = "python-jose", specifier = ">=3.5.0" },
-    { name = "python-socketio", specifier = ">=5.16.1" },
-    { name = "redis", extras = ["hiredis"], specifier = ">=7.1.1" },
-    { name = "rtoml", specifier = ">=0.13.0" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.46" },
-    { name = "sqlalchemy-crud-plus", specifier = ">=1.13.1" },
-    { name = "sqlparse", specifier = ">=0.5.5" },
-    { name = "starlette-context", specifier = ">=0.4.0" },
-    { name = "tiktoken", specifier = ">=0.7.0" },
-    { name = "user-agents", specifier = ">=2.2.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest-sugar", specifier = ">=1.1.1" },
-]
-lint = [{ name = "prek", specifier = ">=0.3.2" }]
-server = [
-    { name = "aio-pika", specifier = ">=9.5.8" },
-    { name = "wait-for-it", specifier = ">=2.3.0" },
-]
-
-[[package]]
 name = "fastapi-cli"
 version = "0.0.21"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
@@ -2051,6 +1911,148 @@ source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/0f/4c/751061ffa58615a32c31b2d82e8482be8dd4a89154f003147acee90f2be9/httpx_sse-0.4.3.tar.gz", hash = "sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d" }
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/d2/fd/6668e5aec43ab844de6fc74927e155a3b37bf40d7c3790e49fc0406b6578/httpx_sse-0.4.3-py3-none-any.whl", hash = "sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc" },
+]
+
+[[package]]
+name = "huanxing-backend"
+source = { editable = "." }
+dependencies = [
+    { name = "alembic" },
+    { name = "asgiref" },
+    { name = "asyncmy" },
+    { name = "asyncpg" },
+    { name = "backoff" },
+    { name = "bcrypt" },
+    { name = "cachebox" },
+    { name = "cappa" },
+    { name = "celery" },
+    { name = "celery-aio-pool" },
+    { name = "cryptography" },
+    { name = "dulwich" },
+    { name = "fast-captcha" },
+    { name = "fastapi", extra = ["standard-no-fastapi-cloud-cli"] },
+    { name = "fastapi-pagination" },
+    { name = "flower" },
+    { name = "gevent" },
+    { name = "granian" },
+    { name = "ip2loc" },
+    { name = "itsdangerous" },
+    { name = "jinja2" },
+    { name = "litellm", extra = ["proxy"] },
+    { name = "loguru" },
+    { name = "msgspec" },
+    { name = "opendal" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-instrumentation-asyncio" },
+    { name = "opentelemetry-instrumentation-celery" },
+    { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "opentelemetry-instrumentation-httpx" },
+    { name = "opentelemetry-instrumentation-logging" },
+    { name = "opentelemetry-instrumentation-redis" },
+    { name = "opentelemetry-instrumentation-sqlalchemy" },
+    { name = "opentelemetry-sdk" },
+    { name = "orjson" },
+    { name = "passlib" },
+    { name = "prometheus-client" },
+    { name = "psutil" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pwdlib" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pymysql" },
+    { name = "pyrate-limiter" },
+    { name = "python-jose" },
+    { name = "python-socketio" },
+    { name = "redis", extra = ["hiredis"] },
+    { name = "rtoml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "sqlalchemy-crud-plus" },
+    { name = "sqlparse" },
+    { name = "starlette-context" },
+    { name = "tiktoken" },
+    { name = "user-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-sugar" },
+]
+lint = [
+    { name = "prek" },
+]
+server = [
+    { name = "aio-pika" },
+    { name = "wait-for-it" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alembic", specifier = ">=1.18.4" },
+    { name = "asgiref", specifier = ">=3.11.1" },
+    { name = "asyncmy", specifier = ">=0.2.11" },
+    { name = "asyncpg", specifier = ">=0.31.0" },
+    { name = "backoff", specifier = ">=2.2.0" },
+    { name = "bcrypt", specifier = ">=5.0.0" },
+    { name = "cachebox", specifier = ">=5.2.2" },
+    { name = "cappa", specifier = ">=0.31.0" },
+    { name = "celery", specifier = ">=5.6.2" },
+    { name = "celery-aio-pool", specifier = ">=0.1.0rc8" },
+    { name = "cryptography", specifier = ">=46.0.5" },
+    { name = "dulwich", specifier = ">=1.0.0" },
+    { name = "fast-captcha", specifier = ">=0.3.2" },
+    { name = "fastapi", extras = ["standard-no-fastapi-cloud-cli"], specifier = ">=0.129.0" },
+    { name = "fastapi-pagination", specifier = ">=0.15.10" },
+    { name = "flower", specifier = ">=2.0.1" },
+    { name = "gevent", specifier = ">=25.9.1" },
+    { name = "granian", specifier = ">=2.7.1" },
+    { name = "ip2loc", specifier = ">=1.0.0" },
+    { name = "itsdangerous", specifier = ">=2.2.0" },
+    { name = "jinja2", specifier = ">=3.1.6" },
+    { name = "litellm", extras = ["proxy"], specifier = ">=1.50.0" },
+    { name = "loguru", specifier = ">=0.7.3" },
+    { name = "msgspec", specifier = ">=0.20.0" },
+    { name = "opendal", specifier = ">=0.46.0" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.39.1" },
+    { name = "opentelemetry-instrumentation-asyncio", specifier = ">=0.60b1" },
+    { name = "opentelemetry-instrumentation-celery", specifier = ">=0.60b1" },
+    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.60b1" },
+    { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.60b1" },
+    { name = "opentelemetry-instrumentation-logging", specifier = ">=0.60b1" },
+    { name = "opentelemetry-instrumentation-redis", specifier = ">=0.60b1" },
+    { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.60b1" },
+    { name = "opentelemetry-sdk", specifier = ">=1.39.1" },
+    { name = "orjson", specifier = ">=3.10.0" },
+    { name = "passlib", specifier = ">=1.7.4" },
+    { name = "prometheus-client", specifier = ">=0.24.1" },
+    { name = "psutil", specifier = ">=7.2.2" },
+    { name = "psycopg", extras = ["binary"], specifier = "==3.2.10" },
+    { name = "pwdlib", specifier = ">=0.3.0" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pydantic-settings", specifier = ">=2.12.0" },
+    { name = "pymysql", specifier = ">=1.1.2" },
+    { name = "pyrate-limiter", specifier = ">=4.0.2" },
+    { name = "python-jose", specifier = ">=3.5.0" },
+    { name = "python-socketio", specifier = ">=5.16.1" },
+    { name = "redis", extras = ["hiredis"], specifier = ">=7.1.1" },
+    { name = "rtoml", specifier = ">=0.13.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.46" },
+    { name = "sqlalchemy-crud-plus", specifier = ">=1.13.1" },
+    { name = "sqlparse", specifier = ">=0.5.5" },
+    { name = "starlette-context", specifier = ">=0.4.0" },
+    { name = "tiktoken", specifier = ">=0.7.0" },
+    { name = "user-agents", specifier = ">=2.2.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-sugar", specifier = ">=1.1.1" },
+]
+lint = [{ name = "prek", specifier = ">=0.3.2" }]
+server = [
+    { name = "aio-pika", specifier = ">=9.5.8" },
+    { name = "wait-for-it", specifier = ">=2.3.0" },
 ]
 
 [[package]]
@@ -3130,6 +3132,15 @@ source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/fb/62/35bbd3d3021e008606cd0a9532db7850c65741bbf69ac8a3a0d8cfeb7934/pamqp-3.3.0.tar.gz", hash = "sha256:40b8795bd4efcf2b0f8821c1de83d12ca16d5760f4507836267fd7a02b06763b" }
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/ac/8d/c1e93296e109a320e508e38118cf7d1fc2a4d1c2ec64de78565b3c445eb5/pamqp-3.3.0-py2.py3-none-any.whl", hash = "sha256:c901a684794157ae39b52cbf700db8c9aae7a470f13528b9d7b4e5f7202f8eb0" },
+]
+
+[[package]]
+name = "passlib"
+version = "1.7.4"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/b6/06/9da9ee59a67fae7761aab3ccc84fa4f3f33f125b370f1ccdb915bf967c11/passlib-1.7.4.tar.gz", hash = "sha256:defd50f72b65c5402ab2c573830a6978e5f202ad0d984793c8dde2c4152ebe04" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/3b/a4/ab6b7589382ca3df236e03faa71deac88cae040af60c071a78d254a62172/passlib-1.7.4-py2.py3-none-any.whl", hash = "sha256:aa6bca462b8d8bda89c70b382f0c298a20b5560af6cbfa2dce410c0a2fb669f1" },
 ]
 
 [[package]]

@@ -180,4 +180,36 @@ class GatewayService:
             yield chunk
 
 
+    async def embedding(
+        self,
+        db: AsyncSession,
+        *,
+        api_key: str,
+        model: str,
+        input_text: str | list[str],
+        encoding_format: str | None = None,
+        dimensions: int | None = None,
+        ip_address: str | None = None,
+        app_code: str = 'huanxing',
+    ) -> dict:
+        """Embedding 调用"""
+        api_key_record = await api_key_service.verify_api_key(db, api_key)
+        rate_limits = await api_key_service.get_rate_limits(db, api_key_record)
+
+        return await llm_gateway.embedding(
+            db,
+            model_name=model,
+            input_text=input_text,
+            user_id=api_key_record.user_id,
+            api_key_id=api_key_record.id,
+            rpm_limit=rate_limits['rpm_limit'],
+            daily_limit=rate_limits['daily_token_limit'],
+            monthly_limit=rate_limits['monthly_token_limit'],
+            encoding_format=encoding_format,
+            dimensions=dimensions,
+            ip_address=ip_address,
+            app_code=app_code,
+        )
+
+
 gateway_service = GatewayService()

@@ -111,6 +111,7 @@ class Settings(BaseSettings):
         rf'^{FASTAPI_API_V1_PATH}/marketplace/client/.*$',  # 桌面端市场公开 API
         rf'^{FASTAPI_API_V1_PATH}/marketplace/download/.*$',  # 市场下载 API
         rf'^{FASTAPI_API_V1_PATH}/client/version/.*$',  # 桌面端版本检测公开 API
+        rf'^{FASTAPI_API_V1_PATH}/llm/proxy/v1/embeddings$',  # Embedding API（使用 x-api-key 认证）
     ]
 
     # 用户安全

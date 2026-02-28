@@ -355,10 +355,13 @@ class LLMGateway:
                 if m.id not in existing_ids:
                     models_with_providers.append((m, p))
 
-        # 非熔断模型排前面，熔断模型排后面（保持各组内原有顺序）
+        # P1-2: 按熔断状态（未熔断优先）+ priority（大的优先）排序
         if models_with_providers:
             models_with_providers.sort(
-                key=lambda mp: 0 if self._get_circuit_breaker(mp[1].name).allow_request() else 1
+                key=lambda mp: (
+                    0 if self._get_circuit_breaker(mp[1].name).allow_request() else 1,
+                    -mp[0].priority,  # priority 越大越优先
+                )
             )
 
         return models_with_providers, original_alias
@@ -399,6 +402,7 @@ class LLMGateway:
         model_config: ModelConfig,
         provider: ModelProvider,
         request: ChatCompletionRequest,
+        timeout: int | None = None,
     ) -> dict[str, Any]:
         """构建 LiteLLM 调用参数"""
         # 解密 API Key
@@ -429,6 +433,7 @@ class LLMGateway:
             'messages': messages,
             'api_key': api_key,
             'stream': request.stream,
+            'timeout': timeout or 60,  # P0-2: 默认 60 秒超时
         }
 
         # 设置 API base URL
@@ -737,52 +742,18 @@ class LLMGateway:
         if not models_with_providers:
             raise ModelNotFoundError(request.model)
 
-        # 使用第一个可用模型
-        model_config, provider = models_with_providers[0]
-        credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
-        breaker = self._get_circuit_breaker(provider.name)
-
-        # 构建请求参数
-        params = self._build_litellm_params(model_config, provider, request)
-        request_id = usage_tracker.generate_request_id()
-
-        # 调试日志：记录请求详情
-        self._log_debug_request(params, provider.name, provider.api_base_url)
-
-        # 调用 LiteLLM
-        timer = RequestTimer().start()
-        try:
-            response = await self.litellm.acompletion(**params)
-            timer.stop()
-            breaker.record_success()
-
-            # 调试日志：记录响应详情
-            self._log_debug_response(response, is_streaming=False, elapsed_ms=timer.elapsed_ms)
-
-        except Exception as e:
-            timer.stop()
-            breaker.record_failure()
-
-            # 调试日志：记录错误详情
-            self._log_debug_error(e, provider.name, model_config.model_name)
-
-            # 记录错误
-            error_msg = self._get_error_message(e)
-            await usage_tracker.track_error(
+        # 使用故障转移调用（按优先级依次尝试多个模型）
+        response, model_config, provider, credit_rate, request_id, timer = \
+            await self._call_with_failover(
                 db,
+                models_with_providers=models_with_providers,
+                request=request,
                 user_id=user_id,
                 api_key_id=api_key_id,
-                model_id=model_config.id,
-                provider_id=provider.id,
-                request_id=request_id,
-                model_name=model_config.model_name,
-                error_message=error_msg,
-                latency_ms=timer.elapsed_ms,
-                is_streaming=False,
                 ip_address=ip_address,
+                is_streaming=False,
+                original_alias=original_alias,
             )
-
-            raise LLMGatewayError(error_msg)
 
         # 提取用量信息
         usage = response.get('usage', {})
@@ -923,139 +894,181 @@ class LLMGateway:
         if not models_with_providers:
             raise ModelNotFoundError(request.model)
 
-        # 使用第一个可用模型
-        model_config, provider = models_with_providers[0]
-        credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
-        response_model_name = original_alias or model_config.model_name
-        breaker = self._get_circuit_breaker(provider.name)
+        last_error = None
+        tried_models = []
 
-        # 构建请求参数
-        params = self._build_litellm_params(model_config, provider, request)
-        params['stream'] = True
-        request_id = usage_tracker.generate_request_id()
+        for model_config, provider in models_with_providers:
+            breaker = self._get_circuit_breaker(provider.name)
+            credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
+            response_model_name = original_alias or model_config.model_name
+            tried_models.append(model_config.model_name)
 
-        # 调试日志：记录请求详情
-        self._log_debug_request(params, provider.name, provider.api_base_url)
+            # 构建请求参数
+            params = self._build_litellm_params(model_config, provider, request, timeout=120)
+            params['stream'] = True
+            # P1-3: 请求精确 token 计数
+            params['stream_options'] = {'include_usage': True}
+            request_id = usage_tracker.generate_request_id()
 
-        timer = RequestTimer().start()
-        total_tokens = 0
-        content_buffer = ''
-
-        try:
-            response = await self.litellm.acompletion(**params)
-
-            async for chunk in response:
-                choices = chunk.get('choices', [])
-                if not choices:
-                    continue
-
-                delta = choices[0].get('delta', {})
-                content = delta.get('content', '')
-                if content:
-                    content_buffer += content
-                    total_tokens += 1  # 简单估算
-
-                # 构建 SSE 数据
-                chunk_data = ChatCompletionChunk(
-                    id=request_id,
-                    created=int(time.time()),
-                    model=response_model_name,
-                    choices=[
-                        ChatCompletionChunkChoice(
-                            index=0,
-                            delta=ChatCompletionChunkDelta(
-                                role=delta.get('role'),
-                                content=content,
-                                tool_calls=delta.get('tool_calls'),
-                            ),
-                            finish_reason=choices[0].get('finish_reason'),
-                        )
-                    ],
-                )
-
-                yield f'data: {chunk_data.model_dump_json()}\n\n'
-
-            # 发送结束标记
-            yield 'data: [DONE]\n\n'
-
-            timer.stop()
-            breaker.record_success()
-
-            # 调试日志：记录流式响应完成
-            self._log_debug_response(None, is_streaming=True, elapsed_ms=timer.elapsed_ms)
-
-            # 估算 tokens（流式响应可能没有精确的 token 计数）
-            input_tokens = len(str(request.messages)) // 4  # 粗略估算
-            output_tokens = len(content_buffer) // 4
-
-            # 计算并扣除积分
-            credits_used = credit_service.calculate_credits(
-                input_tokens, output_tokens, credit_rate, model_name=model_config.model_name
+            log.info(
+                f'[LLM Gateway] 流式故障转移尝试模型: {model_config.model_name} '
+                f'(供应商: {provider.name})'
+                + (f' [别名: {original_alias}]' if original_alias else '')
             )
-            if credits_used > 0:
-                await credit_service.deduct_credits(
+
+            # 调试日志：记录请求详情
+            self._log_debug_request(params, provider.name, provider.api_base_url)
+
+            timer = RequestTimer().start()
+            content_buffer = ''
+            # P1-3: 从流式最后一个 chunk 获取精确 token 数
+            stream_input_tokens = 0
+            stream_output_tokens = 0
+            stream_success = False
+
+            try:
+                response = await self.litellm.acompletion(**params)
+
+                async for chunk in response:
+                    choices = chunk.get('choices', [])
+
+                    # P1-3: 提取精确 usage（最后一个 chunk 可能包含）
+                    chunk_usage = chunk.get('usage')
+                    if chunk_usage:
+                        stream_input_tokens = chunk_usage.get('prompt_tokens', stream_input_tokens)
+                        stream_output_tokens = chunk_usage.get('completion_tokens', stream_output_tokens)
+
+                    if not choices:
+                        continue
+
+                    delta = choices[0].get('delta', {})
+                    content = delta.get('content', '')
+                    if content:
+                        content_buffer += content
+
+                    # 构建 SSE 数据
+                    chunk_data = ChatCompletionChunk(
+                        id=request_id,
+                        created=int(time.time()),
+                        model=response_model_name,
+                        choices=[
+                            ChatCompletionChunkChoice(
+                                index=0,
+                                delta=ChatCompletionChunkDelta(
+                                    role=delta.get('role'),
+                                    content=content,
+                                    tool_calls=delta.get('tool_calls'),
+                                ),
+                                finish_reason=choices[0].get('finish_reason'),
+                            )
+                        ],
+                    )
+
+                    yield f'data: {chunk_data.model_dump_json()}\n\n'
+
+                # 发送结束标记
+                yield 'data: [DONE]\n\n'
+
+                timer.stop()
+                breaker.record_success()
+                stream_success = True
+
+                # 调试日志：记录流式响应完成
+                self._log_debug_response(None, is_streaming=True, elapsed_ms=timer.elapsed_ms)
+
+                # P1-3: 优先使用精确 token 数，回退到估算
+                if stream_input_tokens > 0 or stream_output_tokens > 0:
+                    input_tokens = stream_input_tokens
+                    output_tokens = stream_output_tokens
+                else:
+                    input_tokens = len(str(request.messages)) // 4
+                    output_tokens = len(content_buffer) // 4
+
+                # 计算并扣除积分
+                credits_used = credit_service.calculate_credits(
+                    input_tokens, output_tokens, credit_rate, model_name=model_config.model_name
+                )
+                if credits_used > 0:
+                    await credit_service.deduct_credits(
+                        db,
+                        user_id=user_id,
+                        credits=credits_used,
+                        reference_id=request_id,
+                        reference_type='llm_usage',
+                        description=f'模型调用(流式): {model_config.model_name}',
+                        extra_data={
+                            'model_name': model_config.model_name,
+                            'input_tokens': input_tokens,
+                            'output_tokens': output_tokens,
+                            'streaming': True,
+                        },
+                        app_code=app_code,
+                    )
+
+                # 记录用量
+                await usage_tracker.track_success(
                     db,
                     user_id=user_id,
-                    credits=credits_used,
-                    reference_id=request_id,
-                    reference_type='llm_usage',
-                    description=f'模型调用(流式): {model_config.model_name}',
-                    extra_data={
-                        'model_name': model_config.model_name,
-                        'input_tokens': input_tokens,
-                        'output_tokens': output_tokens,
-                        'streaming': True,
-                    },
-                    app_code=app_code,
+                    api_key_id=api_key_id,
+                    model_id=model_config.id,
+                    provider_id=provider.id,
+                    request_id=request_id,
+                    model_name=model_config.model_name,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    input_cost_per_1k=model_config.input_cost_per_1k,
+                    output_cost_per_1k=model_config.output_cost_per_1k,
+                    latency_ms=timer.elapsed_ms,
+                    is_streaming=True,
+                    ip_address=ip_address,
                 )
 
-            # 记录用量
-            await usage_tracker.track_success(
-                db,
-                user_id=user_id,
-                api_key_id=api_key_id,
-                model_id=model_config.id,
-                provider_id=provider.id,
-                request_id=request_id,
-                model_name=model_config.model_name,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                input_cost_per_1k=model_config.input_cost_per_1k,
-                output_cost_per_1k=model_config.output_cost_per_1k,
-                latency_ms=timer.elapsed_ms,
-                is_streaming=True,
-                ip_address=ip_address,
-            )
+                # 消费 tokens
+                await rate_limiter.consume_tokens(api_key_id, input_tokens + output_tokens)
 
-            # 消费 tokens
-            await rate_limiter.consume_tokens(api_key_id, input_tokens + output_tokens)
+                log.info(
+                    f'[LLM Gateway] 流式模型调用成功: {model_config.model_name} '
+                    f'(耗时: {timer.elapsed_ms}ms, tokens: in={input_tokens} out={output_tokens})'
+                )
 
-        except Exception as e:
-            timer.stop()
-            breaker.record_failure()
+                # 成功，直接返回
+                return
 
-            # 调试日志：记录错误详情
-            self._log_debug_error(e, provider.name, model_config.model_name)
+            except Exception as e:
+                timer.stop()
+                breaker.record_failure()
+                last_error = e
 
-            # 记录错误
-            error_msg = self._get_error_message(e)
-            await usage_tracker.track_error(
-                db,
-                user_id=user_id,
-                api_key_id=api_key_id,
-                model_id=model_config.id,
-                provider_id=provider.id,
-                request_id=request_id,
-                model_name=model_config.model_name,
-                error_message=error_msg,
-                latency_ms=timer.elapsed_ms,
-                is_streaming=True,
-                ip_address=ip_address,
-            )
+                # 调试日志：记录错误详情
+                self._log_debug_error(e, provider.name, model_config.model_name)
 
-            # 发送错误
-            error_data = {'error': {'message': error_msg, 'type': 'gateway_error'}}
-            yield f'data: {json.dumps(error_data)}\n\n'
+                # 记录错误
+                error_msg = self._get_error_message(e)
+                log.warning(
+                    f'[LLM Gateway] 流式模型调用失败: {model_config.model_name} '
+                    f'(供应商: {provider.name}, 错误: {error_msg})，尝试下一个...'
+                )
+                await usage_tracker.track_error(
+                    db,
+                    user_id=user_id,
+                    api_key_id=api_key_id,
+                    model_id=model_config.id,
+                    provider_id=provider.id,
+                    request_id=request_id,
+                    model_name=model_config.model_name,
+                    error_message=error_msg,
+                    latency_ms=timer.elapsed_ms,
+                    is_streaming=True,
+                    ip_address=ip_address,
+                )
+
+                continue
+
+        # 所有模型都失败了
+        error_msg = f'All streaming models failed. Tried: {tried_models}. Last error: {last_error}'
+        log.error(f'[LLM Gateway] {error_msg}')
+        error_data = {'error': {'message': error_msg, 'type': 'gateway_error'}}
+        yield f'data: {json.dumps(error_data)}\n\n'
 
 
     # ==================== Anthropic 格式接口 ====================
@@ -1069,6 +1082,7 @@ class LLMGateway:
         model_config: ModelConfig,
         provider: ModelProvider,
         request: 'AnthropicMessageRequest',
+        timeout: int | None = None,
     ) -> dict[str, Any]:
         """
         构建 LiteLLM Anthropic 调用参数
@@ -1124,6 +1138,7 @@ class LLMGateway:
             'max_tokens': effective_max_tokens,
             'api_key': api_key,
             'stream': request.stream,
+            'timeout': timeout or 60,  # P0-2: 默认 60 秒超时
         }
 
         # 设置 API base URL
@@ -1352,7 +1367,7 @@ class LLMGateway:
         candidates = []
         for model_config, provider in models_with_providers:
             credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
-            params = self._build_anthropic_params(model_config, provider, request)
+            params = self._build_anthropic_params(model_config, provider, request, timeout=120)
             params['stream'] = True
             
             candidates.append({
@@ -1729,6 +1744,121 @@ class LLMGateway:
         )
         async for chunk in self.execute_anthropic_stream(context):
             yield chunk
+
+
+    async def embedding(
+        self,
+        db: AsyncSession,
+        *,
+        model_name: str,
+        input_text: str | list[str],
+        user_id: int,
+        api_key_id: int,
+        rpm_limit: int,
+        daily_limit: int,
+        monthly_limit: int,
+        encoding_format: str | None = None,
+        dimensions: int | None = None,
+        ip_address: str | None = None,
+        app_code: str = 'huanxing',
+    ) -> dict:
+        """
+        Embedding 调用
+
+        通过 litellm.aembedding 转发到对应供应商
+        """
+        # 检查速率限制
+        await rate_limiter.check_all(
+            api_key_id,
+            rpm_limit=rpm_limit,
+            daily_limit=daily_limit,
+            monthly_limit=monthly_limit,
+        )
+
+        # 检查用户积分
+        await credit_service.check_credits(db, user_id, app_code=app_code)
+
+        # 解析模型
+        models_with_providers, original_alias = await self._resolve_models(db, model_name)
+        if not models_with_providers:
+            raise ModelNotFoundError(model_name)
+
+        model_config, provider = models_with_providers[0]
+        breaker = self._get_circuit_breaker(provider.name)
+
+        # 解密 API Key
+        api_key = None
+        if provider.api_key_encrypted:
+            try:
+                api_key = key_encryption.decrypt(provider.api_key_encrypted)
+            except Exception as e:
+                log.error(f'[LLM Gateway] 解密供应商 {provider.name} 的 API Key 失败: {e}')
+                raise ProviderUnavailableError(f'供应商 {provider.name} 的 API Key 解密失败')
+
+        # 构建模型名称
+        has_custom_api_base = bool(provider.api_base_url)
+        litellm_model = self._build_model_name(
+            model_config.model_name, provider.provider_type, force_prefix=has_custom_api_base
+        )
+
+        params: dict = {
+            'model': litellm_model,
+            'input': input_text,
+            'api_key': api_key,
+            'encoding_format': 'float',
+        }
+        if provider.api_base_url:
+            params['api_base'] = provider.api_base_url
+        if encoding_format:
+            params['encoding_format'] = encoding_format
+        if dimensions:
+            params['dimensions'] = dimensions
+
+        log.info(
+            f'[LLM Gateway] Embedding 调用: model={litellm_model}, provider={provider.name}, '
+            f'api_base={provider.api_base_url}, input_count={len(input_text) if isinstance(input_text, list) else 1}'
+        )
+
+        # 调用 litellm
+        timer = RequestTimer().start()
+        try:
+            response = await self.litellm.aembedding(**params)
+            timer.stop()
+            breaker.record_success()
+
+            # 记录用量
+            usage = getattr(response, 'usage', None)
+            prompt_tokens = getattr(usage, 'prompt_tokens', 0) if usage else 0
+            total_tokens = getattr(usage, 'total_tokens', 0) if usage else 0
+
+            request_id = usage_tracker.generate_request_id()
+            try:
+                await usage_tracker.track_success(
+                    db,
+                    user_id=user_id,
+                    api_key_id=api_key_id,
+                    model_id=model_config.id,
+                    provider_id=provider.id,
+                    request_id=request_id,
+                    model_name=model_config.model_name,
+                    input_tokens=prompt_tokens,
+                    output_tokens=0,
+                    input_cost_per_1k=Decimal('0'),
+                    output_cost_per_1k=Decimal('0'),
+                    latency_ms=timer.elapsed_ms,
+                    ip_address=ip_address,
+                )
+            except Exception as e:
+                log.warning(f'[LLM Gateway] Embedding 用量记录失败(不影响结果): {e}')
+
+            return response
+
+        except Exception as e:
+            timer.stop()
+            breaker.record_failure()
+            error_msg = self._get_error_message(e)
+            log.error(f'[LLM Gateway] Embedding 调用失败: {error_msg}')
+            raise LLMGatewayError(f'Embedding 调用失败: {error_msg}')
 
 
 # 创建全局网关实例

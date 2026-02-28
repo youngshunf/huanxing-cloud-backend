@@ -18,3 +18,5 @@ venv/
 
 # Production env (contains secrets)
 backend/.env.prod
+*.pyc
+__pycache__/

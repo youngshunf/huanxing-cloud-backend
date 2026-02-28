@@ -16,7 +16,7 @@ class CircuitBreaker:
         name: str,
         failure_threshold: int | None = None,
         recovery_timeout: int | None = None,
-        half_open_max_calls: int = 3,
+        half_open_max_calls: int = 5,
     ) -> None:
         """
         初始化熔断器
@@ -27,8 +27,8 @@ class CircuitBreaker:
         :param half_open_max_calls: 半开状态最大调用次数
         """
         self.name = name
-        self.failure_threshold = failure_threshold or getattr(settings, 'LLM_CIRCUIT_BREAKER_THRESHOLD', 5)
-        self.recovery_timeout = recovery_timeout or getattr(settings, 'LLM_CIRCUIT_BREAKER_TIMEOUT', 30)
+        self.failure_threshold = failure_threshold or getattr(settings, 'LLM_CIRCUIT_BREAKER_THRESHOLD', 10)
+        self.recovery_timeout = recovery_timeout or getattr(settings, 'LLM_CIRCUIT_BREAKER_TIMEOUT', 60)
         self.half_open_max_calls = half_open_max_calls
 
         self._state = CircuitState.CLOSED
