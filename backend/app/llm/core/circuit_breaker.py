@@ -41,6 +41,9 @@ class CircuitBreaker:
     @property
     def state(self) -> CircuitState:
         """获取当前状态"""
+        # N3: CLOSED 状态快速返回
+        if self._state == CircuitState.CLOSED:
+            return self._state
         with self._lock:
             self._check_state_transition()
             return self._state
@@ -61,8 +64,14 @@ class CircuitBreaker:
         """
         检查是否允许请求
 
+        N3 优化：CLOSED 状态下无锁快速路径，避免不必要的锁竞争
+
         :return: True 允许，False 拒绝
         """
+        # 快速路径：CLOSED 状态下直接返回（读取 enum 是原子操作）
+        if self._state == CircuitState.CLOSED:
+            return True
+
         with self._lock:
             self._check_state_transition()
 

@@ -82,3 +82,23 @@ async def update_provider(db: CurrentSession, pk: int, obj: UpdateProviderParam)
 async def delete_provider(db: CurrentSession, pk: int) -> ResponseSchemaModel:
     await provider_service.delete(db, pk)
     return response_base.success()
+
+
+@router.post(
+    '/{pk}/sync-models',
+    summary='一键同步供应商模型列表',
+    dependencies=[
+        Depends(RequestPermission('llm:provider:edit')),
+        DependsRBAC,
+    ],
+)
+async def sync_provider_models(db: CurrentSession, pk: int) -> ResponseSchemaModel:
+    """
+    调用供应商 /v1/models 接口获取模型列表，自动写入模型配置表。
+
+    - 已存在的模型自动跳过
+    - 根据模型名称智能推断类型（TEXT/REASONING/VISION/EMBEDDING等）和能力参数
+    - 返回同步结果统计
+    """
+    result = await provider_service.sync_models(db, pk)
+    return response_base.success(data=result)

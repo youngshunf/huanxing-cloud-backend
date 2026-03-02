@@ -66,10 +66,11 @@ class ApiKeyService:
         user_id: int | None = None,
         name: str | None = None,
         status: str | None = None,
+        user_keyword: str | None = None,
     ) -> dict[str, Any]:
         """获取所有 API Keys（管理员）"""
-        stmt = await user_api_key_dao.get_list(user_id=user_id, name=name, status=status)
-        page_data = await paging_data(db, stmt)
+        stmt = await user_api_key_dao.get_list(user_id=user_id, name=name, status=status, user_keyword=user_keyword)
+        page_data = await paging_data(db, stmt, unique=False)
         return page_data
 
     @staticmethod

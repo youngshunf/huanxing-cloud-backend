@@ -36,9 +36,29 @@ async def get_all_api_keys(
     user_id: Annotated[int | None, Query(description='用户 ID')] = None,
     name: Annotated[str | None, Query(description='Key 名称')] = None,
     status: Annotated[str | None, Query(description='状态')] = None,
+    user_keyword: Annotated[str | None, Query(description='用户昵称/手机号搜索')] = None,
 ) -> ResponseSchemaModel[PageData[GetUserApiKeyList]]:
-    page_data = await api_key_service.get_all_keys(db, user_id=user_id, name=name, status=status)
+    page_data = await api_key_service.get_all_keys(db, user_id=user_id, name=name, status=status, user_keyword=user_keyword)
     return response_base.success(data=page_data)
+
+
+@router.get(
+    '/admin/{pk}/full-key',
+    summary='获取完整 API Key（管理员）',
+    dependencies=[
+        Depends(RequestPermission('llm:api-key:list')),
+        DependsRBAC,
+    ],
+)
+async def get_full_api_key(db: CurrentSession, pk: int) -> ResponseSchemaModel:
+    from backend.app.llm.core.encryption import key_encryption
+    api_key = await api_key_service.get(db, pk)
+    try:
+        full_key = key_encryption.decrypt(api_key.key_encrypted)
+    except Exception:
+        from backend.common.exception import errors
+        raise errors.ServerError(msg='API Key 解密失败')
+    return response_base.success(data={'api_key': full_key})
 
 
 @router.get(

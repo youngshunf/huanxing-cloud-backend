@@ -1,9 +1,10 @@
 """用户 API Key CRUD"""
 
-from sqlalchemy import Select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy_crud_plus import CRUDPlus
 
+from backend.app.admin.model.user import User
 from backend.app.llm.model.user_api_key import UserApiKey
 from backend.app.llm.schema.user_api_key import CreateUserApiKeyParam, UpdateUserApiKeyParam
 from backend.utils.timezone import timezone
@@ -27,15 +28,40 @@ class CRUDUserApiKey(CRUDPlus[UserApiKey]):
         user_id: int | None = None,
         name: str | None = None,
         status: str | None = None,
+        user_keyword: str | None = None,
     ) -> Select:
-        filters = {}
+        stmt = (
+            select(
+                UserApiKey.id,
+                UserApiKey.user_id,
+                User.nickname.label('user_nickname'),
+                User.phone.label('user_phone'),
+                UserApiKey.name,
+                UserApiKey.key_prefix,
+                UserApiKey.status,
+                UserApiKey.expires_at,
+                UserApiKey.rate_limit_config_id,
+                UserApiKey.custom_daily_tokens,
+                UserApiKey.custom_monthly_tokens,
+                UserApiKey.custom_rpm_limit,
+                UserApiKey.allowed_models,
+                UserApiKey.last_used_at,
+                UserApiKey.created_time,
+            )
+            .outerjoin(User, UserApiKey.user_id == User.id)
+            .order_by(UserApiKey.id.desc())
+        )
         if user_id is not None:
-            filters['user_id'] = user_id
+            stmt = stmt.where(UserApiKey.user_id == user_id)
         if name is not None:
-            filters['name__like'] = f'%{name}%'
+            stmt = stmt.where(UserApiKey.name.like(f'%{name}%'))
         if status is not None:
-            filters['status'] = status
-        return await self.select_order('id', 'desc', **filters)
+            stmt = stmt.where(UserApiKey.status == status)
+        if user_keyword is not None:
+            stmt = stmt.where(
+                User.nickname.like(f'%{user_keyword}%') | User.phone.like(f'%{user_keyword}%')
+            )
+        return stmt
 
     async def get_user_keys(self, db: AsyncSession, user_id: int) -> list[UserApiKey]:
         stmt = await self.select_order('id', 'desc', user_id=user_id)

@@ -119,7 +119,7 @@ async def phone_login(
         # 自动注册新用户
         is_new_user = True
         username = phone  # 使用手机号作为用户名
-        nickname = f'用户{phone[-4:]}'
+        nickname = f'{phone[:3]}****{phone[-4:]}'
 
         # 检查用户名是否已存在
         existing = await user_dao.get_by_username(db, username)

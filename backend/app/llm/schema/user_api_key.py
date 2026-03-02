@@ -71,10 +71,20 @@ class GetUserApiKeyDetail(SchemaBase):
 class GetUserApiKeyList(SchemaBase):
     """用户 API Key 列表项"""
 
+    model_config = {'from_attributes': True}
+
     id: int
+    user_id: int | None = None
+    user_nickname: str | None = Field(default=None, description='用户昵称')
+    user_phone: str | None = Field(default=None, description='用户手机号')
     name: str
     key_prefix: str
     status: str
     expires_at: datetime | None = None
+    rate_limit_config_id: int | None = None
+    custom_daily_tokens: int | None = None
+    custom_monthly_tokens: int | None = None
+    custom_rpm_limit: int | None = None
+    allowed_models: list[int] | None = None
     last_used_at: datetime | None = None
     created_time: datetime

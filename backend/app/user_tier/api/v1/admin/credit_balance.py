@@ -9,7 +9,9 @@ from backend.app.user_tier.schema.user_credit_balance import (
     GetUserCreditBalanceDetail,
     UpdateUserCreditBalanceParam,
 )
+from backend.app.user_tier.schema.grant_credits import GrantCreditsParam, GrantCreditsResult
 from backend.app.user_tier.service.user_credit_balance_service import user_credit_balance_service
+from backend.app.user_tier.service.credit_service import credit_service
 from backend.common.pagination import DependsPagination, PageData
 from backend.common.response.response_schema import ResponseModel, ResponseSchemaModel, response_base
 from backend.common.security.jwt import DependsJwtAuth
@@ -121,3 +123,54 @@ async def delete_user_credit_balances(
     if count > 0:
         return response_base.success()
     return response_base.fail()
+
+
+
+@router.post(
+    '/grant',
+    summary='管理员赠送积分',
+    dependencies=[
+        Depends(RequestPermission('user:credit:balance:add')),
+        DependsRBAC,
+    ],
+)
+async def grant_credits(db: CurrentSessionTransaction, obj: GrantCreditsParam) -> ResponseSchemaModel[GrantCreditsResult]:
+    """
+    管理员批量赠送积分给用户
+
+    - 支持单用户或多用户批量赠送
+    - 积分类型自动标记为 official_grant（官方赠送）
+    - 记录完整的积分交易日志
+    """
+    from decimal import Decimal
+    from backend.utils.timezone import timezone
+
+    success_count = 0
+    failed_count = 0
+    details = []
+
+    for user_id in obj.user_ids:
+        try:
+            await credit_service.add_credits(
+                db=db,
+                user_id=user_id,
+                credits=obj.amount,
+                transaction_type='official_grant',
+                reference_type='system',
+                description=obj.description or '管理员赠送积分',
+                is_purchased=False,
+                expires_at=obj.expires_at,
+            )
+            success_count += 1
+            details.append({'user_id': user_id, 'status': 'success', 'credits': float(obj.amount)})
+        except Exception as e:
+            failed_count += 1
+            details.append({'user_id': user_id, 'status': 'failed', 'error': str(e)})
+
+    result = GrantCreditsResult(
+        success_count=success_count,
+        failed_count=failed_count,
+        total_credits=obj.amount * success_count,
+        details=details,
+    )
+    return response_base.success(data=result)

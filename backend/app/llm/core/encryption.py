@@ -53,7 +53,7 @@ class KeyEncryption:
         return hashlib.sha256(api_key.encode()).hexdigest()
 
     @staticmethod
-    def generate_api_key(prefix: str = 'sk-cf') -> tuple[str, str]:
+    def generate_api_key(prefix: str = 'sk-hx') -> tuple[str, str]:
         """
         生成 API Key
 

@@ -310,6 +310,11 @@ class LLMGateway:
         """
         统一模型解析：精确匹配 → 别名映射 → 同类型降级
 
+        N4 修复：统一熔断检查逻辑
+        - 所有阶段都不过滤熔断，统一加入候选列表
+        - 最终排序中统一处理（被熔断的排后面）
+        - 由 _call_with_failover 在实际调用前检查熔断状态
+
         Returns:
             (候选模型列表, 原始别名或 None)
         """
@@ -318,19 +323,16 @@ class LLMGateway:
         first_model_type = None
         first_model_id = None
 
-        # 第一步：精确匹配 model_config 表
+        # 第一步：精确匹配 model_config 表（不过滤熔断，统一交给排序处理）
         model = await model_config_dao.get_by_name(db, model_name)
         if model and model.enabled:
             provider = await provider_dao.get(db, model.provider_id)
             if provider and provider.enabled:
-                breaker = self._get_circuit_breaker(provider.name)
-                if breaker.allow_request():
-                    models_with_providers.append((model, provider))
-                # 即使熔断也记录类型，用于后续降级
+                models_with_providers.append((model, provider))
                 first_model_type = model.model_type
                 first_model_id = model.id
 
-        # 第二步：别名映射（精确匹配未命中或命中但供应商熔断时）
+        # 第二步：别名映射（精确匹配未命中时）
         if not models_with_providers:
             alias_models, original_alias = await self._resolve_model_alias(db, model_name)
             if alias_models:
@@ -355,7 +357,7 @@ class LLMGateway:
                 if m.id not in existing_ids:
                     models_with_providers.append((m, p))
 
-        # P1-2: 按熔断状态（未熔断优先）+ priority（大的优先）排序
+        # 按熔断状态（未熔断优先）+ priority（大的优先）排序
         if models_with_providers:
             models_with_providers.sort(
                 key=lambda mp: (
@@ -528,6 +530,14 @@ class LLMGateway:
         for model_config, provider in models_with_providers:
             breaker = self._get_circuit_breaker(provider.name)
 
+            # N4: 统一熔断检查 — 被熔断的供应商跳过，但不算最终失败
+            if not breaker.allow_request():
+                log.info(
+                    f'[LLM Gateway] 跳过已熔断供应商: {provider.name} '
+                    f'(模型: {model_config.model_name})'
+                )
+                continue
+
             # 获取积分费率
             credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
 
@@ -626,6 +636,15 @@ class LLMGateway:
 
         for model_config, provider in models_with_providers:
             breaker = self._get_circuit_breaker(provider.name)
+
+            # N4: 统一熔断检查 — 被熔断的供应商跳过
+            if not breaker.allow_request():
+                log.info(
+                    f'[LLM Gateway] 跳过已熔断供应商: {provider.name} '
+                    f'(模型: {model_config.model_name})'
+                )
+                continue
+
             tried_models.append(model_config.model_name)
 
             # 获取积分费率
@@ -896,9 +915,19 @@ class LLMGateway:
 
         last_error = None
         tried_models = []
+        has_sent_data = False  # N2: 跟踪是否已向客户端发送过数据
 
         for model_config, provider in models_with_providers:
             breaker = self._get_circuit_breaker(provider.name)
+
+            # N4: 统一熔断检查
+            if not breaker.allow_request():
+                log.info(
+                    f'[LLM Gateway] 跳过已熔断供应商: {provider.name} '
+                    f'(模型: {model_config.model_name})'
+                )
+                continue
+
             credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
             response_model_name = original_alias or model_config.model_name
             tried_models.append(model_config.model_name)
@@ -964,6 +993,7 @@ class LLMGateway:
                         ],
                     )
 
+                    has_sent_data = True  # N2: 标记已发送数据
                     yield f'data: {chunk_data.model_dump_json()}\n\n'
 
                 # 发送结束标记
@@ -1042,12 +1072,13 @@ class LLMGateway:
                 # 调试日志：记录错误详情
                 self._log_debug_error(e, provider.name, model_config.model_name)
 
-                # 记录错误
                 error_msg = self._get_error_message(e)
                 log.warning(
                     f'[LLM Gateway] 流式模型调用失败: {model_config.model_name} '
-                    f'(供应商: {provider.name}, 错误: {error_msg})，尝试下一个...'
+                    f'(供应商: {provider.name}, 错误: {error_msg})'
                 )
+
+                # 记录错误
                 await usage_tracker.track_error(
                     db,
                     user_id=user_id,
@@ -1062,6 +1093,17 @@ class LLMGateway:
                     ip_address=ip_address,
                 )
 
+                # N2: 如果已经发送过数据，不能 failover（会导致客户端收到混乱的响应）
+                if has_sent_data:
+                    log.error(
+                        f'[LLM Gateway] 流式传输中断，已发送部分数据，无法 failover: '
+                        f'{model_config.model_name}'
+                    )
+                    error_data = {'error': {'message': f'Stream interrupted: {error_msg}', 'type': 'stream_error'}}
+                    yield f'data: {json.dumps(error_data)}\n\n'
+                    return
+
+                log.info(f'[LLM Gateway] 尝试下一个模型...')
                 continue
 
         # 所有模型都失败了
@@ -1444,6 +1486,7 @@ class LLMGateway:
         
         last_error = None
         tried_models = []
+        has_sent_data = False  # N2: 跟踪是否已向客户端发送过数据
         
         for candidate in candidates:
             params = candidate['params']
@@ -1501,53 +1544,23 @@ class LLMGateway:
                     
                     chunk_count += 1
                     
-                    # 解析使用量信息（从 message_start 和 message_delta 事件）
+                    # N6: 使用统一的 chunk 格式化方法
                     if isinstance(chunk, bytes):
                         decoded = decoder.decode(chunk, final=False)
                         if decoded:
-                            # 尝试从 SSE 数据中提取使用量
-                            input_tokens, output_tokens = self._extract_usage_from_sse(
+                            formatted, input_tokens, output_tokens = self._format_anthropic_chunk(
                                 decoded, input_tokens, output_tokens
                             )
-                            yield decoded
-                    elif isinstance(chunk, str):
-                        input_tokens, output_tokens = self._extract_usage_from_sse(
+                            if formatted:
+                                has_sent_data = True  # N2
+                                yield formatted
+                    else:
+                        formatted, input_tokens, output_tokens = self._format_anthropic_chunk(
                             chunk, input_tokens, output_tokens
                         )
-                        yield chunk
-                    else:
-                        # 对象格式，直接提取使用量
-                        if isinstance(chunk, dict):
-                            chunk_type = chunk.get('type', '')
-                            # 从 message_start 获取 input_tokens
-                            if chunk_type == 'message_start':
-                                message = chunk.get('message', {})
-                                usage = message.get('usage', {})
-                                input_tokens = usage.get('input_tokens', input_tokens)
-                            # 从 message_delta 获取 output_tokens
-                            elif chunk_type == 'message_delta':
-                                usage = chunk.get('usage', {})
-                                output_tokens = usage.get('output_tokens', output_tokens)
-                            yield f'event: {chunk_type}\ndata: {json.dumps(chunk)}\n\n'
-                        elif hasattr(chunk, 'type'):
-                            chunk_type = getattr(chunk, 'type', 'unknown')
-                            # 从对象格式提取使用量
-                            if chunk_type == 'message_start' and hasattr(chunk, 'message'):
-                                message = chunk.message
-                                if hasattr(message, 'usage'):
-                                    input_tokens = getattr(message.usage, 'input_tokens', input_tokens)
-                            elif chunk_type == 'message_delta' and hasattr(chunk, 'usage'):
-                                output_tokens = getattr(chunk.usage, 'output_tokens', output_tokens)
-                            
-                            if hasattr(chunk, 'model_dump'):
-                                chunk_dict = chunk.model_dump()
-                            elif hasattr(chunk, 'dict'):
-                                chunk_dict = chunk.dict()
-                            else:
-                                chunk_dict = {'type': chunk_type, 'data': str(chunk)}
-                            yield f'event: {chunk_type}\ndata: {json.dumps(chunk_dict)}\n\n'
-                        else:
-                            yield f'data: {json.dumps({"type": "unknown", "content": str(chunk)})}\n\n'
+                        if formatted:
+                            has_sent_data = True  # N2
+                            yield formatted
                 
                 # 刷新解码器
                 final_decoded = decoder.decode(b'', final=True)
@@ -1599,8 +1612,8 @@ class LLMGateway:
                                     app_code=app_code,
                                 )
                             
-                            # 记录使用量
-                            await usage_tracker.track_success(
+                            # N5: 使用安全版本记录使用量（失败时自动缓冲到 Redis）
+                            await usage_tracker.track_success_safe(
                                 db,
                                 user_id=user_id,
                                 api_key_id=api_key_id,
@@ -1630,6 +1643,26 @@ class LLMGateway:
                             f'[LLM Gateway] 流式使用量记录失败: {track_error}\n'
                             f'{tb.format_exc()}'
                         )
+                        # N5: 兜底 — 至少把用量缓冲到 Redis，确保数据不丢失
+                        try:
+                            await usage_tracker.track_success_safe(
+                                None,
+                                user_id=user_id,
+                                api_key_id=api_key_id,
+                                model_id=model_id,
+                                provider_id=provider_id,
+                                request_id=request_id,
+                                model_name=model_name,
+                                input_tokens=input_tokens,
+                                output_tokens=output_tokens,
+                                input_cost_per_1k=Decimal(model_config.get('input_cost_per_1k', '0')),
+                                output_cost_per_1k=Decimal(model_config.get('output_cost_per_1k', '0')),
+                                latency_ms=timer.elapsed_ms,
+                                is_streaming=True,
+                                ip_address=ip_address,
+                            )
+                        except Exception:
+                            pass
                 else:
                     log.warning(
                         f'[LLM Gateway] 无法记录流式使用量: user_id={user_id}, api_key_id={api_key_id}')
@@ -1645,7 +1678,7 @@ class LLMGateway:
                 error_msg = self._get_error_message(e)
                 log.warning(
                     f'[LLM Gateway] Anthropic 流式模型调用失败: {model_name} '
-                    f'(供应商: {provider_name}, 错误: {error_msg})，尝试下一个...'
+                    f'(供应商: {provider_name}, 错误: {error_msg})'
                 )
                 
                 if self.debug_mode:
@@ -1672,6 +1705,23 @@ class LLMGateway:
                     except Exception as track_error:
                         log.error(f'[LLM Gateway] 流式错误记录失败: {track_error}')
                 
+                # N2: 如果已经发送过数据，不能 failover
+                if has_sent_data:
+                    log.error(
+                        f'[LLM Gateway] Anthropic 流式传输中断，已发送部分数据，无法 failover: '
+                        f'{model_name}'
+                    )
+                    error_event = {
+                        'type': 'error',
+                        'error': {
+                            'type': 'stream_interrupted',
+                            'message': f'Stream interrupted: {error_msg}',
+                        }
+                    }
+                    yield f'event: error\ndata: {json.dumps(error_event)}\n\n'
+                    return
+                
+                log.info(f'[LLM Gateway] 尝试下一个模型...')
                 continue
         
         # 所有模型都失败了
@@ -1686,6 +1736,55 @@ class LLMGateway:
             }
         }
         yield f'event: error\ndata: {json.dumps(error_event)}\n\n'
+
+    def _format_anthropic_chunk(
+        self, chunk: Any, input_tokens: int, output_tokens: int
+    ) -> tuple[str | None, int, int]:
+        """
+        N6: 统一格式化 Anthropic 流式 chunk
+
+        将不同格式的 chunk（bytes/str/dict/object）统一处理，
+        返回 (formatted_sse_string, updated_input_tokens, updated_output_tokens)
+
+        Returns:
+            tuple: (SSE 格式字符串或 None, 更新后的 input_tokens, 更新后的 output_tokens)
+        """
+        if isinstance(chunk, str):
+            input_tokens, output_tokens = self._extract_usage_from_sse(
+                chunk, input_tokens, output_tokens
+            )
+            return chunk, input_tokens, output_tokens
+
+        if isinstance(chunk, dict):
+            chunk_type = chunk.get('type', '')
+            if chunk_type == 'message_start':
+                message = chunk.get('message', {})
+                usage = message.get('usage', {})
+                input_tokens = usage.get('input_tokens', input_tokens)
+            elif chunk_type == 'message_delta':
+                usage = chunk.get('usage', {})
+                output_tokens = usage.get('output_tokens', output_tokens)
+            return f'event: {chunk_type}\ndata: {json.dumps(chunk)}\n\n', input_tokens, output_tokens
+
+        if hasattr(chunk, 'type'):
+            chunk_type = getattr(chunk, 'type', 'unknown')
+            if chunk_type == 'message_start' and hasattr(chunk, 'message'):
+                message = chunk.message
+                if hasattr(message, 'usage'):
+                    input_tokens = getattr(message.usage, 'input_tokens', input_tokens)
+            elif chunk_type == 'message_delta' and hasattr(chunk, 'usage'):
+                output_tokens = getattr(chunk.usage, 'output_tokens', output_tokens)
+
+            if hasattr(chunk, 'model_dump'):
+                chunk_dict = chunk.model_dump()
+            elif hasattr(chunk, 'dict'):
+                chunk_dict = chunk.dict()
+            else:
+                chunk_dict = {'type': chunk_type, 'data': str(chunk)}
+            return f'event: {chunk_type}\ndata: {json.dumps(chunk_dict)}\n\n', input_tokens, output_tokens
+
+        # 未知格式
+        return f'data: {json.dumps({"type": "unknown", "content": str(chunk)})}\n\n', input_tokens, output_tokens
 
     def _extract_usage_from_sse(self, data: str, current_input: int, current_output: int) -> tuple[int, int]:
         """
@@ -1763,9 +1862,9 @@ class LLMGateway:
         app_code: str = 'huanxing',
     ) -> dict:
         """
-        Embedding 调用
+        Embedding 调用 — 支持故障转移（N1 修复）
 
-        通过 litellm.aembedding 转发到对应供应商
+        通过 litellm.aembedding 转发到对应供应商，按优先级依次尝试候选模型
         """
         # 检查速率限制
         await rate_limiter.check_all(
@@ -1783,57 +1882,106 @@ class LLMGateway:
         if not models_with_providers:
             raise ModelNotFoundError(model_name)
 
-        model_config, provider = models_with_providers[0]
-        breaker = self._get_circuit_breaker(provider.name)
+        last_error = None
+        tried_models = []
 
-        # 解密 API Key
-        api_key = None
-        if provider.api_key_encrypted:
-            try:
-                api_key = key_encryption.decrypt(provider.api_key_encrypted)
-            except Exception as e:
-                log.error(f'[LLM Gateway] 解密供应商 {provider.name} 的 API Key 失败: {e}')
-                raise ProviderUnavailableError(f'供应商 {provider.name} 的 API Key 解密失败')
+        for model_config, provider in models_with_providers:
+            breaker = self._get_circuit_breaker(provider.name)
 
-        # 构建模型名称
-        has_custom_api_base = bool(provider.api_base_url)
-        litellm_model = self._build_model_name(
-            model_config.model_name, provider.provider_type, force_prefix=has_custom_api_base
-        )
+            # N4: 统一熔断检查
+            if not breaker.allow_request():
+                log.info(
+                    f'[LLM Gateway] 跳过已熔断供应商: {provider.name} '
+                    f'(模型: {model_config.model_name})'
+                )
+                continue
 
-        params: dict = {
-            'model': litellm_model,
-            'input': input_text,
-            'api_key': api_key,
-            'encoding_format': 'float',
-        }
-        if provider.api_base_url:
-            params['api_base'] = provider.api_base_url
-        if encoding_format:
-            params['encoding_format'] = encoding_format
-        if dimensions:
-            params['dimensions'] = dimensions
+            tried_models.append(model_config.model_name)
 
-        log.info(
-            f'[LLM Gateway] Embedding 调用: model={litellm_model}, provider={provider.name}, '
-            f'api_base={provider.api_base_url}, input_count={len(input_text) if isinstance(input_text, list) else 1}'
-        )
+            # 解密 API Key
+            api_key = None
+            if provider.api_key_encrypted:
+                try:
+                    api_key = key_encryption.decrypt(provider.api_key_encrypted)
+                except Exception as e:
+                    log.error(f'[LLM Gateway] 解密供应商 {provider.name} 的 API Key 失败: {e}')
+                    continue  # 解密失败，尝试下一个供应商
 
-        # 调用 litellm
-        timer = RequestTimer().start()
-        try:
-            response = await self.litellm.aembedding(**params)
-            timer.stop()
-            breaker.record_success()
+            # 构建模型名称
+            has_custom_api_base = bool(provider.api_base_url)
+            litellm_model = self._build_model_name(
+                model_config.model_name, provider.provider_type, force_prefix=has_custom_api_base
+            )
 
-            # 记录用量
-            usage = getattr(response, 'usage', None)
-            prompt_tokens = getattr(usage, 'prompt_tokens', 0) if usage else 0
-            total_tokens = getattr(usage, 'total_tokens', 0) if usage else 0
+            params: dict = {
+                'model': litellm_model,
+                'input': input_text,
+                'api_key': api_key,
+                'encoding_format': 'float',
+                'timeout': 60,
+            }
+            if provider.api_base_url:
+                params['api_base'] = provider.api_base_url
+            if encoding_format:
+                params['encoding_format'] = encoding_format
+            if dimensions:
+                params['dimensions'] = dimensions
 
             request_id = usage_tracker.generate_request_id()
+
+            log.info(
+                f'[LLM Gateway] Embedding 故障转移尝试: model={litellm_model}, '
+                f'provider={provider.name}, api_base={provider.api_base_url}'
+            )
+
+            timer = RequestTimer().start()
             try:
-                await usage_tracker.track_success(
+                response = await self.litellm.aembedding(**params)
+                timer.stop()
+                breaker.record_success()
+
+                # 记录用量
+                usage = getattr(response, 'usage', None)
+                prompt_tokens = getattr(usage, 'prompt_tokens', 0) if usage else 0
+
+                try:
+                    await usage_tracker.track_success(
+                        db,
+                        user_id=user_id,
+                        api_key_id=api_key_id,
+                        model_id=model_config.id,
+                        provider_id=provider.id,
+                        request_id=request_id,
+                        model_name=model_config.model_name,
+                        input_tokens=prompt_tokens,
+                        output_tokens=0,
+                        input_cost_per_1k=Decimal('0'),
+                        output_cost_per_1k=Decimal('0'),
+                        latency_ms=timer.elapsed_ms,
+                        ip_address=ip_address,
+                    )
+                except Exception as e:
+                    log.warning(f'[LLM Gateway] Embedding 用量记录失败(不影响结果): {e}')
+
+                log.info(
+                    f'[LLM Gateway] Embedding 调用成功: {model_config.model_name} '
+                    f'(耗时: {timer.elapsed_ms}ms)'
+                )
+                return response
+
+            except Exception as e:
+                timer.stop()
+                breaker.record_failure()
+                last_error = e
+
+                error_msg = self._get_error_message(e)
+                log.warning(
+                    f'[LLM Gateway] Embedding 调用失败: {model_config.model_name} '
+                    f'(供应商: {provider.name}, 错误: {error_msg})，尝试下一个...'
+                )
+
+                # 记录失败
+                await usage_tracker.track_error(
                     db,
                     user_id=user_id,
                     api_key_id=api_key_id,
@@ -1841,24 +1989,18 @@ class LLMGateway:
                     provider_id=provider.id,
                     request_id=request_id,
                     model_name=model_config.model_name,
-                    input_tokens=prompt_tokens,
-                    output_tokens=0,
-                    input_cost_per_1k=Decimal('0'),
-                    output_cost_per_1k=Decimal('0'),
+                    error_message=error_msg,
                     latency_ms=timer.elapsed_ms,
+                    is_streaming=False,
                     ip_address=ip_address,
                 )
-            except Exception as e:
-                log.warning(f'[LLM Gateway] Embedding 用量记录失败(不影响结果): {e}')
 
-            return response
+                continue
 
-        except Exception as e:
-            timer.stop()
-            breaker.record_failure()
-            error_msg = self._get_error_message(e)
-            log.error(f'[LLM Gateway] Embedding 调用失败: {error_msg}')
-            raise LLMGatewayError(f'Embedding 调用失败: {error_msg}')
+        # 所有模型都失败了
+        raise LLMGatewayError(
+            f'All embedding models failed. Tried: {tried_models}. Last error: {last_error}'
+        )
 
 
 # 创建全局网关实例

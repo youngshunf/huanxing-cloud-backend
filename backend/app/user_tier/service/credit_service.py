@@ -468,8 +468,15 @@ class CreditService:
         balance_before = await self.get_total_available_credits(db, user_id, app_code)
 
         # 创建积分余额记录
-        credit_type = 'purchased' if is_purchased else 'bonus'
-        source_type = 'purchase' if is_purchased else 'bonus'
+        if is_purchased:
+            credit_type = 'purchased'
+            source_type = 'purchase'
+        elif transaction_type == 'official_grant':
+            credit_type = 'official_grant'
+            source_type = 'official_grant'
+        else:
+            credit_type = 'bonus'
+            source_type = 'bonus'
         await self._create_balance_record(
             db,
             user_id=user_id,
