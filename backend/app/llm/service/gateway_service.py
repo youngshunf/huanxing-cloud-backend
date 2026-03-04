@@ -45,6 +45,7 @@ class GatewayService:
             request=request,
             user_id=api_key_record.user_id,
             api_key_id=api_key_record.id,
+            api_key_metadata=api_key_record.metadata_,
             rpm_limit=rate_limits['rpm_limit'],
             daily_limit=rate_limits['daily_token_limit'],
             monthly_limit=rate_limits['monthly_token_limit'],
@@ -74,6 +75,7 @@ class GatewayService:
         # 保存需要的信息
         user_id = api_key_record.user_id
         api_key_id = api_key_record.id
+        api_key_metadata = api_key_record.metadata_
         rpm_limit = rate_limits['rpm_limit']
         daily_limit = rate_limits['daily_token_limit']
         monthly_limit = rate_limits['monthly_token_limit']
@@ -85,6 +87,7 @@ class GatewayService:
                 request=request,
                 user_id=user_id,
                 api_key_id=api_key_id,
+                api_key_metadata=api_key_metadata,
                 rpm_limit=rpm_limit,
                 daily_limit=daily_limit,
                 monthly_limit=monthly_limit,
@@ -118,6 +121,7 @@ class GatewayService:
             request=request,
             user_id=api_key_record.user_id,
             api_key_id=api_key_record.id,
+            api_key_metadata=api_key_record.metadata_,
             rpm_limit=rate_limits['rpm_limit'],
             daily_limit=rate_limits['daily_token_limit'],
             monthly_limit=rate_limits['monthly_token_limit'],
@@ -162,6 +166,7 @@ class GatewayService:
             request=request,
             user_id=api_key_record.user_id,
             api_key_id=api_key_record.id,
+            api_key_metadata=api_key_record.metadata_,
             rpm_limit=rate_limits['rpm_limit'],
             daily_limit=rate_limits['daily_token_limit'],
             monthly_limit=rate_limits['monthly_token_limit'],

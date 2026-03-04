@@ -111,7 +111,7 @@ class Settings(BaseSettings):
         rf'^{FASTAPI_API_V1_PATH}/marketplace/client/.*$',  # 桌面端市场公开 API
         rf'^{FASTAPI_API_V1_PATH}/marketplace/download/.*$',  # 市场下载 API
         rf'^{FASTAPI_API_V1_PATH}/client/version/.*$',  # 桌面端版本检测公开 API
-        rf'^{FASTAPI_API_V1_PATH}/llm/proxy/v1/embeddings$',  # Embedding API（使用 x-api-key 认证）
+        rf'^{FASTAPI_API_V1_PATH}/llm/proxy(/.*)?$',  # LLM Proxy API（使用 x-api-key 认证，不走 JWT）
         rf'^{FASTAPI_API_V1_PATH}/huanxing/open/.*$',  # 唤星公开 API（分享文档等）
     ]
 
@@ -281,6 +281,14 @@ class Settings(BaseSettings):
     LLM_API_BASE_URL: str | None = None
     # LiteLLM 调试模式（生产环境建议关闭）
     LITELLM_DEBUG: bool = False
+
+    # 智能上下文压缩
+    LLM_COMPRESS_ENABLED: bool = True
+    LLM_COMPRESS_THRESHOLD_RATIO: float = 0.75
+    LLM_COMPRESS_MESSAGE_THRESHOLD: int = 100
+    LLM_COMPRESS_KEEP_MESSAGES: int = 6
+    LLM_COMPRESS_SUMMARY_MODEL: str = 'claude-sonnet-4-5-20250929'
+    LLM_COMPRESS_CACHE_TTL: int = 86400
 
     ##################################################
     # [ App ] task

@@ -7,9 +7,7 @@
 - 不需要 JWT Token，简化桌面端集成
 """
 
-from typing import Annotated
-
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from backend.app.llm.core.rate_limiter import RateLimitExceeded
@@ -31,6 +29,17 @@ from backend.database.db import CurrentSession
 from backend.utils.serializers import MsgSpecJSONResponse
 
 router = APIRouter()
+
+
+@router.api_route(
+    '/',
+    methods=['GET', 'HEAD'],
+    summary='Proxy API 健康检查',
+    description='用于检查 LLM Proxy API 是否可用',
+)
+async def proxy_health():
+    """LLM Proxy API 健康检查端点"""
+    return {'status': 'ok', 'message': 'LLM Proxy API is running'}
 
 
 @router.api_route(
@@ -83,6 +92,22 @@ def _get_client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+def _extract_api_key(request: Request) -> str:
+    """从请求中提取 API Key，兼容 x-api-key 和 Authorization: Bearer 两种方式
+
+    优先级：x-api-key > Authorization: Bearer
+    Claude Code / Cursor 等工具通常使用 Authorization: Bearer 方式
+    """
+    api_key = request.headers.get('x-api-key')
+    if not api_key:
+        authorization = request.headers.get('authorization', '')
+        if authorization.startswith('Bearer '):
+            api_key = authorization[7:]
+    if not api_key:
+        raise errors.AuthorizationError(msg='Missing API key. Use x-api-key header or Authorization: Bearer.')
+    return api_key
+
+
 @router.post(
     '/v1/chat/completions',
     summary='OpenAI 兼容聊天补全',
@@ -94,8 +119,8 @@ async def chat_completions(
     request: Request,
     db: CurrentSession,
     body: ChatCompletionRequest,
-    x_api_key: Annotated[str, Header(alias='x-api-key', description='LLM API Key (sk-cf-xxx)')],
 ) -> ChatCompletionResponse | StreamingResponse:
+    x_api_key = _extract_api_key(request)
     log.info(f'[Proxy API] 收到 OpenAI 格式请求: /v1/chat/completions, model={body.model}, stream={body.stream}')
     ip_address = _get_client_ip(request)
 
@@ -138,17 +163,8 @@ async def embeddings(
     request: Request,
     db: CurrentSession,
     body: EmbeddingRequest,
-    x_api_key: Annotated[str | None, Header(alias='x-api-key', description='LLM API Key')] = None,
-    authorization: Annotated[str | None, Header()] = None,
 ) -> EmbeddingResponse:
-    # 从 x-api-key 或 Authorization: Bearer 中提取 API Key
-    api_key = x_api_key
-    if not api_key and authorization:
-        if authorization.startswith('Bearer '):
-            api_key = authorization[7:]
-    if not api_key:
-        from backend.common.exception import errors
-        raise errors.AuthorizationError(msg='Missing API key. Use x-api-key header or Authorization: Bearer.')
+    api_key = _extract_api_key(request)
 
     log.info(f'[Proxy API] 收到 Embedding 请求: /v1/embeddings, model={body.model}')
     ip_address = _get_client_ip(request)
@@ -267,10 +283,9 @@ async def anthropic_messages(
     request: Request,
     db: CurrentSession,
     body: AnthropicMessageRequest,
-    x_api_key: Annotated[str, Header(alias='x-api-key', description='LLM API Key (sk-cf-xxx)')],
 ):
+    x_api_key = _extract_api_key(request)
     log.info(f'[Proxy API] 收到 Anthropic 格式请求: /v1/messages, model={body.model}, stream={body.stream}')
-    # [DEBUG] Inspect API Key format
     masked_key = f"{x_api_key[:10]}... ({len(x_api_key)} chars)" if x_api_key else "None"
     log.info(f"[DEBUG] Proxy received Key: {masked_key}")
     

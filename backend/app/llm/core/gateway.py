@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.llm.core.circuit_breaker import CircuitBreaker, circuit_breaker_manager
+from backend.app.llm.core.debug_logger import llm_debug_log
 from backend.app.llm.core.encryption import key_encryption
 from backend.app.llm.core.rate_limiter import rate_limiter
 from backend.app.llm.core.usage_tracker import RequestTimer, usage_tracker
@@ -127,7 +128,7 @@ class LLMGateway:
         log.debug(f'[LLM Gateway] 注册自定义模型价格: {anthropic_model}')
 
     def _log_debug_request(self, params: dict[str, Any], provider_name: str, api_base: str | None) -> None:
-        """调试模式下记录请求详情"""
+        """调试模式下记录请求详情（仅写日志文件，不输出到控制台）"""
         if not self.debug_mode:
             return
         
@@ -153,20 +154,20 @@ class LLMGateway:
         
         target_url = api_base or f'https://api.{provider_name}.com (default)'
         
-        log.info(
+        llm_debug_log.info(
             f'[DEBUG] LLM 请求 | URL: {target_url} | 供应商: {provider_name} | '
             f'模型: {safe_params.get("model")} | 流式: {safe_params.get("stream", False)}'
         )
 
     def _log_debug_response(self, response: Any, is_streaming: bool = False, elapsed_ms: int | None = None) -> None:
-        """调试模式下记录响应详情"""
+        """调试模式下记录响应详情（仅写日志文件，不输出到控制台）"""
         if not self.debug_mode:
             return
         
         elapsed_info = f'{elapsed_ms}ms' if elapsed_ms else 'N/A'
         
         if is_streaming:
-            log.info(f'[DEBUG] LLM 响应 | 流式 | 耗时: {elapsed_info}')
+            llm_debug_log.info(f'[DEBUG] LLM 响应 | 流式 | 耗时: {elapsed_info}')
         else:
             try:
                 # 尝试将响应转为可序列化的格式
@@ -196,15 +197,15 @@ class LLMGateway:
                     content_preview = str(response_data)[:100]
                     tokens_info = 'N/A'
                 
-                log.info(
+                llm_debug_log.info(
                     f'[DEBUG] LLM 响应 | 耗时: {elapsed_info} | tokens: {tokens_info} | '
                     f'内容预览: {content_preview}'
                 )
             except Exception as e:
-                log.info(f'[DEBUG] LLM 响应 | 耗时: {elapsed_info} | 解析失败: {e}')
+                llm_debug_log.info(f'[DEBUG] LLM 响应 | 耗时: {elapsed_info} | 解析失败: {e}')
 
     def _log_debug_error(self, error: Exception, provider_name: str, model_name: str) -> None:
-        """调试模式下记录错误详情"""
+        """调试模式下记录错误详情（仅写日志文件，不输出到控制台）"""
         if not self.debug_mode:
             return
         
@@ -212,7 +213,7 @@ class LLMGateway:
         if len(error_msg) > 200:
             error_msg = error_msg[:200] + '...'
         
-        log.error(
+        llm_debug_log.error(
             f'[DEBUG] LLM 错误 | 供应商: {provider_name} | 模型: {model_name} | '
             f'类型: {type(error).__name__} | {error_msg}'
         )
@@ -441,6 +442,7 @@ class LLMGateway:
         # 设置 API base URL
         if provider.api_base_url:
             params['api_base'] = provider.api_base_url
+            params['base_url'] = provider.api_base_url
 
         # 详细日志
         log.info(f'[LLM Gateway] 调用参数: model={model_name}, provider_name={provider.name}, '
@@ -491,11 +493,305 @@ class LLMGateway:
         # 这些供应商 LiteLLM 可以通过模型名称自动识别，无需前缀
         auto_detect_providers = {'openai', 'anthropic', 'cohere', 'mistral'}
 
-        if provider_type in auto_detect_providers and not force_prefix:
+        if provider_type in auto_detect_providers:
+            # 对于 LiteLLM 可自动识别的供应商，即使有自定义 api_base 也不加前缀
+            # 因为第三方代理（如 cliproxy）通常不识别带前缀的模型名
             return model_name
 
-        # 其他供应商或强制前缀时，添加 provider_type 前缀
+        # 其他供应商需要前缀让 LiteLLM 识别使用哪种 API 协议
         return f'{provider_type}/{model_name}'
+
+    # ----------------------------------------------------------------
+    # 智能上下文压缩
+    # ----------------------------------------------------------------
+
+    async def _create_summarizer(self, db: AsyncSession):
+        """
+        创建摘要生成回调。
+
+        复用网关的模型解析能力获取供应商密钥，但绕过计费链路（平台承担成本）。
+        返回 (summarizer_fn, token_accumulator_dict)。
+        """
+        from backend.app.llm.core.compressor import context_compressor
+
+        summary_model = context_compressor.config.summary_model
+        # 累计 token 使用量（mutable dict 供回调内累加）
+        token_acc = {'input_tokens': 0, 'output_tokens': 0}
+
+        # 尝试从网关模型池解析摘要模型的供应商信息
+        models, _ = await self._resolve_models(db, summary_model)
+        if not models:
+            log.warning(f'[智能压缩] 摘要模型 {summary_model} 不可用，尝试直接调用')
+
+            async def fallback_summarizer(content: str, model: str) -> str:
+                response = await self.litellm.acompletion(
+                    model=model,
+                    messages=[{'role': 'user', 'content': content}],
+                    max_tokens=25000,
+                    temperature=0.3,
+                    timeout=60,
+                )
+                usage = getattr(response, 'usage', None)
+                in_t = getattr(usage, 'prompt_tokens', 0) if usage else 0
+                out_t = getattr(usage, 'completion_tokens', 0) if usage else 0
+                token_acc['input_tokens'] += in_t
+                token_acc['output_tokens'] += out_t
+                log.info(
+                    f'[智能压缩][内部调用] model={model} '
+                    f'input_tokens={in_t} output_tokens={out_t}'
+                )
+                return response.choices[0].message.content
+
+            return fallback_summarizer, token_acc
+
+        model_config, provider = models[0]
+        from backend.app.llm.schema.proxy import ChatCompletionRequest, ChatMessage
+        dummy_request = ChatCompletionRequest(
+            model=model_config.model_name,
+            messages=[ChatMessage(role='user', content='placeholder')],
+            max_tokens=25000,
+            temperature=0.3,
+            stream=False,
+        )
+        base_params = self._build_litellm_params(model_config, provider, dummy_request, timeout=60)
+
+        async def summarizer(content: str, model: str) -> str:
+            params = {**base_params}
+            params['messages'] = [{'role': 'user', 'content': content}]
+            params['stream'] = False
+
+            response = await self.litellm.acompletion(**params)
+
+            usage = getattr(response, 'usage', None)
+            in_t = getattr(usage, 'prompt_tokens', 0) if usage else 0
+            out_t = getattr(usage, 'completion_tokens', 0) if usage else 0
+            token_acc['input_tokens'] += in_t
+            token_acc['output_tokens'] += out_t
+            log.info(
+                f'[智能压缩][内部调用] model={model} '
+                f'input_tokens={in_t} output_tokens={out_t}'
+            )
+            return response.choices[0].message.content
+
+        return summarizer, token_acc
+
+    async def _try_compress_anthropic(
+        self,
+        db: AsyncSession,
+        request: 'AnthropicMessageRequest',
+        models_with_providers: list,
+        api_key_metadata: dict | None,
+        user_id: int = 0,
+        api_key_id: int = 0,
+        ip_address: str | None = None,
+    ):
+        """
+        尝试对 Anthropic 格式请求进行压缩。
+        返回 CompressResult 或 None。
+        """
+        from backend.app.llm.core.compressor import context_compressor, is_compress_enabled
+
+        if not is_compress_enabled(context_compressor.config, api_key_metadata):
+            return None
+
+        first_model = models_with_providers[0][0]
+        max_ctx = first_model.max_context_length or 128000
+
+        # 将 Anthropic 消息转为 dict 列表
+        messages_dicts = self._anthropic_messages_to_dicts(request.messages)
+        system = request.system
+
+        try:
+            summarizer, token_acc = await self._create_summarizer(db)
+            result = await context_compressor.compress_if_needed(
+                messages=messages_dicts,
+                system=system,
+                max_context_length=max_ctx,
+                summarizer=summarizer,
+                api_key_metadata=api_key_metadata,
+            )
+            if result is not None:
+                log.info(
+                    f'[智能压缩] Anthropic 消息已压缩: {result.original_count}→{result.compressed_count} 条, '
+                    f'token: {result.original_tokens}→{result.compressed_tokens}, '
+                    f'摘要块: {result.summary_block_count}, 缓存命中: {result.cache_hit}'
+                )
+                # 记录压缩成本到 DB
+                await self._record_compress_usage(
+                    db, result=result, token_acc=token_acc,
+                    user_id=user_id, api_key_id=api_key_id, ip_address=ip_address,
+                )
+            return result
+        except Exception as e:
+            log.warning(f'[智能压缩] 压缩失败，降级为原始消息: {e}')
+            return None
+
+    async def _try_compress_openai(
+        self,
+        db: AsyncSession,
+        request: 'ChatCompletionRequest',
+        models_with_providers: list,
+        api_key_metadata: dict | None,
+        user_id: int = 0,
+        api_key_id: int = 0,
+        ip_address: str | None = None,
+    ):
+        """
+        尝试对 OpenAI 格式请求进行压缩。
+        返回 CompressResult 或 None。
+        """
+        from backend.app.llm.core.compressor import context_compressor, is_compress_enabled
+
+        if not is_compress_enabled(context_compressor.config, api_key_metadata):
+            return None
+
+        first_model = models_with_providers[0][0]
+        max_ctx = first_model.max_context_length or 128000
+
+        # 将 OpenAI 消息转为 dict 列表
+        messages_dicts = [msg.model_dump(exclude_none=True) for msg in request.messages]
+
+        # 提取 system（OpenAI 格式中 system 是消息的一部分）
+        system = None
+        for msg in messages_dicts:
+            if msg.get('role') == 'system':
+                system = msg.get('content')
+                break
+
+        try:
+            summarizer, token_acc = await self._create_summarizer(db)
+            result = await context_compressor.compress_if_needed(
+                messages=messages_dicts,
+                system=system,
+                max_context_length=max_ctx,
+                summarizer=summarizer,
+                api_key_metadata=api_key_metadata,
+            )
+            if result is not None:
+                log.info(
+                    f'[智能压缩] OpenAI 消息已压缩: {result.original_count}→{result.compressed_count} 条, '
+                    f'token: {result.original_tokens}→{result.compressed_tokens}, '
+                    f'摘要块: {result.summary_block_count}, 缓存命中: {result.cache_hit}'
+                )
+                # 记录压缩成本到 DB
+                await self._record_compress_usage(
+                    db, result=result, token_acc=token_acc,
+                    user_id=user_id, api_key_id=api_key_id, ip_address=ip_address,
+                )
+            return result
+        except Exception as e:
+            log.warning(f'[智能压缩] 压缩失败，降级为原始消息: {e}')
+            return None
+
+    async def _record_compress_usage(
+        self,
+        db: AsyncSession,
+        *,
+        result,
+        token_acc: dict,
+        user_id: int,
+        api_key_id: int,
+        ip_address: str | None = None,
+    ) -> None:
+        """记录压缩用量到 DB（异步，失败不影响主流程）"""
+        try:
+            from backend.app.llm.core.compressor import context_compressor
+            from backend.app.llm.service.compress_stats_service import compress_stats_service
+
+            await compress_stats_service.record_compression(
+                db,
+                user_id=user_id,
+                api_key_id=api_key_id,
+                request_id=f'compress_{int(time.time() * 1000)}',
+                summary_model=context_compressor.config.summary_model,
+                input_tokens=token_acc.get('input_tokens', 0),
+                output_tokens=token_acc.get('output_tokens', 0),
+                original_messages=result.original_count,
+                compressed_messages=result.compressed_count,
+                original_tokens=result.original_tokens,
+                compressed_tokens=result.compressed_tokens,
+                summary_blocks=result.summary_block_count,
+                cache_hit=result.cache_hit,
+                secondary_compression=result.secondary_compression,
+                degraded_keep_count=result.degraded_keep_count,
+                generation_ms=result.summary_generation_ms,
+                ip_address=ip_address,
+            )
+        except Exception as e:
+            log.warning(f'[智能压缩] 记录压缩用量失败，忽略: {e}')
+
+    @staticmethod
+    def _anthropic_messages_to_dicts(messages) -> list[dict]:
+        """将 Anthropic 消息列表转为 dict 列表"""
+        result = []
+        for msg in messages:
+            d = {'role': msg.role}
+            if isinstance(msg.content, str):
+                d['content'] = msg.content
+            elif isinstance(msg.content, list):
+                d['content'] = [
+                    b if isinstance(b, dict) else b.model_dump(exclude_none=True)
+                    for b in msg.content
+                ]
+            else:
+                d['content'] = str(msg.content)
+            result.append(d)
+        return result
+
+    @staticmethod
+    def _estimate_input_tokens(messages: list, system: str | list | None = None) -> int:
+        """
+        快速估算输入 token 数（无需调用 tokenizer，按字符数粗算）
+
+        中文字符按 ~1.5 chars/token，ASCII 按 ~4 chars/token
+        用加权方式估算，比单一系数更准确
+        """
+        char_count_cjk = 0
+        char_count_ascii = 0
+
+        def _count(text: str) -> None:
+            nonlocal char_count_cjk, char_count_ascii
+            if not text:
+                return
+            for ch in text:
+                if ord(ch) > 0x2E80:  # CJK 统一表意字符等
+                    char_count_cjk += 1
+                else:
+                    char_count_ascii += 1
+
+        def _extract_text(content) -> None:
+            """从 str / list[dict] / list[Pydantic] / dict 中提取文本并计数"""
+            if content is None:
+                return
+            if isinstance(content, str):
+                _count(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        _count(block.get('text') or '')
+                    elif hasattr(block, 'text'):
+                        _count(getattr(block, 'text', None) or '')
+                    elif isinstance(block, str):
+                        _count(block)
+            elif isinstance(content, dict):
+                _count(content.get('text') or '')
+
+        if system:
+            _extract_text(system)
+
+        for msg in messages:
+            if isinstance(msg, dict):
+                content = msg.get('content', '')
+            elif hasattr(msg, 'content'):
+                content = msg.content
+            else:
+                content = str(msg)
+
+            _extract_text(content)
+
+        # 中文 ~1.5 chars/token, ASCII ~4 chars/token, 加上消息结构开销
+        estimated = int(char_count_cjk / 1.5 + char_count_ascii / 4) + len(messages) * 4
+        return estimated
 
     async def _call_with_failover(
         self,
@@ -554,6 +850,13 @@ class LLMGateway:
 
             # 调试日志：记录请求详情
             self._log_debug_request(params, provider.name, provider.api_base_url)
+            llm_debug_log.log_request(
+                request_id, params,
+                provider_name=provider.name,
+                model_name=model_config.model_name,
+                api_base=provider.api_base_url or '',
+                is_streaming=is_streaming,
+            )
 
             timer = RequestTimer().start()
             try:
@@ -563,6 +866,22 @@ class LLMGateway:
 
                 # 调试日志：记录响应详情
                 self._log_debug_response(response, is_streaming=is_streaming, elapsed_ms=timer.elapsed_ms)
+                if not is_streaming:
+                    _usage = getattr(response, 'usage', None) or {}
+                    if hasattr(_usage, 'prompt_tokens'):
+                        _in_t, _out_t = _usage.prompt_tokens or 0, _usage.completion_tokens or 0
+                    elif isinstance(_usage, dict):
+                        _in_t, _out_t = _usage.get('prompt_tokens', 0), _usage.get('completion_tokens', 0)
+                    else:
+                        _in_t = _out_t = 0
+                    llm_debug_log.log_response(
+                        request_id, response,
+                        elapsed_ms=timer.elapsed_ms,
+                        provider_name=provider.name,
+                        model_name=model_config.model_name,
+                        input_tokens=_in_t,
+                        output_tokens=_out_t,
+                    )
 
                 log.info(
                     f'[LLM Gateway] 模型调用成功: {model_config.model_name} '
@@ -578,6 +897,12 @@ class LLMGateway:
 
                 # 调试日志：记录错误详情
                 self._log_debug_error(e, provider.name, model_config.model_name)
+                llm_debug_log.log_error(
+                    request_id, e,
+                    provider_name=provider.name,
+                    model_name=model_config.model_name,
+                    elapsed_ms=timer.elapsed_ms,
+                )
 
                 error_msg = self._get_error_message(e)
                 log.warning(
@@ -647,6 +972,21 @@ class LLMGateway:
 
             tried_models.append(model_config.model_name)
 
+            # 预检：估算输入 token 数，超过模型上下文限制则跳过
+            estimated_input_tokens = self._estimate_input_tokens(request.messages, request.system)
+            max_ctx = getattr(model_config, 'max_context_length', 0) or 128000
+            if estimated_input_tokens > max_ctx:
+                log.warning(
+                    f'[LLM Gateway] 输入 token 估算 ({estimated_input_tokens:,}) 超过模型 '
+                    f'{model_config.model_name} 上下文限制 ({max_ctx:,})，跳过'
+                )
+                last_error = LLMGatewayError(
+                    f'Prompt token count (~{estimated_input_tokens:,}) exceeds '
+                    f'model context limit ({max_ctx:,})',
+                    code=400,
+                )
+                continue
+
             # 获取积分费率
             credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
 
@@ -663,6 +1003,13 @@ class LLMGateway:
 
             # 调试日志：记录请求详情
             self._log_debug_request(params, provider.name, provider.api_base_url)
+            llm_debug_log.log_request(
+                request_id, params,
+                provider_name=provider.name,
+                model_name=model_config.model_name,
+                api_base=provider.api_base_url or '',
+                is_streaming=False,
+            )
 
             timer = RequestTimer().start()
             try:
@@ -675,6 +1022,20 @@ class LLMGateway:
 
                 # 调试日志：记录响应详情
                 self._log_debug_response(response, is_streaming=False, elapsed_ms=timer.elapsed_ms)
+
+                # 提取 token 用量
+                _usage = getattr(response, 'usage', None)
+                _in_tokens = getattr(_usage, 'input_tokens', 0) if _usage else 0
+                _out_tokens = getattr(_usage, 'output_tokens', 0) if _usage else 0
+
+                llm_debug_log.log_response(
+                    request_id, response,
+                    elapsed_ms=timer.elapsed_ms,
+                    provider_name=provider.name,
+                    model_name=model_config.model_name,
+                    input_tokens=_in_tokens,
+                    output_tokens=_out_tokens,
+                )
 
                 log.info(
                     f'[LLM Gateway] Anthropic 模型调用成功: {model_config.model_name} '
@@ -690,6 +1051,12 @@ class LLMGateway:
 
                 # 调试日志：记录错误详情
                 self._log_debug_error(e, provider.name, model_config.model_name)
+                llm_debug_log.log_error(
+                    request_id, e,
+                    provider_name=provider.name,
+                    model_name=model_config.model_name,
+                    elapsed_ms=timer.elapsed_ms,
+                )
 
                 error_msg = self._get_error_message(e)
                 log.warning(
@@ -726,6 +1093,7 @@ class LLMGateway:
         request: ChatCompletionRequest,
         user_id: int,
         api_key_id: int,
+        api_key_metadata: dict | None = None,
         rpm_limit: int,
         daily_limit: int,
         monthly_limit: int,
@@ -760,6 +1128,19 @@ class LLMGateway:
         models_with_providers, original_alias = await self._resolve_models(db, request.model)
         if not models_with_providers:
             raise ModelNotFoundError(request.model)
+
+        # 智能上下文压缩（OpenAI 格式）
+        compress_result = await self._try_compress_openai(
+            db, request, models_with_providers, api_key_metadata,
+            user_id=user_id, api_key_id=api_key_id, ip_address=ip_address,
+        )
+        if compress_result is not None:
+            request = request.model_copy(update={
+                'messages': [
+                    ChatMessage(role=m['role'], content=m['content'])
+                    for m in compress_result.messages
+                ]
+            })
 
         # 使用故障转移调用（按优先级依次尝试多个模型）
         response, model_config, provider, credit_rate, request_id, timer = \
@@ -878,6 +1259,7 @@ class LLMGateway:
         request: ChatCompletionRequest,
         user_id: int,
         api_key_id: int,
+        api_key_metadata: dict | None = None,
         rpm_limit: int,
         daily_limit: int,
         monthly_limit: int,
@@ -913,6 +1295,19 @@ class LLMGateway:
         if not models_with_providers:
             raise ModelNotFoundError(request.model)
 
+        # 智能上下文压缩（OpenAI 格式）
+        compress_result = await self._try_compress_openai(
+            db, request, models_with_providers, api_key_metadata,
+            user_id=user_id, api_key_id=api_key_id, ip_address=ip_address,
+        )
+        if compress_result is not None:
+            request = request.model_copy(update={
+                'messages': [
+                    ChatMessage(role=m['role'], content=m['content'])
+                    for m in compress_result.messages
+                ]
+            })
+
         last_error = None
         tried_models = []
         has_sent_data = False  # N2: 跟踪是否已向客户端发送过数据
@@ -947,6 +1342,13 @@ class LLMGateway:
 
             # 调试日志：记录请求详情
             self._log_debug_request(params, provider.name, provider.api_base_url)
+            llm_debug_log.log_request(
+                request_id, params,
+                provider_name=provider.name,
+                model_name=model_config.model_name,
+                api_base=provider.api_base_url or '',
+                is_streaming=True,
+            )
 
             timer = RequestTimer().start()
             content_buffer = ''
@@ -1005,6 +1407,15 @@ class LLMGateway:
 
                 # 调试日志：记录流式响应完成
                 self._log_debug_response(None, is_streaming=True, elapsed_ms=timer.elapsed_ms)
+                llm_debug_log.log_stream_end(
+                    request_id,
+                    elapsed_ms=timer.elapsed_ms,
+                    provider_name=provider.name,
+                    model_name=model_config.model_name,
+                    input_tokens=stream_input_tokens,
+                    output_tokens=stream_output_tokens,
+                    full_content=content_buffer[:5000] if content_buffer else '',
+                )
 
                 # P1-3: 优先使用精确 token 数，回退到估算
                 if stream_input_tokens > 0 or stream_output_tokens > 0:
@@ -1071,6 +1482,12 @@ class LLMGateway:
 
                 # 调试日志：记录错误详情
                 self._log_debug_error(e, provider.name, model_config.model_name)
+                llm_debug_log.log_error(
+                    request_id, e,
+                    provider_name=provider.name,
+                    model_name=model_config.model_name,
+                    elapsed_ms=timer.elapsed_ms,
+                )
 
                 error_msg = self._get_error_message(e)
                 log.warning(
@@ -1186,6 +1603,9 @@ class LLMGateway:
         # 设置 API base URL
         if provider.api_base_url:
             params['api_base'] = provider.api_base_url
+            # anthropic 官方 SDK (passthrough 模式) 用 base_url，LiteLLM 通用用 api_base
+            # 两个都传，确保不同调用路径都能正确使用
+            params['base_url'] = provider.api_base_url
 
         # 系统提示
         if request.system:
@@ -1223,6 +1643,7 @@ class LLMGateway:
         request: 'AnthropicMessageRequest',
         user_id: int,
         api_key_id: int,
+        api_key_metadata: dict | None = None,
         rpm_limit: int,
         daily_limit: int,
         monthly_limit: int,
@@ -1265,6 +1686,20 @@ class LLMGateway:
             f'[LLM Gateway] Anthropic 候选模型列表: '
             f'{[m.model_name for m, _ in models_with_providers]}'
         )
+
+        # 智能上下文压缩（Anthropic 格式）
+        compress_result = await self._try_compress_anthropic(
+            db, request, models_with_providers, api_key_metadata,
+            user_id=user_id, api_key_id=api_key_id, ip_address=ip_address,
+        )
+        if compress_result is not None:
+            from backend.app.llm.schema.proxy import AnthropicMessage
+            request = request.model_copy(update={
+                'messages': [
+                    AnthropicMessage(role=m['role'], content=m['content'])
+                    for m in compress_result.messages
+                ]
+            })
 
         # 使用故障转移调用
         response, model_config, provider, credit_rate, request_id, timer = \
@@ -1353,6 +1788,23 @@ class LLMGateway:
                         input=getattr(block, 'input', None),
                     ))
 
+        # 构建压缩元信息
+        response_metadata = None
+        if compress_result is not None:
+            response_metadata = {
+                'context_compressed': True,
+                'compression': {
+                    'original_messages': compress_result.original_count,
+                    'compressed_messages': compress_result.compressed_count,
+                    'summary_blocks': compress_result.summary_block_count,
+                    'original_tokens': compress_result.original_tokens,
+                    'compressed_tokens': compress_result.compressed_tokens,
+                    'cache_hit': compress_result.cache_hit,
+                    'secondary_compression': compress_result.secondary_compression,
+                    'degraded_keep_count': compress_result.degraded_keep_count,
+                },
+            }
+
         return AnthropicMessageResponse(
             id=getattr(response, 'id', request_id),
             model=response_model_name,
@@ -1362,6 +1814,7 @@ class LLMGateway:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
             ),
+            metadata=response_metadata,
         )
 
     async def prepare_anthropic_stream(
@@ -1371,6 +1824,7 @@ class LLMGateway:
         request: 'AnthropicMessageRequest',
         user_id: int,
         api_key_id: int,
+        api_key_metadata: dict | None = None,
         rpm_limit: int,
         daily_limit: int,
         monthly_limit: int,
@@ -1405,6 +1859,20 @@ class LLMGateway:
             f'{[m.model_name for m, _ in models_with_providers]}'
         )
 
+        # 智能上下文压缩（Anthropic 格式）
+        compress_result = await self._try_compress_anthropic(
+            db, request, models_with_providers, api_key_metadata,
+            user_id=user_id, api_key_id=api_key_id, ip_address=ip_address,
+        )
+        if compress_result is not None:
+            from backend.app.llm.schema.proxy import AnthropicMessage
+            request = request.model_copy(update={
+                'messages': [
+                    AnthropicMessage(role=m['role'], content=m['content'])
+                    for m in compress_result.messages
+                ]
+            })
+
         # 为每个候选模型预先构建参数
         candidates = []
         for model_config, provider in models_with_providers:
@@ -1418,6 +1886,7 @@ class LLMGateway:
                     'id': model_config.id,
                     'model_name': model_config.model_name,
                     'model_type': model_config.model_type,
+                    'max_context_length': model_config.max_context_length,
                     # 保存为字符串以保持精度，在 execute 中转换为 Decimal
                     'input_cost_per_1k': str(model_config.input_cost_per_1k) if model_config.input_cost_per_1k else '0',
                     'output_cost_per_1k': str(model_config.output_cost_per_1k) if model_config.output_cost_per_1k else '0',
@@ -1440,6 +1909,7 @@ class LLMGateway:
             'api_key_id': api_key_id,
             'ip_address': ip_address,
             'app_code': app_code,
+            'compress_result': compress_result if compress_result is not None else None,
         }
 
     async def execute_anthropic_stream(
@@ -1463,6 +1933,7 @@ class LLMGateway:
         api_key_id = context.get('api_key_id')
         ip_address = context.get('ip_address')
         app_code = context.get('app_code', 'huanxing')
+        compress_result = context.get('compress_result')
         
         # 向后兼容：如果没有 candidates，使用旧格式
         if not candidates and 'params' in context:
@@ -1502,6 +1973,19 @@ class LLMGateway:
             
             tried_models.append(model_name)
 
+            # 预检：估算输入 token 数，超过模型上下文限制则跳过
+            max_ctx = model_config.get('max_context_length') or 128000
+            messages_in_params = params.get('messages', [])
+            system_in_params = params.get('system')
+            estimated_input_tokens = self._estimate_input_tokens(messages_in_params, system_in_params)
+            if estimated_input_tokens > max_ctx:
+                log.warning(
+                    f'[LLM Gateway] 输入 token 估算 ({estimated_input_tokens:,}) 超过模型 '
+                    f'{model_name} 上下文限制 ({max_ctx:,})，跳过'
+                )
+                last_error = f'Prompt token count (~{estimated_input_tokens:,}) exceeds model context limit ({max_ctx:,})'
+                continue
+
             # 获取熔断器（用于记录成功/失败，不做硬跳过）
             breaker = self._get_circuit_breaker(provider_name)
 
@@ -1512,12 +1996,20 @@ class LLMGateway:
             )
             
             if self.debug_mode:
-                log.info(f'[DEBUG] Anthropic 流式响应开始 | model: {model_name}')
+                llm_debug_log.info(f'[DEBUG] Anthropic 流式响应开始 | model: {model_name}')
                 self._log_debug_request(params, provider_name, api_base_url)
             
             timer = RequestTimer().start()
             decoder = codecs.getincrementaldecoder('utf-8')('replace')
             request_id = usage_tracker.generate_request_id()
+            
+            llm_debug_log.log_request(
+                request_id, params,
+                provider_name=provider_name,
+                model_name=model_name,
+                api_base=api_base_url or '',
+                is_streaming=True,
+            )
             
             # 用于收集使用量信息
             input_tokens = 0
@@ -1529,18 +2021,18 @@ class LLMGateway:
                 self.register_model_pricing(model_name)
                 
                 if self.debug_mode:
-                    log.info(f'[DEBUG] 开始调用 LiteLLM anthropic.messages.acreate(stream=True)...')
+                    llm_debug_log.info(f'[DEBUG] 开始调用 LiteLLM anthropic.messages.acreate(stream=True)...')
                 
                 response = await self.litellm.anthropic.messages.acreate(**params)
                 
                 if self.debug_mode:
-                    log.info(f'[DEBUG] LiteLLM 返回: {type(response)}')
+                    llm_debug_log.info(f'[DEBUG] LiteLLM 返回: {type(response)}')
                 
                 chunk_count = 0
                 async for chunk in response:
                     if self.debug_mode and chunk_count == 0:
                         chunk_repr = str(chunk)[:300] if chunk else 'None'
-                        log.info(f'[DEBUG] 第一个 chunk: {chunk_repr}')
+                        llm_debug_log.info(f'[DEBUG] 第一个 chunk: {chunk_repr}')
                     
                     chunk_count += 1
                     
@@ -1552,6 +2044,9 @@ class LLMGateway:
                                 decoded, input_tokens, output_tokens
                             )
                             if formatted:
+                                # 注入压缩元信息到 message_start 事件
+                                if compress_result and not has_sent_data and 'message_start' in formatted:
+                                    formatted = self._inject_compress_metadata(formatted, compress_result)
                                 has_sent_data = True  # N2
                                 yield formatted
                     else:
@@ -1559,6 +2054,9 @@ class LLMGateway:
                             chunk, input_tokens, output_tokens
                         )
                         if formatted:
+                            # 注入压缩元信息到 message_start 事件
+                            if compress_result and not has_sent_data and 'message_start' in formatted:
+                                formatted = self._inject_compress_metadata(formatted, compress_result)
                             has_sent_data = True  # N2
                             yield formatted
                 
@@ -1572,7 +2070,7 @@ class LLMGateway:
                 stream_success = True
                 
                 if self.debug_mode:
-                    log.info(
+                    llm_debug_log.info(
                         f'[DEBUG] Anthropic 流式响应结束 | 模型: {model_name} | '
                         f'共 {chunk_count} 个 chunk | 耗时: {timer.elapsed_ms}ms | '
                         f'tokens: in={input_tokens} out={output_tokens}'
@@ -1581,6 +2079,15 @@ class LLMGateway:
                 log.info(
                     f'[LLM Gateway] Anthropic 流式模型调用成功: {model_name} '
                     f'(耗时: {timer.elapsed_ms}ms, tokens: in={input_tokens} out={output_tokens})'
+                )
+                llm_debug_log.log_stream_end(
+                    request_id,
+                    elapsed_ms=timer.elapsed_ms,
+                    provider_name=provider_name,
+                    model_name=model_name,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    chunk_count=chunk_count,
                 )
                 
                 # 流式成功后，记录使用量和扣除积分
@@ -1682,8 +2189,14 @@ class LLMGateway:
                 )
                 
                 if self.debug_mode:
-                    log.error(f'[DEBUG] Anthropic 流式响应异常: {e}\n{traceback.format_exc()}')
+                    llm_debug_log.error(f'[DEBUG] Anthropic 流式响应异常: {e}\n{traceback.format_exc()}')
                     self._log_debug_error(e, provider_name, model_name)
+                llm_debug_log.log_error(
+                    request_id, e,
+                    provider_name=provider_name,
+                    model_name=model_name,
+                    elapsed_ms=timer.elapsed_ms,
+                )
                 
                 # 记录失败
                 if user_id and api_key_id:
@@ -1736,6 +2249,37 @@ class LLMGateway:
             }
         }
         yield f'event: error\ndata: {json.dumps(error_event)}\n\n'
+
+    @staticmethod
+    def _inject_compress_metadata(formatted: str, compress_result) -> str:
+        """在 message_start SSE 事件中注入压缩元信息"""
+        try:
+            # SSE 格式: "event: message_start\ndata: {...}\n\n"
+            # 找到 data: 行并解析 JSON
+            lines = formatted.split('\n')
+            for i, line in enumerate(lines):
+                if line.startswith('data: '):
+                    data = json.loads(line[6:])
+                    if isinstance(data, dict) and data.get('type') == 'message_start':
+                        message = data.get('message', {})
+                        message.setdefault('metadata', {})
+                        message['metadata']['context_compressed'] = True
+                        message['metadata']['compression'] = {
+                            'original_messages': compress_result.original_count,
+                            'compressed_messages': compress_result.compressed_count,
+                            'summary_blocks': compress_result.summary_block_count,
+                            'original_tokens': compress_result.original_tokens,
+                            'compressed_tokens': compress_result.compressed_tokens,
+                            'cache_hit': compress_result.cache_hit,
+                            'secondary_compression': compress_result.secondary_compression,
+                            'degraded_keep_count': compress_result.degraded_keep_count,
+                        }
+                        data['message'] = message
+                        lines[i] = f'data: {json.dumps(data)}'
+                    break
+            return '\n'.join(lines)
+        except Exception:
+            return formatted  # 注入失败不影响正常流
 
     def _format_anthropic_chunk(
         self, chunk: Any, input_tokens: int, output_tokens: int

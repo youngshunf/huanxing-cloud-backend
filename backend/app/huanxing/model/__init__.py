@@ -4,9 +4,3 @@ from backend.app.huanxing.model.huanxing_document import HuanxingDocument as Hua
 from backend.app.huanxing.model.huanxing_document_version import HuanxingDocumentVersion as HuanxingDocumentVersion
 from backend.app.huanxing.model.huanxing_document_autosave import HuanxingDocumentAutosave as HuanxingDocumentAutosave
 from backend.app.huanxing.model.huanxing_document_folder import HuanxingDocumentFolder as HuanxingDocumentFolder
-from backend.app.huanxing.model.pay_app import PayApp as PayApp
-from backend.app.huanxing.model.pay_channel import PayChannel as PayChannel
-from backend.app.huanxing.model.pay_order import PayOrder as PayOrder
-from backend.app.huanxing.model.pay_notify_log import PayNotifyLog as PayNotifyLog
-from backend.app.huanxing.model.pay_refund import PayRefund as PayRefund
-from backend.app.huanxing.model.pay_contract import PayContract as PayContract

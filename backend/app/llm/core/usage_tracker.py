@@ -232,39 +232,6 @@ class UsageTracker:
         )
 
 
-class RequestTimer:
-    """请求计时器"""
-
-    def __init__(self) -> None:
-        self._start_time: float | None = None
-        self._end_time: float | None = None
-
-    def start(self) -> 'RequestTimer':
-        """开始计时"""
-        self._start_time = time.time()
-        return self
-
-    def stop(self) -> 'RequestTimer':
-        """停止计时"""
-        self._end_time = time.time()
-        return self
-
-    @property
-    def elapsed_ms(self) -> int:
-        """获取耗时(毫秒)"""
-        if self._start_time is None:
-            return 0
-        end = self._end_time or time.time()
-        return int((end - self._start_time) * 1000)
-
-    def __enter__(self) -> 'RequestTimer':
-        return self.start()
-
-    def __exit__(self, *args: object) -> None:
-        self.stop()
-
-
-
     async def track_success_safe(
         self,
         db: AsyncSession | None,
@@ -285,7 +252,7 @@ class RequestTimer:
     ) -> None:
         """
         安全版本的 track_success（N5）
-        
+
         优先写数据库，失败时自动缓冲到 Redis。
         适用于流式结束后可能没有可用 db session 的场景。
         """
@@ -323,6 +290,39 @@ class RequestTimer:
         except Exception as e:
             log.warning(f'[Usage Tracker] 数据库写入失败，缓冲到 Redis: {e}')
             await self._buffer_to_redis(record)
+
+
+class RequestTimer:
+    """请求计时器"""
+
+    def __init__(self) -> None:
+        self._start_time: float | None = None
+        self._end_time: float | None = None
+
+    def start(self) -> 'RequestTimer':
+        """开始计时"""
+        self._start_time = time.time()
+        return self
+
+    def stop(self) -> 'RequestTimer':
+        """停止计时"""
+        self._end_time = time.time()
+        return self
+
+    @property
+    def elapsed_ms(self) -> int:
+        """获取耗时(毫秒)"""
+        if self._start_time is None:
+            return 0
+        end = self._end_time or time.time()
+        return int((end - self._start_time) * 1000)
+
+    def __enter__(self) -> 'RequestTimer':
+        return self.start()
+
+    def __exit__(self, *args: object) -> None:
+        self.stop()
+
 
 # 创建全局用量追踪器实例
 usage_tracker = UsageTracker()

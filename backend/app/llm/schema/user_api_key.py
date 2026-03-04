@@ -25,6 +25,12 @@ class CreateUserApiKeyParam(UserApiKeyBase):
     """创建用户 API Key 参数"""
 
 
+class AdminCreateUserApiKeyParam(UserApiKeyBase):
+    """管理员创建 API Key 参数（需指定用户）"""
+
+    user_id: int = Field(description='目标用户 ID')
+
+
 class CreateUserApiKeyResponse(SchemaBase):
     """创建用户 API Key 响应"""
 

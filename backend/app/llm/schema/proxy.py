@@ -164,6 +164,7 @@ class AnthropicMessageResponse(SchemaBase):
     stop_reason: str | None = None
     stop_sequence: str | None = None
     usage: AnthropicUsage
+    metadata: dict | None = Field(default=None, description='元数据（含压缩状态等）')
 
 
 # ==================== Embedding 格式 ====================

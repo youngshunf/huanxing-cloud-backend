@@ -89,7 +89,7 @@ def setup_logging() -> None:
                 'sink': sys.stdout,
                 'level': settings.LOG_STD_LEVEL,
                 'format': default_formatter,
-                'filter': lambda record: request_id_filter(record),
+                'filter': lambda record: request_id_filter(record) and not record.get('extra', {}).get('llm_debug', False),
             },
         ],
     )
@@ -126,7 +126,7 @@ def set_custom_logfile() -> None:
     logger.add(
         str(log_access_file),
         level=settings.LOG_FILE_ACCESS_LEVEL,
-        filter=lambda record: record['level'].no <= 25,
+        filter=lambda record: record['level'].no <= 25 and not record.get('extra', {}).get('llm_debug', False),
         backtrace=False,
         diagnose=False,
         **log_config,
@@ -136,7 +136,7 @@ def set_custom_logfile() -> None:
     logger.add(
         str(log_error_file),
         level=settings.LOG_FILE_ERROR_LEVEL,
-        filter=lambda record: record['level'].no >= 30,
+        filter=lambda record: record['level'].no >= 30 and not record.get('extra', {}).get('llm_debug', False),
         backtrace=True,
         diagnose=True,
         **log_config,
