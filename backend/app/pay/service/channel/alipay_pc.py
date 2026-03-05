@@ -24,26 +24,37 @@ class AlipayPcClient(PayClient):
 
     def __init__(self, config: dict, notify_url: str):
         super().__init__(config, notify_url)
-        self.return_url = config.get('return_url', '')
+        self.return_url = config.get('return_url') or config.get('returnUrl', '')
         self._client = None
+        # 兼容前端两种字段命名风格（camelCase 和 snake_case）
+        self._app_id = config.get('appId') or config.get('app_id', '')
+        self._private_key = config.get('privateKey') or config.get('app_private_key', '')
+        self._public_key = config.get('alipayPublicKey') or config.get('alipay_public_key', '')
+        self._sign_type = config.get('signType') or config.get('sign_type', 'RSA2')
+        self._server_url = config.get('serverUrl') or config.get('server_url', '')
+        self._is_debug = 'sandbox' in self._server_url if self._server_url else config.get('debug', False)
 
     @property
     def client(self):
         if self._client is None:
             from alipay import AliPay
+            if not self._private_key:
+                raise Exception('支付宝应用私钥未配置')
             self._client = AliPay(
-                appid=self.config['app_id'],
+                appid=self._app_id,
                 app_notify_url=self.notify_url,
-                app_private_key_string=self.config['app_private_key'],
-                alipay_public_key_string=self.config['alipay_public_key'],
-                sign_type=self.config.get('sign_type', 'RSA2'),
-                debug=self.config.get('debug', False),
+                app_private_key_string=self._private_key,
+                alipay_public_key_string=self._public_key,
+                sign_type=self._sign_type,
+                debug=self._is_debug,
             )
         return self._client
 
     @property
     def gateway(self) -> str:
-        if self.config.get('debug'):
+        if self._server_url:
+            return self._server_url
+        if self._is_debug:
             return 'https://openapi-sandbox.dl.alipaydev.com/gateway.do'
         return 'https://openapi.alipay.com/gateway.do'
 

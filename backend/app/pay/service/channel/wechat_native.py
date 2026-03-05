@@ -25,12 +25,20 @@ class WechatNativeClient(PayClient):
     def __init__(self, config: dict, notify_url: str):
         super().__init__(config, notify_url)
         self._client = None
+        # 兼容前端两种字段命名风格（camelCase 和 snake_case）
+        self._mch_id = config.get('mchId') or config.get('mch_id', '')
+        self._appid = config.get('appId') or config.get('appid', '')
+        self._apiv3_key = config.get('apiV3Key') or config.get('apiv3_key', '')
+        self._cert_serial_no = config.get('certSerialNo') or config.get('cert_serial_no', '')
+        self._private_key = config.get('privateKeyContent') or config.get('private_key', '')
 
     @property
     def client(self):
         if self._client is None:
             from wechatpayv3 import WeChatPay, WeChatPayType
-            private_key = self.config['private_key']
+            private_key = self._private_key
+            if not private_key:
+                raise Exception('微信支付私钥未配置')
             if private_key.startswith('-----BEGIN'):
                 private_key_string = private_key
             else:
@@ -38,11 +46,11 @@ class WechatNativeClient(PayClient):
                     private_key_string = f.read()
             self._client = WeChatPay(
                 wechatpay_type=WeChatPayType.NATIVE,
-                mchid=self.config['mch_id'],
+                mchid=self._mch_id,
                 private_key=private_key_string,
-                cert_serial_no=self.config['cert_serial_no'],
-                apiv3_key=self.config['apiv3_key'],
-                appid=self.config.get('appid', ''),
+                cert_serial_no=self._cert_serial_no,
+                apiv3_key=self._apiv3_key,
+                appid=self._appid,
                 notify_url=self.notify_url,
             )
         return self._client
