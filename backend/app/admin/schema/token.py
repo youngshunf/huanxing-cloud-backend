@@ -23,8 +23,17 @@ class AccessTokenBase(SchemaBase):
     session_uuid: str = Field(description='会话 UUID')
 
 
+class RefreshTokenParam(SchemaBase):
+    """刷新令牌请求参数（body 方式传入 refresh_token，兼容不使用 Cookie 的客户端）"""
+
+    refresh_token: str | None = Field(None, description='刷新令牌（不传则从 Cookie 读取）')
+
+
 class GetNewToken(AccessTokenBase):
     """获取新令牌"""
+
+    new_refresh_token: str | None = Field(None, description='新的刷新令牌（轮换后）')
+    new_refresh_token_expire_time: datetime | None = Field(None, description='新刷新令牌过期时间')
 
 
 class GetLoginToken(AccessTokenBase):

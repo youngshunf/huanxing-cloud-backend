@@ -176,9 +176,9 @@ class Settings(BaseSettings):
     # Socket.IO
     WS_NO_AUTH_MARKER: str = 'internal'
 
-    # CORS
+    # CORS (allow_credentials=True 时不能用 '*'，必须列出具体域名)
     CORS_ALLOWED_ORIGINS: list[str] = [  # 末尾不带斜杠
-        'http://127.0.0.1',
+        'http://127.0.0.1:6310',
         'http://localhost:5173',
         'http://localhost:6310',
         'http://localhost:8020',

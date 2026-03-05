@@ -215,15 +215,27 @@ class AuthService:
         return list(codes)
 
     @staticmethod
-    async def refresh_token(*, db: AsyncSession, request: Request) -> GetNewToken:
+    async def refresh_token(
+        *,
+        db: AsyncSession,
+        request: Request,
+        response: Response,
+        body_refresh_token: str | None = None,
+    ) -> GetNewToken:
         """
         刷新令牌
 
+        优先从 body 读取 refresh_token（官网等前端客户端），
+        回退从 Cookie 读取（管理后台等使用 httpOnly Cookie 的客户端）。
+
         :param db: 数据库会话
         :param request: FastAPI 请求对象
+        :param response: FastAPI 响应对象
+        :param body_refresh_token: 请求体中的 refresh_token（可选）
         :return:
         """
-        refresh_token = request.cookies.get(settings.COOKIE_REFRESH_TOKEN_KEY)
+        # 优先 body，回退 Cookie
+        refresh_token = body_refresh_token or request.cookies.get(settings.COOKIE_REFRESH_TOKEN_KEY)
         if not refresh_token:
             raise errors.RequestError(msg='Refresh Token 已过期，请重新登录')
         token_payload = jwt_decode(refresh_token)
@@ -249,10 +261,20 @@ class AuthService:
             browser=ctx.browser,
             device_type=ctx.device,
         )
+        # 将新的 refresh_token 写回 Cookie（兼容管理后台）
+        response.set_cookie(
+            key=settings.COOKIE_REFRESH_TOKEN_KEY,
+            value=new_token.new_refresh_token,
+            max_age=settings.COOKIE_REFRESH_TOKEN_EXPIRE_SECONDS,
+            expires=timezone.to_utc(new_token.new_refresh_token_expire_time),
+            httponly=True,
+        )
         data = GetNewToken(
             access_token=new_token.new_access_token,
             access_token_expire_time=new_token.new_access_token_expire_time,
             session_uuid=new_token.session_uuid,
+            new_refresh_token=new_token.new_refresh_token,
+            new_refresh_token_expire_time=new_token.new_refresh_token_expire_time,
         )
         return data
 

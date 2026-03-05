@@ -166,14 +166,14 @@ def register_middleware(app: FastAPI) -> None:
         ),
     )
 
-    # CORS - 在开发环境下允许所有来源
-    # https://github.com/fastapi-practices/fastapi_best_architecture/pull/789/changes
-    # https://github.com/open-telemetry/opentelemetry-python-contrib/issues/4031
+    # CORS
+    # 注意: allow_credentials=True 时不能用 allow_origins=['*']，必须指定具体域名
+    # 这样浏览器才会在跨域请求中发送 Cookie（refresh_token 依赖 httpOnly Cookie）
     if settings.MIDDLEWARE_CORS:
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=['*'],
-            allow_credentials=False,
+            allow_origins=settings.CORS_ALLOWED_ORIGINS,
+            allow_credentials=True,
             allow_methods=['*'],
             allow_headers=['*'],
             expose_headers=settings.CORS_EXPOSE_HEADERS,
