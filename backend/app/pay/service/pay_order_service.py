@@ -14,6 +14,7 @@ from backend.app.pay.core.config import (
 )
 from backend.app.pay.crud.crud_pay_channel import pay_channel_dao
 from backend.app.pay.crud.crud_pay_contract import pay_contract_dao
+from backend.app.pay.crud.crud_pay_merchant import pay_merchant_dao
 from backend.app.pay.crud.crud_pay_notify_log import pay_notify_log_dao
 from backend.app.pay.crud.crud_pay_order import pay_order_dao
 from backend.app.pay.model.pay_order import PayOrder
@@ -46,10 +47,18 @@ def _generate_contract_no() -> str:
 _client_cache: dict[int, PayClient] = {}
 
 
-def _build_client(channel) -> PayClient:
-    """根据渠道编码构建 PayClient"""
-    config = channel.config or {}
+def _build_client(channel, merchant_config: dict | None = None) -> PayClient:
+    """根据渠道编码构建 PayClient
+
+    优先使用传入的 merchant_config，回退 channel.config（兼容旧数据）
+    """
+    config = merchant_config or channel.config or {}
+    if not config:
+        raise errors.ServerError(msg=f'渠道 {channel.code} 未配置支付密钥')
     code = channel.code
+    # 合并渠道特有配置
+    if channel.extra_config:
+        config = {**config, **channel.extra_config}
     notify_url = f'{PAY_ORDER_NOTIFY_URL}/{channel.id}'
 
     if code.startswith('wx'):
@@ -62,11 +71,11 @@ def _build_client(channel) -> PayClient:
         raise errors.ServerError(msg=f'不支持的渠道: {code}')
 
 
-def get_pay_client(channel, force_new: bool = False) -> PayClient:
+def get_pay_client(channel, merchant_config: dict | None = None, force_new: bool = False) -> PayClient:
     """获取支付客户端（带缓存）"""
     if not force_new and channel.id in _client_cache:
         return _client_cache[channel.id]
-    client = _build_client(channel)
+    client = _build_client(channel, merchant_config)
     _client_cache[channel.id] = client
     return client
 
@@ -149,6 +158,13 @@ class PayOrderService:
         if not channel or channel.status != 1:
             raise errors.RequestError(msg=f'支付渠道 {obj.channel_code} 不可用')
 
+        # 从关联商户读取支付密钥配置
+        merchant_config = None
+        if channel.merchant_id:
+            merchant = await pay_merchant_dao.get(db, channel.merchant_id)
+            if merchant and merchant.status == 1:
+                merchant_config = merchant.config
+
         order_no = _generate_order_no()
         now = timezone.now()
         expire_time = now + timedelta(minutes=ORDER_EXPIRE_MINUTES)
@@ -186,7 +202,7 @@ class PayOrderService:
             await pay_contract_dao.create(db, contract_dict)
 
         try:
-            client = get_pay_client(channel)
+            client = get_pay_client(channel, merchant_config=merchant_config)
             pay_result = client.create_order(
                 order_no=order_no, amount=pay_amount,
                 subject=f'唤星AI-{tier_name}会员-{cycle_name}',
@@ -195,13 +211,8 @@ class PayOrderService:
             qr_code_url = pay_result.get('qr_code_url')
             pay_url = pay_result.get('pay_url')
         except Exception as e:
-            log.warning(f'SDK 下单失败（回退mock）: {e}')
-            qr_code_url = None
-            pay_url = None
-            if channel.code.startswith('wx'):
-                qr_code_url = f'weixin://wxpay/bizpayurl?pr=mock_{order_no}'
-            elif channel.code.startswith('alipay'):
-                pay_url = f'https://openapi.alipay.com/gateway.do?mock=true&order_no={order_no}'
+            log.error(f'SDK 下单失败: channel={channel.code}, error={e}', exc_info=True)
+            raise errors.ServerError(msg=f'支付渠道调用失败: {e}')
 
         return CreatePayOrderResponse(
             order_no=order_no, pay_amount=pay_amount, channel_code=channel.code,

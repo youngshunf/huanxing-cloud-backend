@@ -15,6 +15,7 @@ from fastapi import APIRouter, Path, Request
 from fastapi.responses import PlainTextResponse
 
 from backend.app.pay.crud.crud_pay_channel import pay_channel_dao
+from backend.app.pay.crud.crud_pay_merchant import pay_merchant_dao
 from backend.app.pay.service.pay_contract_service import pay_contract_service
 from backend.app.pay.service.pay_order_service import get_pay_client, pay_order_service
 from backend.common.log import log
@@ -41,8 +42,15 @@ async def unified_pay_notify(
             log.error(f'支付回调: 渠道 {channel_id} 不存在')
             return PlainTextResponse('fail', status_code=200)
 
+        # 查关联商户密钥
+        merchant_config = None
+        if channel.merchant_id:
+            merchant = await pay_merchant_dao.get(db, channel.merchant_id)
+            if merchant:
+                merchant_config = merchant.config
+
         code = channel.code
-        client = get_pay_client(channel)
+        client = get_pay_client(channel, merchant_config=merchant_config)
 
         # 2. 验签 + 解析
         if code.startswith('wx'):
@@ -135,8 +143,15 @@ async def unified_contract_notify(
         if not channel:
             return PlainTextResponse('fail', status_code=200)
 
+        # 查关联商户密钥
+        merchant_config = None
+        if channel.merchant_id:
+            merchant = await pay_merchant_dao.get(db, channel.merchant_id)
+            if merchant:
+                merchant_config = merchant.config
+
         code = channel.code
-        client = get_pay_client(channel)
+        client = get_pay_client(channel, merchant_config=merchant_config)
 
         if code.startswith('wx'):
             body = await request.body()
