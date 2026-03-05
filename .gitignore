@@ -20,3 +20,4 @@ venv/
 backend/.env.prod
 *.pyc
 __pycache__/
+backend/log

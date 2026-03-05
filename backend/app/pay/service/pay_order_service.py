@@ -11,8 +11,6 @@ from backend.app.pay.core.callback import dispatch_pay_success
 from backend.app.pay.core.config import (
     ORDER_EXPIRE_MINUTES,
     PAY_ORDER_NOTIFY_URL,
-    TIER_NAMES,
-    TIER_PRICES,
 )
 from backend.app.pay.crud.crud_pay_channel import pay_channel_dao
 from backend.app.pay.crud.crud_pay_contract import pay_contract_dao
@@ -25,6 +23,7 @@ from backend.app.pay.schema.pay_order import (
     PayOrderStatusResponse,
 )
 from backend.app.pay.service.channel.base import PayClient
+from backend.app.user_tier.crud.crud_subscription_tier import subscription_tier_dao
 from backend.common.exception import errors
 from backend.common.log import log
 from backend.common.pagination import paging_data
@@ -122,20 +121,33 @@ class PayOrderService:
         user_id: int,
         obj: CreatePayOrderParam,
         user_ip: str | None = None,
+        app_code: str = 'huanxing',
     ) -> CreatePayOrderResponse:
-        if obj.tier not in TIER_PRICES:
-            raise errors.RequestError(msg=f'无效的套餐: {obj.tier}')
         if obj.billing_cycle not in ('monthly', 'yearly'):
             raise errors.RequestError(msg=f'无效的计费周期: {obj.billing_cycle}')
+
+        # 从数据库读取套餐配置（按 app_code 区分应用）
+        tier_config = await subscription_tier_dao.select_model_by_column(
+            db, tier_name=obj.tier, app_code=app_code, enabled=True
+        )
+        if not tier_config:
+            raise errors.RequestError(msg=f'无效的套餐: {obj.tier}（app={app_code}）')
+
+        # 从数据库获取价格（单位：元 → 分）
+        if obj.billing_cycle == 'yearly' and tier_config.yearly_price:
+            pay_amount = int(float(tier_config.yearly_price) * 100)
+        else:
+            pay_amount = int(float(tier_config.monthly_price) * 100)
+
+        if pay_amount <= 0:
+            raise errors.RequestError(msg='免费套餐无需支付')
+
+        tier_name = tier_config.display_name
+        cycle_name = '月付' if obj.billing_cycle == 'monthly' else '年付'
 
         channel = await pay_channel_dao.get_by_code(db, obj.channel_code)
         if not channel or channel.status != 1:
             raise errors.RequestError(msg=f'支付渠道 {obj.channel_code} 不可用')
-
-        price_info = TIER_PRICES[obj.tier]
-        pay_amount = price_info[obj.billing_cycle]
-        tier_name = TIER_NAMES[obj.tier]
-        cycle_name = '月付' if obj.billing_cycle == 'monthly' else '年付'
 
         order_no = _generate_order_no()
         now = timezone.now()
@@ -155,6 +167,7 @@ class PayOrderService:
             'pay_amount': pay_amount,
             'expire_time': expire_time,
             'user_ip': user_ip,
+            'extra_data': {'app_code': app_code},
         }
         order = await pay_order_dao.create(db, order_dict)
 

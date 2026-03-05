@@ -51,8 +51,9 @@ async def create_pay_order(
 ) -> ResponseSchemaModel[CreatePayOrderResponse]:
     user_id = request.user.id
     user_ip = request.client.host if request.client else None
+    app_code = getattr(request.state, 'app_code', 'huanxing')
     result = await pay_order_service.create_order(
-        db=db, user_id=user_id, obj=obj, user_ip=user_ip
+        db=db, user_id=user_id, obj=obj, user_ip=user_ip, app_code=app_code
     )
     return response_base.success(data=result)
 

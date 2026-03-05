@@ -21,16 +21,5 @@ PAY_CONTRACT_NOTIFY_URL: str = os.getenv(
 # 订单过期时间（分钟）
 ORDER_EXPIRE_MINUTES: int = 30
 
-# 套餐价格表（分）— 后续可从数据库读取
-TIER_PRICES: dict[str, dict[str, int]] = {
-    'star_glow': {'monthly': 4900, 'yearly': 47000},
-    'star_shine': {'monthly': 9900, 'yearly': 95000},
-    'star_glory': {'monthly': 29900, 'yearly': 287000},
-}
-
-# 套餐显示名称
-TIER_NAMES: dict[str, str] = {
-    'star_glow': '星芒',
-    'star_shine': '星辰',
-    'star_glory': '星耀',
-}
+# 注意：套餐价格已从数据库 subscription_tier 表读取，不再硬编码
+# 数据库字段：tier_name, display_name, monthly_price, yearly_price, app_code
