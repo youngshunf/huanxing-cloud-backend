@@ -28,8 +28,8 @@ log_step() {
 
 # 配置变量
 PROJECT_DIR="$(pwd)"
-SERVICE_NAME="creator-flow-backend"
-DEPLOY_BRANCH="creator-flow"
+SERVICE_NAME="huanxing-backend"
+DEPLOY_BRANCH="huanxing"
 API_PORT="8020"
 FLOWER_PORT="8556"
 # 动态设置服务用户：root 用户运行时使用 root，否则使用 www-data
