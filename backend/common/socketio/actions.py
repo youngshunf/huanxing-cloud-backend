@@ -113,8 +113,14 @@ async def handle_hasn_message(sid, data: dict):
         # 7. 推送给接收方
         target_sid = await ws_router.get_client_sid(to_id)
         if target_sid:
-            log.info(f"[HASN WS] 在线推送: {from_id} -> {to_id} (sid={target_sid})")
-            await sio.emit('hasn_message_push', payload, to=target_sid)
+            if target_sid.startswith("native:"):
+                # 原生 WebSocket 客户端 → 写入 Redis 推送队列
+                await redis_client.rpush(f"hasn:push:{to_id}", json.dumps(payload))
+                log.info(f"[HASN WS] 在线推送(NativeWS): {from_id} -> {to_id}")
+            else:
+                # Socket.IO 客户端 → 直接 emit
+                log.info(f"[HASN WS] 在线推送(SocketIO): {from_id} -> {to_id} (sid={target_sid})")
+                await sio.emit('hasn_message_push', payload, to=target_sid)
         else:
             # 离线: 推入 Redis 离线队列 (对齐设计文档 Redis §3.1)
             offline_key = f"hasn:offline:{to_id}"

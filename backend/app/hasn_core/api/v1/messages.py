@@ -160,8 +160,15 @@ async def send_message(
 
     target_sid = await ws_router.get_client_sid(target.id)
     if target_sid:
-        await redis_client.rpush(f"hasn:push:{target.id}", msg_payload)
-        log.info(f"[HASN MSG] 在线推送: {hasn_id} -> {target.id} msg_id={msg.id}")
+        if target_sid.startswith("native:"):
+            # 原生 WebSocket 客户端 → 写入 Redis 推送队列 (ws_native.py push_loop 消费)
+            await redis_client.rpush(f"hasn:push:{target.id}", msg_payload)
+            log.info(f"[HASN MSG] 在线推送(NativeWS): {hasn_id} -> {target.id} msg_id={msg.id}")
+        else:
+            # Socket.IO 客户端 → 直接 sio.emit
+            from backend.common.socketio.server import sio
+            await sio.emit('hasn_message_push', json.loads(msg_payload), to=target_sid)
+            log.info(f"[HASN MSG] 在线推送(SocketIO): {hasn_id} -> {target.id} msg_id={msg.id}")
     else:
         await redis_client.rpush(f"hasn:offline:{target.id}", msg_payload)
         await redis_client.expire(f"hasn:offline:{target.id}", 7 * 86400)
