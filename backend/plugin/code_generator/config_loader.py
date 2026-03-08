@@ -45,6 +45,11 @@ class CodeGenConfig:
         return frontend_dir
 
     @property
+    def frontend_app(self) -> str:
+        """Get frontend sub-app name (directory under apps/)."""
+        return self.get('paths', 'frontend_app', 'web-antdv-next')
+
+    @property
     def backend_app_dir(self) -> Path:
         """Get backend app directory path (absolute)."""
         app_dir = Path(self.get('paths', 'backend_app_dir', 'app'))
@@ -118,6 +123,11 @@ class CodeGenConfig:
     def default_icon(self) -> str:
         """Get default menu icon."""
         return self.get('frontend', 'default_icon', 'lucide:list')
+
+    @property
+    def ui_lib(self) -> str:
+        """Get UI component library package name (e.g. 'antdv-next', 'ant-design-vue')."""
+        return self.get('frontend', 'ui_lib', 'antdv-next')
 
     @property
     def parent_menu_id(self) -> int | None:

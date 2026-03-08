@@ -113,6 +113,7 @@ class Settings(BaseSettings):
         rf'^{FASTAPI_API_V1_PATH}/client/version/.*$',  # 桌面端版本检测公开 API
         rf'^{FASTAPI_API_V1_PATH}/llm/proxy(/.*)?$',  # LLM Proxy API（使用 x-api-key 认证，不走 JWT）
         rf'^{FASTAPI_API_V1_PATH}/huanxing/open/.*$',  # 唤星公开 API（分享文档等）
+        rf'^{FASTAPI_API_V1_PATH}/hasn/.*$',  # HASN 社交网络 API（使用独立 JWT/ApiKey 认证）
     ]
 
     # 用户安全

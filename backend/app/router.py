@@ -45,3 +45,4 @@ router.include_router(huanxing_agent)     # 唤星Agent API
 # HASN
 router.include_router(hasn_core_v1)
 router.include_router(hasn_social_v1)
+

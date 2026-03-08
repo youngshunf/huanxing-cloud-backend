@@ -69,7 +69,7 @@ class Generate:
 
             # 使用配置文件的设置
             if not self.module:
-                self.module = table_info.name.replace('_', '-')
+                self.module = table_info.name  # keep underscores for consistent directory naming
 
             # 步骤1: 生成前端代码
             if codegen_config.generate_frontend:

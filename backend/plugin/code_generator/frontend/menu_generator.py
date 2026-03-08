@@ -31,7 +31,7 @@ async def generate_menu_sql(
     """
     # Use module name or derive from table name
     if not module:
-        module = table_info.name.replace('_', '-')
+        module = table_info.name  # keep underscores for consistent directory naming
 
     # Prepare template variables
     from datetime import datetime
@@ -85,7 +85,7 @@ async def generate_menu_sql_from_db(
 
     # Use module name or derive from table name
     if not module:
-        module = business.table_name.replace('_', '-')
+        module = business.table_name  # keep underscores for consistent directory naming
 
     # Prepare template variables
     from datetime import datetime

@@ -147,3 +147,6 @@ class Base(DataClassBase, DateTimeMixin):
     """
 
     __abstract__ = True
+
+# HASN 模型已通过 dynamic_import 自动扫描 backend/app/hasn_core/model 和 hasn_social/model
+# 无需在此显式 import，否则会导致 "Table already defined" 错误

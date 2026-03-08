@@ -65,6 +65,9 @@ dependencies = [
   "orjson>=3.10.0",
   "backoff>=2.2.0",
   "tiktoken>=0.7.0",
+  # 支付 SDK
+  "python-alipay-sdk>=3.2.0",   # 支付宝（公钥+证书模式）
+  "wechatpayv3>=1.2.44",        # 微信支付 v3
   # S3 插件依赖
   "opendal>=0.46.0",
   "passlib>=1.7.4",

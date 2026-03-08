@@ -5,6 +5,9 @@
 # 前端项目根目录（相对于 clound-backend 项目根，或使用绝对路径）
 frontend_dir = "../huanxing-cloud-frontend"
 
+# 前端子应用名称（对应 apps/ 下的目录名）
+frontend_app = "web-antdv-next"
+
 # 后端代码生成目录（相对于 backend/ 根目录）
 backend_app_dir = "app"
 
@@ -55,6 +58,9 @@ default_icon = "lucide:list"
 
 # 路由模式: "hash" 或 "history"
 router_mode = "hash"
+
+# UI 组件库包名（用于 import { message } from '...'）
+ui_lib = "antdv-next"
 
 [menu]
 # 父菜单 ID（如果为 0 或留空，则作为顶级菜单）

@@ -213,8 +213,8 @@ class GenerateAll:
                 for tbl in generated_tables:
                     print(f'   - {tbl}', flush=True)
                 print(f'\n📂 文件位置:', flush=True)
-                print(f'   前端: apps/web-antd/src/views/{self.app}/<table_name>/', flush=True)
-                print(f'   API:  apps/web-antd/src/api/{self.app}/<table_name>.ts', flush=True)
+                print(f'   前端: apps/{codegen_config.frontend_app}/src/views/{self.app}/<table_name>/', flush=True)
+                print(f'   API:  apps/{codegen_config.frontend_app}/src/api/{self.app}/<table_name>.ts', flush=True)
                 print(f'   后端: backend/app/{self.app}/', flush=True)
                 print(f'   SQL:  {codegen_config.menu_sql_dir}/', flush=True)
             print(flush=True)

@@ -57,7 +57,7 @@ class FrontendGenerator:
 
         # Use module name or derive from table name
         if not module:
-            module = table_info.name.replace('_', '-')
+            module = table_info.name  # keep underscores for consistent directory naming
 
         # Detect frontend directory
         if not output_dir:
@@ -85,7 +85,7 @@ class FrontendGenerator:
         """
         # Use module name or derive from table name
         if not module:
-            module = table_info.name.replace('_', '-')
+            module = table_info.name  # keep underscores for consistent directory naming
 
         # Detect frontend directory
         if not output_dir:
@@ -124,7 +124,7 @@ class FrontendGenerator:
 
         # Use module name or derive from table name
         if not module:
-            module = business.table_name.replace('_', '-')
+            module = business.table_name  # keep underscores for consistent directory naming
 
         # Detect frontend directory
         if not output_dir:
@@ -169,7 +169,7 @@ class FrontendGenerator:
 
         # Use module name or derive from table name
         if not module:
-            module = table.replace('_', '-')
+            module = table  # keep underscores for consistent directory naming
 
         # Detect frontend directory
         if not output_dir:
@@ -269,7 +269,7 @@ class FrontendGenerator:
         vars_dict = self._prepare_template_vars(table_info, app, module)
 
         # Define output paths（约定 output_dir 为 clound-frontend 根目录）
-        src_dir = output_dir / 'apps' / 'web-antd' / 'src'
+        src_dir = output_dir / 'apps' / codegen_config.frontend_app / 'src'
         views_dir = src_dir / 'views' / app / module  # views/app/module/
         api_dir = src_dir / 'api' / app  # api/app/
         api_file = api_dir / f'{module}.ts'  # api/app/module.ts
@@ -381,6 +381,7 @@ class FrontendGenerator:
             'has_dict_fields': has_dict_fields,
             'api_path': f'/api/v1/{app}/{module.replace("_", "/")}s',
             'permission_prefix': table_info.name.replace('_', ':'),
+            'ui_lib': codegen_config.ui_lib,
         }
 
     async def _generate_or_update_api(self, api_file: Path, vars_dict: dict, force: bool = False) -> None:
@@ -419,7 +420,7 @@ class FrontendGenerator:
 
         for candidate in candidates:
             candidate = candidate.resolve()
-            if candidate.exists() and (candidate / 'apps' / 'web-antd' / 'src').exists():
+            if candidate.exists() and (candidate / 'apps' / codegen_config.frontend_app / 'src').exists():
                 return candidate
 
         raise ValueError(
