@@ -61,7 +61,10 @@ def _build_client(channel, merchant_config: dict | None = None) -> PayClient:
         config = {**config, **channel.extra_config}
     notify_url = f'{PAY_ORDER_NOTIFY_URL}/{channel.id}'
 
-    if code.startswith('wx'):
+    if code == 'wx_papay':
+        from backend.app.pay.service.channel.wechat_papay import WechatPapayClient
+        return WechatPapayClient(config, notify_url)
+    elif code.startswith('wx'):
         from backend.app.pay.service.channel.wechat_native import WechatNativeClient
         return WechatNativeClient(config, notify_url)
     elif code.startswith('alipay'):
@@ -207,6 +210,7 @@ class PayOrderService:
                 order_no=order_no, amount=pay_amount,
                 subject=f'唤星AI-{tier_name}会员-{cycle_name}',
                 body=f'{tier_name}（{cycle_name}）订阅', user_ip=user_ip,
+                contract_no=contract_no or '',
             )
             qr_code_url = pay_result.get('qr_code_url')
             pay_url = pay_result.get('pay_url')

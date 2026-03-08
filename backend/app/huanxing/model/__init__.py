@@ -5,8 +5,10 @@ from backend.app.huanxing.model.huanxing_document_version import HuanxingDocumen
 from backend.app.huanxing.model.huanxing_document_autosave import HuanxingDocumentAutosave as HuanxingDocumentAutosave
 from backend.app.huanxing.model.huanxing_document_folder import HuanxingDocumentFolder as HuanxingDocumentFolder
 from backend.app.huanxing.model.pay_app import PayApp as PayApp
-from backend.app.huanxing.model.pay_channel import PayChannel as PayChannel
-from backend.app.huanxing.model.pay_order import PayOrder as PayOrder
-from backend.app.huanxing.model.pay_notify_log import PayNotifyLog as PayNotifyLog
-from backend.app.huanxing.model.pay_refund import PayRefund as PayRefund
-from backend.app.huanxing.model.pay_contract import PayContract as PayContract
+
+# 支付模块已迁移到独立的 backend.app.pay，以下从 pay 模块重新导出以保持兼容
+from backend.app.pay.model.pay_channel import PayChannel as PayChannel
+from backend.app.pay.model.pay_order import PayOrder as PayOrder
+from backend.app.pay.model.pay_notify_log import PayNotifyLog as PayNotifyLog
+from backend.app.pay.model.pay_refund import PayRefund as PayRefund
+from backend.app.pay.model.pay_contract import PayContract as PayContract
