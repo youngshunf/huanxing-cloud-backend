@@ -14,7 +14,7 @@ class HasnAgentSchemaBase(SchemaBase):
     openclaw_agent_id: str | None = Field(None, description='OpenClaw Agent ID')
     description: str | None = Field(None, description='描述')
     role: str | None = Field(None, description='角色')
-    capabilities: dict | None = Field(None, description='能力集(JSON)')
+    capabilities: list | None = Field(None, description='能力列表(JSON array)')
     profile: dict | None = Field(None, description='扩展资料(JSON)')
     api_endpoint: str | None = Field(None, description='API端点')
     pricing: dict | None = Field(None, description='定价策略(JSON)')
