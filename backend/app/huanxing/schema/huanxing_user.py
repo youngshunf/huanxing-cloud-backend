@@ -40,3 +40,26 @@ class GetHuanxingUserDetail(HuanxingUserSchemaBase):
     id: int
     created_time: datetime
     updated_time: datetime | None = None
+
+
+class AgentSyncUserParam(SchemaBase):
+    """Agent 同步用户参数（注册时调用）"""
+
+    user_id: int = Field(description='平台用户 sys_user.id')
+    server_id: str = Field(description='所在服务器 ID')
+    agent_id: str = Field(description='Agent ID（如 001-18611348367-assistant）')
+    star_name: str | None = Field(None, description='分身名字')
+    template: str | None = Field(None, description='模板名称')
+    channel_type: str | None = Field(None, description='渠道类型')
+    channel_peer_id: str | None = Field(None, description='渠道用户 ID')
+    workspace_path: str | None = Field(None, description='工作区路径')
+
+
+class AgentUpdateUserParam(SchemaBase):
+    """Agent 更新用户参数"""
+
+    agent_id: str | None = Field(None, description='Agent ID')
+    star_name: str | None = Field(None, description='分身名字')
+    template: str | None = Field(None, description='模板名称')
+    workspace_path: str | None = Field(None, description='工作区路径')
+    agent_status: int | None = Field(None, description='Agent 状态：1-启用 0-禁用')

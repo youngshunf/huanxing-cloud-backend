@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     # .env Token
     TOKEN_SECRET_KEY: str  # 密钥 secrets.token_urlsafe(32)
 
+    # Agent Key（OpenClaw 插件认证）
+    AGENT_SECRET_KEY: str = ''  # 生产环境在 .env 中设置，支持逗号分隔多 key
+
     # Token
     TOKEN_ALGORITHM: str = 'HS256'
     TOKEN_EXPIRE_SECONDS: int = 60 * 60 * 24  # 1 天
@@ -114,6 +117,7 @@ class Settings(BaseSettings):
         rf'^{FASTAPI_API_V1_PATH}/llm/proxy(/.*)?$',  # LLM Proxy API（使用 x-api-key 认证，不走 JWT）
         rf'^{FASTAPI_API_V1_PATH}/huanxing/open/.*$',  # 唤星公开 API（分享文档等）
         rf'^{FASTAPI_API_V1_PATH}/hasn/.*$',  # HASN 社交网络 API（使用独立 JWT/ApiKey 认证）
+        rf'^{FASTAPI_API_V1_PATH}/huanxing/agent/.*$',  # 唤星 Agent API（使用 X-Agent-Key 认证，不走 JWT）
     ]
 
     # 用户安全

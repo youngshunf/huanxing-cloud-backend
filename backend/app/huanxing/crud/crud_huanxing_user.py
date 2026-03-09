@@ -19,6 +19,32 @@ class CRUDHuanxingUser(CRUDPlus[HuanxingUser]):
         """
         return await self.select_model(db, pk)
 
+    async def get_by_agent_id(self, db: AsyncSession, agent_id: str) -> HuanxingUser | None:
+        """
+        按 Agent ID 查找唤星用户
+
+        :param db: 数据库会话
+        :param agent_id: Agent ID（如 001-18611348367-assistant）
+        :return:
+        """
+        result = await db.execute(
+            select(HuanxingUser).where(HuanxingUser.agent_id == agent_id)
+        )
+        return result.scalars().first()
+
+    async def get_by_user_id(self, db: AsyncSession, user_id: int) -> HuanxingUser | None:
+        """
+        按平台 user_id 查找唤星用户
+
+        :param db: 数据库会话
+        :param user_id: 关联 sys_user.id
+        :return:
+        """
+        result = await db.execute(
+            select(HuanxingUser).where(HuanxingUser.user_id == user_id)
+        )
+        return result.scalars().first()
+
     async def get_select(self) -> Select:
         """获取唤星用户列表查询表达式"""
         return await self.select_order('id', 'desc')

@@ -21,6 +21,7 @@ from backend.app.huanxing.api.v1.open.share import router as open_share_router
 
 # --- agent/ Agent ---
 from backend.app.huanxing.api.v1.agent.document import router as agent_document_router
+from backend.app.huanxing.api.v1.agent.user_sync import router as agent_user_sync_router
 
 
 # ========================================
@@ -62,3 +63,4 @@ open_api.include_router(open_share_router, tags=['唤星公开-分享'])
 agent = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/huanxing/agent', tags=['唤星Agent'])
 
 agent.include_router(agent_document_router, prefix='/docs', tags=['唤星Agent-文档'])
+agent.include_router(agent_user_sync_router, prefix='/users', tags=['唤星Agent-用户同步'])
