@@ -13,6 +13,7 @@ from backend.app.huanxing.crud.crud_huanxing_document import huanxing_document_d
 from backend.app.huanxing.model import HuanxingDocument
 from backend.app.huanxing.schema.huanxing_document import CreateHuanxingDocumentParam, DeleteHuanxingDocumentParam, UpdateHuanxingDocumentParam, AutosaveParam
 from backend.common.exception import errors
+from backend.core.conf import settings
 from backend.common.pagination import paging_data
 from backend.utils.timezone import timezone as tz
 
@@ -152,7 +153,7 @@ class HuanxingDocumentService:
             doc_data['share_expires_at'] = tz.now() + timedelta(hours=obj.auto_share.expires_hours)
             if obj.auto_share.password:
                 doc_data['share_password'] = hash_password(obj.auto_share.password)
-            share_url = f"https://huanxing.ai.dcfuture.cn/share/{doc_data['share_token']}"
+            share_url = f"{settings.HUANXING_SITE_URL}/share/{doc_data['share_token']}"
         
         # 创建文档
         doc = await huanxing_document_dao.create(db, doc_data)
@@ -226,7 +227,7 @@ class HuanxingDocumentService:
     @staticmethod
     async def autosave(*, db: AsyncSession, document_id: int, user_id: int, content: str) -> None:
         """
-        自动保存文档草稿（UPSERT）
+        自动保存文档：同时更新草稿表和正式文档表
 
         :param db: 数据库会话
         :param document_id: 文档ID
@@ -234,6 +235,7 @@ class HuanxingDocumentService:
         :param content: 文档内容
         :return:
         """
+        # 1. 更新草稿表（UPSERT）
         stmt = text("""
             INSERT INTO huanxing_document_autosave (document_id, user_id, content, saved_at)
             VALUES (:doc_id, :user_id, :content, NOW())
@@ -241,6 +243,18 @@ class HuanxingDocumentService:
             DO UPDATE SET content = EXCLUDED.content, saved_at = NOW()
         """)
         await db.execute(stmt, {"doc_id": document_id, "user_id": user_id, "content": content})
+        # 2. 同时更新正式文档内容（确保刷新后内容不丢失）
+        stmt2 = text("""
+            UPDATE huanxing_document 
+            SET content = :content, word_count = :word_count, updated_at = NOW()
+            WHERE id = :doc_id AND user_id = :user_id
+        """)
+        await db.execute(stmt2, {
+            "doc_id": document_id, 
+            "user_id": user_id, 
+            "content": content,
+            "word_count": len(content),
+        })
         await db.commit()
     
     @staticmethod
@@ -457,7 +471,7 @@ class HuanxingDocumentService:
         
         await huanxing_document_dao.update(db, document_id, update_data)
         
-        return f"https://huanxing.ai.dcfuture.cn/share/{share_token}"
+        return f"{settings.HUANXING_SITE_URL}/share/{share_token}"
     
     @staticmethod
     async def cancel_share(*, db: AsyncSession, document_id: int) -> int:

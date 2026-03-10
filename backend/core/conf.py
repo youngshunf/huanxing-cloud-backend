@@ -93,6 +93,7 @@ class Settings(BaseSettings):
 
     # Agent Key（OpenClaw 插件认证）
     AGENT_SECRET_KEY: str = ''  # 生产环境在 .env 中设置，支持逗号分隔多 key
+    HUANXING_SITE_URL: str = 'https://huanxing.dcfuture.cn'  # 前端站点域名，用于生成分享链接等
 
     # Token
     TOKEN_ALGORITHM: str = 'HS256'
