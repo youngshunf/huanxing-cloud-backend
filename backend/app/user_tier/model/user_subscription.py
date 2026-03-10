@@ -30,3 +30,4 @@ class UserSubscription(Base):
     next_grant_date: Mapped[datetime | None] = mapped_column(TimeZone, default=None, nullable=True, comment='下次赠送积分时间 (年度订阅专用)')
     status: Mapped[str] = mapped_column(sa.String(32), default='', comment='订阅状态 (active:激活/expired:已过期/cancelled:已取消)')
     auto_renew: Mapped[bool] = mapped_column(sa.BOOLEAN(), default=True, comment='是否自动续费')
+    max_agents: Mapped[int] = mapped_column(sa.INTEGER(), default=1, comment='Agent 最大数量（跨服务器总计）')

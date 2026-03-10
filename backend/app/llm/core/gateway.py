@@ -501,6 +501,283 @@ class LLMGateway:
         # 其他供应商需要前缀让 LiteLLM 识别使用哪种 API 协议
         return f'{provider_type}/{model_name}'
 
+    @staticmethod
+    def _is_anthropic_native(provider_type: str) -> bool:
+        """
+        判断该供应商是否使用 Anthropic 原生 Messages API 协议。
+
+        True  → 用 litellm.anthropic.messages.acreate()（Anthropic 协议）
+        False → 用 litellm.acompletion()（OpenAI 协议），并做格式互转
+
+        Bedrock / Vertex AI 虽然底层是 Claude，但 LiteLLM 对它们统一走
+        acompletion 并自动完成协议转换，所以这里不列入 anthropic_native。
+        """
+        return provider_type == 'anthropic'
+
+    def _build_openai_params_from_anthropic(
+        self,
+        anthropic_params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        将已构建好的 Anthropic 风格参数转换为 OpenAI 兼容参数。
+
+        用于 provider_type != 'anthropic' 但客户端走了 /v1/messages 接口的情况。
+        转换规则：
+          - system       → messages 首条 role=system 消息
+          - stop_sequences → stop
+          - top_k        → 删除（OpenAI 不支持）
+          - tools        → 保持（LiteLLM 会做工具格式适配）
+          - 其余字段原样保留
+        """
+        params = dict(anthropic_params)
+
+        # 1. 处理 system 提示
+        system = params.pop('system', None)
+        messages: list[dict] = list(params.get('messages', []))
+        if system:
+            # 将 system 块（str 或 list[block]）统一展平为字符串
+            if isinstance(system, list):
+                system_text = '\n'.join(
+                    b.get('text', '') if isinstance(b, dict) else getattr(b, 'text', str(b))
+                    for b in system
+                )
+            else:
+                system_text = str(system)
+            # 插入到消息列表最前面（避免重复插入）
+            if not messages or messages[0].get('role') != 'system':
+                messages = [{'role': 'system', 'content': system_text}] + messages
+        params['messages'] = messages
+
+        # 2. stop_sequences → stop
+        stop_sequences = params.pop('stop_sequences', None)
+        if stop_sequences and 'stop' not in params:
+            params['stop'] = stop_sequences
+
+        # 3. 删除 OpenAI 不支持的参数
+        params.pop('top_k', None)
+
+        return params
+
+    @staticmethod
+    def _convert_openai_response_to_anthropic(
+        response: Any,
+        model_name: str,
+        request_id: str,
+    ) -> Any:
+        """
+        将 litellm.acompletion() 返回的 OpenAI 格式响应，
+        转换为与 litellm.anthropic.messages.acreate() 返回值结构兼容的对象。
+
+        返回一个简单的 SimpleNamespace，后续代码用 getattr 访问字段。
+        """
+        from types import SimpleNamespace
+
+        # finish_reason 映射
+        finish_reason_map = {
+            'stop': 'end_turn',
+            'length': 'max_tokens',
+            'tool_calls': 'tool_use',
+            'content_filter': 'stop_sequence',
+        }
+
+        choice = None
+        raw_content = ''
+        finish_reason = 'end_turn'
+        tool_calls_raw = None
+
+        choices = getattr(response, 'choices', None) or response.get('choices', [])
+        if choices:
+            choice = choices[0] if not isinstance(choices[0], dict) else None
+            choice_dict = choices[0] if isinstance(choices[0], dict) else None
+
+            if choice is not None:
+                message = getattr(choice, 'message', None)
+                raw_content = getattr(message, 'content', '') or ''
+                finish_reason = finish_reason_map.get(
+                    getattr(choice, 'finish_reason', 'stop') or 'stop', 'end_turn'
+                )
+                tool_calls_raw = getattr(message, 'tool_calls', None)
+            elif choice_dict is not None:
+                message = choice_dict.get('message', {})
+                raw_content = message.get('content', '') or ''
+                finish_reason = finish_reason_map.get(
+                    choice_dict.get('finish_reason', 'stop') or 'stop', 'end_turn'
+                )
+                tool_calls_raw = message.get('tool_calls')
+
+        # 构建 content blocks
+        content_blocks = []
+        if raw_content:
+            content_blocks.append(SimpleNamespace(type='text', text=raw_content))
+        if tool_calls_raw:
+            for tc in tool_calls_raw:
+                import json as _json
+                if isinstance(tc, dict):
+                    fn = tc.get('function', {})
+                    args_raw = fn.get('arguments', '{}')
+                else:
+                    fn = getattr(tc, 'function', None)
+                    args_raw = getattr(fn, 'arguments', '{}') if fn else '{}'
+                try:
+                    args = _json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                except Exception:
+                    args = {}
+                tc_id = tc.get('id') if isinstance(tc, dict) else getattr(tc, 'id', None)
+                fn_name = fn.get('name') if isinstance(fn, dict) else getattr(fn, 'name', '')
+                content_blocks.append(SimpleNamespace(
+                    type='tool_use',
+                    id=tc_id,
+                    name=fn_name,
+                    input=args,
+                ))
+
+        # 用量
+        usage_obj = getattr(response, 'usage', None) or response.get('usage', {})
+        if isinstance(usage_obj, dict):
+            in_t = usage_obj.get('prompt_tokens', 0)
+            out_t = usage_obj.get('completion_tokens', 0)
+        else:
+            in_t = getattr(usage_obj, 'prompt_tokens', 0)
+            out_t = getattr(usage_obj, 'completion_tokens', 0)
+
+        usage = SimpleNamespace(input_tokens=in_t, output_tokens=out_t)
+
+        resp_id = getattr(response, 'id', None) or (
+            response.get('id') if isinstance(response, dict) else None
+        ) or request_id
+
+        return SimpleNamespace(
+            id=resp_id,
+            type='message',
+            role='assistant',
+            model=model_name,
+            content=content_blocks,
+            stop_reason=finish_reason,
+            stop_sequence=None,
+            usage=usage,
+        )
+
+    async def _convert_openai_stream_to_anthropic_sse(
+        self,
+        openai_stream,
+        model_name: str,
+        message_id: str,
+    ):
+        """
+        将 litellm.acompletion(stream=True) 的 OpenAI 格式流，
+        转换为 Anthropic SSE 事件流（字符串 yield）。
+
+        Anthropic 流式事件顺序：
+          message_start → content_block_start → content_block_delta(s)
+          → content_block_stop → message_delta → message_stop
+        """
+        import json as _json
+        import time as _time
+
+        input_tokens = 0
+        output_tokens = 0
+        full_text = ''
+        finish_reason_map = {
+            'stop': 'end_turn',
+            'length': 'max_tokens',
+            'tool_calls': 'tool_use',
+        }
+
+        # message_start
+        msg_start = {
+            'type': 'message_start',
+            'message': {
+                'id': message_id,
+                'type': 'message',
+                'role': 'assistant',
+                'content': [],
+                'model': model_name,
+                'stop_reason': None,
+                'stop_sequence': None,
+                'usage': {'input_tokens': 0, 'output_tokens': 0},
+            },
+        }
+        yield f'event: message_start\ndata: {_json.dumps(msg_start)}\n\n'
+
+        # content_block_start（index=0，text block）
+        yield (
+            'event: content_block_start\n'
+            'data: {"type":"content_block_start","index":0,'
+            '"content_block":{"type":"text","text":""}}\n\n'
+        )
+        yield 'event: ping\ndata: {"type":"ping"}\n\n'
+
+        finish_reason_raw = 'stop'
+        async for chunk in openai_stream:
+            # 提取 delta
+            choices = getattr(chunk, 'choices', None) or (
+                chunk.get('choices', []) if isinstance(chunk, dict) else []
+            )
+            if not choices:
+                # 可能是携带 usage 的最后一个 chunk（stream_options）
+                usage_obj = getattr(chunk, 'usage', None) or (
+                    chunk.get('usage') if isinstance(chunk, dict) else None
+                )
+                if usage_obj:
+                    if isinstance(usage_obj, dict):
+                        input_tokens = usage_obj.get('prompt_tokens', input_tokens)
+                        output_tokens = usage_obj.get('completion_tokens', output_tokens)
+                    else:
+                        input_tokens = getattr(usage_obj, 'prompt_tokens', input_tokens)
+                        output_tokens = getattr(usage_obj, 'completion_tokens', output_tokens)
+                continue
+
+            c = choices[0]
+            if isinstance(c, dict):
+                delta = c.get('delta', {})
+                text = delta.get('content') or ''
+                finish_reason_raw = c.get('finish_reason') or finish_reason_raw
+                # stream_options usage
+                usage_obj = c.get('usage')
+                if not usage_obj:
+                    usage_obj = chunk.get('usage') if isinstance(chunk, dict) else None
+            else:
+                delta = getattr(c, 'delta', None)
+                text = getattr(delta, 'content', '') or ''
+                finish_reason_raw = getattr(c, 'finish_reason', None) or finish_reason_raw
+                usage_obj = getattr(c, 'usage', None) or getattr(chunk, 'usage', None)
+
+            if usage_obj:
+                if isinstance(usage_obj, dict):
+                    input_tokens = usage_obj.get('prompt_tokens', input_tokens)
+                    output_tokens = usage_obj.get('completion_tokens', output_tokens)
+                else:
+                    input_tokens = getattr(usage_obj, 'prompt_tokens', input_tokens)
+                    output_tokens = getattr(usage_obj, 'completion_tokens', output_tokens)
+
+            if text:
+                full_text += text
+                delta_event = {
+                    'type': 'content_block_delta',
+                    'index': 0,
+                    'delta': {'type': 'text_delta', 'text': text},
+                }
+                yield f'event: content_block_delta\ndata: {_json.dumps(delta_event)}\n\n'
+
+        # 如果没拿到 token 数则用字符数粗估
+        if output_tokens == 0 and full_text:
+            output_tokens = max(1, len(full_text) // 4)
+
+        # content_block_stop
+        yield 'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n'
+
+        # message_delta（含 stop_reason 和 output usage）
+        stop_reason = finish_reason_map.get(finish_reason_raw or 'stop', 'end_turn')
+        msg_delta = {
+            'type': 'message_delta',
+            'delta': {'stop_reason': stop_reason, 'stop_sequence': None},
+            'usage': {'output_tokens': output_tokens},
+        }
+        yield f'event: message_delta\ndata: {_json.dumps(msg_delta)}\n\n'
+
+        # message_stop
+        yield 'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+
     # ----------------------------------------------------------------
     # 智能上下文压缩
     # ----------------------------------------------------------------
@@ -1015,8 +1292,22 @@ class LLMGateway:
             try:
                 # 为自定义模型注册默认价格，避免 LiteLLM passthrough 日志处理器报错
                 self.register_model_pricing(model_config.model_name)
-                
-                response = await self.litellm.anthropic.messages.acreate(**params)
+
+                if self._is_anthropic_native(provider.provider_type):
+                    # Anthropic 原生协议：直接调用 Messages API
+                    response = await self.litellm.anthropic.messages.acreate(**params)
+                else:
+                    # OpenAI 兼容协议：转换参数后调用 acompletion，再将响应转回 Anthropic 结构
+                    log.info(
+                        f'[LLM Gateway] 供应商 {provider.name} 类型为 {provider.provider_type}，'
+                        f'将 Anthropic 格式请求转换为 OpenAI 格式调用'
+                    )
+                    openai_params = self._build_openai_params_from_anthropic(params)
+                    raw_response = await self.litellm.acompletion(**openai_params)
+                    response = self._convert_openai_response_to_anthropic(
+                        raw_response, model_config.model_name, request_id
+                    )
+
                 timer.stop()
                 breaker.record_success()
 
@@ -1895,6 +2186,7 @@ class LLMGateway:
                     'id': provider.id,
                     'name': provider.name,
                     'api_base_url': provider.api_base_url,
+                    'provider_type': provider.provider_type,  # 流式阶段分支判断需要
                 },
                 'credit_rate': credit_rate,
             })
@@ -2019,52 +2311,83 @@ class LLMGateway:
             try:
                 # 为自定义模型注册默认价格，避免 LiteLLM passthrough 日志处理器报错
                 self.register_model_pricing(model_name)
-                
+
+                provider_type = provider_info.get('provider_type', 'anthropic')
+                use_anthropic_native = self._is_anthropic_native(provider_type)
+
                 if self.debug_mode:
-                    llm_debug_log.info(f'[DEBUG] 开始调用 LiteLLM anthropic.messages.acreate(stream=True)...')
-                
-                response = await self.litellm.anthropic.messages.acreate(**params)
-                
-                if self.debug_mode:
-                    llm_debug_log.info(f'[DEBUG] LiteLLM 返回: {type(response)}')
-                
+                    proto = 'Anthropic 原生协议' if use_anthropic_native else f'OpenAI 兼容协议 ({provider_type})'
+                    llm_debug_log.info(f'[DEBUG] Anthropic 流式 | 使用协议: {proto} | model: {model_name}')
+
                 chunk_count = 0
-                async for chunk in response:
-                    if self.debug_mode and chunk_count == 0:
-                        chunk_repr = str(chunk)[:300] if chunk else 'None'
-                        llm_debug_log.info(f'[DEBUG] 第一个 chunk: {chunk_repr}')
-                    
-                    chunk_count += 1
-                    
-                    # N6: 使用统一的 chunk 格式化方法
-                    if isinstance(chunk, bytes):
-                        decoded = decoder.decode(chunk, final=False)
-                        if decoded:
+
+                if use_anthropic_native:
+                    # ── Anthropic 原生流 ──────────────────────────────────────
+                    response = await self.litellm.anthropic.messages.acreate(**params)
+
+                    if self.debug_mode:
+                        llm_debug_log.info(f'[DEBUG] LiteLLM anthropic 流返回: {type(response)}')
+
+                    async for chunk in response:
+                        if self.debug_mode and chunk_count == 0:
+                            llm_debug_log.info(f'[DEBUG] 第一个 chunk: {str(chunk)[:300]}')
+                        chunk_count += 1
+
+                        # N6: 统一格式化方法（处理 bytes/str/dict/object）
+                        if isinstance(chunk, bytes):
+                            decoded = decoder.decode(chunk, final=False)
+                            if decoded:
+                                formatted, input_tokens, output_tokens = self._format_anthropic_chunk(
+                                    decoded, input_tokens, output_tokens
+                                )
+                                if formatted:
+                                    if compress_result and not has_sent_data and 'message_start' in formatted:
+                                        formatted = self._inject_compress_metadata(formatted, compress_result)
+                                    has_sent_data = True
+                                    yield formatted
+                        else:
                             formatted, input_tokens, output_tokens = self._format_anthropic_chunk(
-                                decoded, input_tokens, output_tokens
+                                chunk, input_tokens, output_tokens
                             )
                             if formatted:
-                                # 注入压缩元信息到 message_start 事件
                                 if compress_result and not has_sent_data and 'message_start' in formatted:
                                     formatted = self._inject_compress_metadata(formatted, compress_result)
-                                has_sent_data = True  # N2
+                                has_sent_data = True
                                 yield formatted
-                    else:
-                        formatted, input_tokens, output_tokens = self._format_anthropic_chunk(
-                            chunk, input_tokens, output_tokens
+
+                    # 刷新解码器
+                    final_decoded = decoder.decode(b'', final=True)
+                    if final_decoded:
+                        yield final_decoded
+
+                else:
+                    # ── OpenAI 兼容协议：转换参数，转换响应流 ───────────────
+                    log.info(
+                        f'[LLM Gateway] 供应商 {provider_name} 类型为 {provider_type}，'
+                        f'将 Anthropic 流式请求转换为 OpenAI 格式调用'
+                    )
+                    openai_params = self._build_openai_params_from_anthropic(params)
+                    openai_params['stream'] = True
+                    openai_params['stream_options'] = {'include_usage': True}
+                    openai_stream = await self.litellm.acompletion(**openai_params)
+
+                    message_id = usage_tracker.generate_request_id()
+                    # 注入压缩元信息标记（通过第一个 message_start 事件携带）
+                    first_chunk = True
+                    async for sse_line in self._convert_openai_stream_to_anthropic_sse(
+                        openai_stream, model_name, message_id
+                    ):
+                        chunk_count += 1
+                        if first_chunk and compress_result and 'message_start' in sse_line:
+                            sse_line = self._inject_compress_metadata(sse_line, compress_result)
+                            first_chunk = False
+                        has_sent_data = True
+                        # 顺便解析 token 数，供后续计费（message_start/message_delta 事件携带）
+                        input_tokens, output_tokens = self._extract_usage_from_sse(
+                            sse_line, input_tokens, output_tokens
                         )
-                        if formatted:
-                            # 注入压缩元信息到 message_start 事件
-                            if compress_result and not has_sent_data and 'message_start' in formatted:
-                                formatted = self._inject_compress_metadata(formatted, compress_result)
-                            has_sent_data = True  # N2
-                            yield formatted
-                
-                # 刷新解码器
-                final_decoded = decoder.decode(b'', final=True)
-                if final_decoded:
-                    yield final_decoded
-                
+                        yield sse_line
+
                 timer.stop()
                 breaker.record_success()
                 stream_success = True

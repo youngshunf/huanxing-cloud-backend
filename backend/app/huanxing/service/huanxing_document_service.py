@@ -64,19 +64,40 @@ class HuanxingDocumentService:
         return huanxing_document
 
     @staticmethod
-    async def get_list(db: AsyncSession, user_id: int | None = None) -> dict[str, Any]:
+    async def get_list(
+        db: AsyncSession,
+        user_id: int | None = None,
+        folder_id: int | None = None,
+        status: str | None = None,
+        title: str | None = None,
+    ) -> dict[str, Any]:
         """
         获取唤星文档列表
 
         :param db: 数据库会话
         :param user_id: 用户ID（传入时只返回该用户的文档，不传则返回全部）
+        :param folder_id: 目录ID（按目录筛选）
+        :param status: 状态筛选（draft/published/archived）
+        :param title: 标题模糊搜索
         :return:
         """
         huanxing_document_select = await huanxing_document_dao.get_select()
+        from backend.app.huanxing.model.huanxing_document import HuanxingDocument
         if user_id is not None:
-            from backend.app.huanxing.model.huanxing_document import HuanxingDocument
             huanxing_document_select = huanxing_document_select.where(
                 HuanxingDocument.user_id == user_id
+            )
+        if folder_id is not None:
+            huanxing_document_select = huanxing_document_select.where(
+                HuanxingDocument.folder_id == folder_id
+            )
+        if status:
+            huanxing_document_select = huanxing_document_select.where(
+                HuanxingDocument.status == status
+            )
+        if title:
+            huanxing_document_select = huanxing_document_select.where(
+                HuanxingDocument.title.ilike(f'%{title}%')
             )
         return await paging_data(db, huanxing_document_select)
 

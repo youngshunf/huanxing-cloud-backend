@@ -34,9 +34,14 @@ router = APIRouter()
 async def get_my_documents(
     request: Request,
     db: CurrentSession,
+    folder_id: int | None = None,
+    status: str | None = None,
+    title: str | None = None,
 ) -> ResponseSchemaModel[PageData[GetHuanxingDocumentDetail]]:
     user_id = request.user.id
-    page_data = await huanxing_document_service.get_list(db=db, user_id=user_id)
+    page_data = await huanxing_document_service.get_list(
+        db=db, user_id=user_id, folder_id=folder_id, status=status, title=title
+    )
     return response_base.success(data=page_data)
 
 

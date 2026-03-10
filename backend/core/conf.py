@@ -118,6 +118,7 @@ class Settings(BaseSettings):
         rf'^{FASTAPI_API_V1_PATH}/huanxing/open/.*$',  # 唤星公开 API（分享文档等）
         rf'^{FASTAPI_API_V1_PATH}/hasn/.*$',  # HASN 社交网络 API（使用独立 JWT/ApiKey 认证）
         rf'^{FASTAPI_API_V1_PATH}/huanxing/agent/.*$',  # 唤星 Agent API（使用 X-Agent-Key 认证，不走 JWT）
+        rf'^{FASTAPI_API_V1_PATH}/user_tier/agent/.*$',  # 订阅积分 Agent API（使用 X-Agent-Key 认证，不走 JWT）
     ]
 
     # 用户安全

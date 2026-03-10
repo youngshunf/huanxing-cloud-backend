@@ -35,7 +35,7 @@ router = APIRouter()
 
 # 验证码 Redis 前缀
 SMS_CODE_PREFIX = 'sms_code'
-SMS_CODE_EXPIRE = 300  # 5 分钟
+SMS_CODE_EXPIRE = 1800  # 30 分钟
 
 
 def generate_code(length: int = 6) -> str:

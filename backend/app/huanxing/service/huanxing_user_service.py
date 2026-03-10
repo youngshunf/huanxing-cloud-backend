@@ -18,13 +18,6 @@ from backend.common.pagination import paging_data
 class HuanxingUserService:
     @staticmethod
     async def get(*, db: AsyncSession, pk: int) -> HuanxingUser:
-        """
-        获取唤星用户
-
-        :param db: 数据库会话
-        :param pk: 唤星用户 ID
-        :return:
-        """
         huanxing_user = await huanxing_user_dao.get(db, pk)
         if not huanxing_user:
             raise errors.NotFoundError(msg='唤星用户不存在')
@@ -32,89 +25,43 @@ class HuanxingUserService:
 
     @staticmethod
     async def get_list(db: AsyncSession) -> dict[str, Any]:
-        """
-        获取唤星用户列表
-
-        :param db: 数据库会话
-        :return:
-        """
         huanxing_user_select = await huanxing_user_dao.get_select()
         return await paging_data(db, huanxing_user_select)
 
     @staticmethod
     async def get_list_by_server(*, db: AsyncSession, server_id: str) -> dict[str, Any]:
-        """
-        获取指定服务器的唤星用户列表
-
-        :param db: 数据库会话
-        :param server_id: 服务器唯一标识
-        :return:
-        """
         huanxing_user_select = await huanxing_user_dao.get_select_by_server(server_id)
         return await paging_data(db, huanxing_user_select)
 
     @staticmethod
     async def get_all(*, db: AsyncSession) -> Sequence[HuanxingUser]:
-        """
-        获取所有唤星用户
-
-        :param db: 数据库会话
-        :return:
-        """
-        huanxing_users = await huanxing_user_dao.get_all(db)
-        return huanxing_users
+        return await huanxing_user_dao.get_all(db)
 
     @staticmethod
     async def create(*, db: AsyncSession, obj: CreateHuanxingUserParam) -> None:
-        """
-        创建唤星用户
-
-        :param db: 数据库会话
-        :param obj: 创建唤星用户参数
-        :return:
-        """
         await huanxing_user_dao.create(db, obj)
 
     @staticmethod
     async def update(*, db: AsyncSession, pk: int, obj: UpdateHuanxingUserParam) -> int:
-        """
-        更新唤星用户
-
-        :param db: 数据库会话
-        :param pk: 唤星用户 ID
-        :param obj: 更新唤星用户参数
-        :return:
-        """
-        count = await huanxing_user_dao.update(db, pk, obj)
-        return count
+        return await huanxing_user_dao.update(db, pk, obj)
 
     @staticmethod
     async def delete(*, db: AsyncSession, obj: DeleteHuanxingUserParam) -> int:
-        """
-        删除唤星用户
-
-        :param db: 数据库会话
-        :param obj: 唤星用户 ID 列表
-        :return:
-        """
-        count = await huanxing_user_dao.delete(db, obj.pks)
-        return count
+        return await huanxing_user_dao.delete(db, obj.pks)
 
     @staticmethod
     async def agent_sync(*, db: AsyncSession, obj: AgentSyncUserParam) -> HuanxingUser:
         """
         Agent 同步用户（注册时调用）
 
-        如果 agent_id 已存在则更新，否则创建新记录。
-
-        :param db: 数据库会话
-        :param obj: Agent 同步参数
-        :return: 创建或更新后的用户记录
+        用 server_id + user_id + agent_id 联合查找：
+        - 存在 → 更新
+        - 不存在 → 创建
         """
-        # 先按 agent_id 查找是否已存在
-        existing = await huanxing_user_dao.get_by_agent_id(db, obj.agent_id)
+        existing = await huanxing_user_dao.get_by_composite(
+            db, obj.server_id, obj.user_id, obj.agent_id
+        )
         if existing:
-            # 更新现有记录
             update_data = UpdateHuanxingUserParam(
                 user_id=obj.user_id,
                 server_id=obj.server_id,
@@ -130,7 +77,6 @@ class HuanxingUserService:
             await db.refresh(existing)
             return existing
         else:
-            # 创建新记录
             create_data = CreateHuanxingUserParam(
                 user_id=obj.user_id,
                 server_id=obj.server_id,
@@ -144,27 +90,33 @@ class HuanxingUserService:
             )
             await huanxing_user_dao.create(db, create_data)
             await db.flush()
-            # 查询刚创建的记录返回
-            created = await huanxing_user_dao.get_by_agent_id(db, obj.agent_id)
+            created = await huanxing_user_dao.get_by_composite(
+                db, obj.server_id, obj.user_id, obj.agent_id
+            )
             if not created:
                 raise errors.NotFoundError(msg='用户创建异常，请重试')
             return created
 
     @staticmethod
-    async def agent_update(*, db: AsyncSession, user_id: int, obj: AgentUpdateUserParam) -> int:
+    async def agent_update(*, db: AsyncSession, user_id: str, obj: AgentUpdateUserParam) -> int:
         """
         Agent 更新用户信息
 
-        :param db: 数据库会话
-        :param user_id: 平台 user_id（sys_user.id）
-        :param obj: Agent 更新参数
-        :return: 更新行数
+        优先按 agent_id 查（精确匹配某个 Agent），
+        回退按 user_id + server_id 查（如果传了 server_id）。
+
+        :param user_id: 平台 sys_user.uuid
         """
-        existing = await huanxing_user_dao.get_by_user_id(db, user_id)
+        existing = None
+        if obj.agent_id:
+            existing = await huanxing_user_dao.get_by_agent_id(db, obj.agent_id)
+        if not existing and obj.server_id:
+            existing = await huanxing_user_dao.get_by_user_and_server(db, user_id, obj.server_id)
+        if not existing:
+            existing = await huanxing_user_dao.get_by_user_id(db, user_id)
         if not existing:
             raise errors.NotFoundError(msg='唤星用户不存在')
 
-        # 只更新传入的非 None 字段
         update_dict = {}
         if obj.agent_id is not None:
             update_dict['agent_id'] = obj.agent_id

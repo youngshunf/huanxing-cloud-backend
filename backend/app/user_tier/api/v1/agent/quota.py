@@ -1,7 +1,7 @@
 """Agent 配额查询 API
 
 路径前缀: /api/v1/user_tier/agent/quota
-认证方式: JWT / API Key（内部服务调用）
+认证方式: X-Agent-Key（DependsAgentAuth）
 
 供 OpenClaw Agent 查询用户配额、积分余额。
 
@@ -14,7 +14,8 @@ from decimal import Decimal
 
 from backend.app.user_tier.service.credit_service import credit_service
 from backend.common.response.response_schema import ResponseSchemaModel, response_base
-from backend.common.security.jwt import DependsJwtAuth
+from backend.common.security.agent_auth import DependsAgentAuth
+from backend.common.security.agent_utils import resolve_user_id
 from backend.database.db import CurrentSession
 
 router = APIRouter()
@@ -57,7 +58,7 @@ class DeductResponse(BaseModel):
     '/{user_id}',
     summary='查询用户配额',
     description='查询指定用户的订阅状态和积分余额',
-    dependencies=[DependsJwtAuth],
+    dependencies=[DependsAgentAuth],
 )
 async def get_user_quota(
     user_id: int,
@@ -92,7 +93,7 @@ async def get_user_quota(
     '/deduct',
     summary='扣减用户积分',
     description='模型调用计费时扣减用户积分',
-    dependencies=[DependsJwtAuth],
+    dependencies=[DependsAgentAuth],
 )
 async def deduct_credits(
     request: Request,

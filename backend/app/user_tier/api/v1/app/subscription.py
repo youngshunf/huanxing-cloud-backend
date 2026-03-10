@@ -460,6 +460,7 @@ async def upgrade_subscription(
     subscription.tier = body.tier_name
     subscription.subscription_type = body.subscription_type
     subscription.monthly_credits = target_tier.monthly_credits
+    subscription.max_agents = target_tier.max_agents
     subscription.billing_cycle_start = now
     subscription.billing_cycle_end = cycle_end
     subscription.subscription_start_date = now

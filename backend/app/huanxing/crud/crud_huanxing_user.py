@@ -32,16 +32,70 @@ class CRUDHuanxingUser(CRUDPlus[HuanxingUser]):
         )
         return result.scalars().first()
 
-    async def get_by_user_id(self, db: AsyncSession, user_id: int) -> HuanxingUser | None:
+    async def get_by_user_id(self, db: AsyncSession, user_id: str) -> HuanxingUser | None:
         """
-        按平台 user_id 查找唤星用户
+        按平台 user_id (uuid) 查找唤星用户（返回第一条）
+
+        ⚠️ 一个 user_id 可能有多条记录（多服务器多 Agent）。
+        需要全量查询时用 get_all_by_user_id()。
 
         :param db: 数据库会话
-        :param user_id: 关联 sys_user.id
+        :param user_id: sys_user.uuid
         :return:
         """
         result = await db.execute(
             select(HuanxingUser).where(HuanxingUser.user_id == user_id)
+        )
+        return result.scalars().first()
+
+    async def get_all_by_user_id(self, db: AsyncSession, user_id: str) -> list[HuanxingUser]:
+        """
+        查询用户的所有 Agent（跨服务器）
+
+        :param db: 数据库会话
+        :param user_id: sys_user.uuid
+        :return: 所有 Agent 记录列表
+        """
+        result = await db.execute(
+            select(HuanxingUser).where(HuanxingUser.user_id == user_id)
+        )
+        return list(result.scalars().all())
+
+    async def get_by_user_and_server(self, db: AsyncSession, user_id: str, server_id: str) -> HuanxingUser | None:
+        """
+        按 user_id + server_id 查找（唯一约束）
+
+        :param db: 数据库会话
+        :param user_id: sys_user.uuid
+        :param server_id: 服务器ID
+        :return:
+        """
+        result = await db.execute(
+            select(HuanxingUser).where(
+                HuanxingUser.user_id == user_id,
+                HuanxingUser.server_id == server_id,
+            )
+        )
+        return result.scalars().first()
+
+    async def get_by_composite(
+        self, db: AsyncSession, server_id: str, user_id: str, agent_id: str
+    ) -> HuanxingUser | None:
+        """
+        按 server_id + user_id + agent_id 联合查找
+
+        :param db: 数据库会话
+        :param server_id: 服务器ID
+        :param user_id: 平台用户UUID
+        :param agent_id: Agent ID
+        :return:
+        """
+        result = await db.execute(
+            select(HuanxingUser).where(
+                HuanxingUser.server_id == server_id,
+                HuanxingUser.user_id == user_id,
+                HuanxingUser.agent_id == agent_id,
+            )
         )
         return result.scalars().first()
 

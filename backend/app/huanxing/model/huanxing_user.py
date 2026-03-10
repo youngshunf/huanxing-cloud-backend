@@ -7,12 +7,19 @@ from backend.common.model import Base, id_key
 
 
 class HuanxingUser(Base):
-    """唤星用户表"""
+    """唤星用户表
+
+    一个用户（user_id）可以在多台服务器上各有一个 Agent。
+    (user_id, server_id) 唯一约束保证同一服务器上只有一个 Agent。
+    """
 
     __tablename__ = 'huanxing_user'
+    __table_args__ = (
+        sa.UniqueConstraint('user_id', 'server_id', name='uq_huanxing_user_server'),
+    )
 
     id: Mapped[id_key] = mapped_column(init=False)
-    user_id: Mapped[int] = mapped_column(sa.BIGINT(), default=0, comment='关联 sys_user.id')
+    user_id: Mapped[str] = mapped_column(sa.String(36), default='', comment='平台用户UUID (sys_user.uuid)')
     server_id: Mapped[str] = mapped_column(sa.String(64), default='', comment='所在服务器ID')
     agent_id: Mapped[str | None] = mapped_column(sa.String(128), default=None, comment='Agent ID（如 user-abc123）')
     star_name: Mapped[str | None] = mapped_column(sa.String(64), default=None, comment='分身名字')

@@ -7,6 +7,9 @@ from backend.app.huanxing.crud.crud_huanxing_server import huanxing_server_dao
 from backend.app.huanxing.crud.crud_huanxing_user import huanxing_user_dao
 from backend.app.huanxing.model import HuanxingServer
 from backend.app.huanxing.schema.huanxing_server import (
+    AgentHeartbeatParam,
+    AgentRegisterServerParam,
+    AgentRegisterServerResponse,
     CreateHuanxingServerParam,
     DashboardResponse,
     DeleteHuanxingServerParam,
@@ -94,7 +97,76 @@ class HuanxingServerService:
         return count
 
     @staticmethod
-    async def heartbeat(*, db: AsyncSession, server_id: str, obj: HeartbeatParam) -> HeartbeatResponse:
+    async def agent_register(*, db: AsyncSession, obj: AgentRegisterServerParam, client_ip: str) -> AgentRegisterServerResponse:
+        """
+        Agent 注册/更新服务器
+
+        :param db: 数据库会话
+        :param obj: 注册参数
+        :param client_ip: 客户端IP（自动获取）
+        :return:
+        """
+        server = await huanxing_server_dao.get_by_server_id(db, obj.server_id)
+        is_new = server is None
+
+        ip_address = obj.ip_address or client_ip
+        now = timezone.now()
+
+        if is_new:
+            # 创建新服务器
+            create_param = CreateHuanxingServerParam(
+                server_id=obj.server_id,
+                server_name=obj.server_name or obj.server_id,
+                ip_address=ip_address,
+                port=obj.port,
+                region=obj.region,
+                provider=obj.provider,
+                max_users=obj.max_users,
+                status='published',
+                gateway_status=obj.gateway_status or 'running',
+                last_heartbeat=now,
+                config={
+                    'user_count': obj.user_count,
+                    'active_user_count': obj.active_user_count,
+                    'openclaw_version': obj.openclaw_version,
+                    'plugin_version': obj.plugin_version,
+                    'channels': [ch.model_dump() for ch in obj.channels] if obj.channels else [],
+                },
+            )
+            await huanxing_server_dao.create(db, create_param)
+        else:
+            # 更新现有服务器
+            server.ip_address = ip_address
+            if obj.server_name:
+                server.server_name = obj.server_name
+            if obj.port is not None:
+                server.port = obj.port
+            if obj.region:
+                server.region = obj.region
+            if obj.provider:
+                server.provider = obj.provider
+            if obj.max_users is not None:
+                server.max_users = obj.max_users
+            server.gateway_status = obj.gateway_status or 'running'
+            server.last_heartbeat = now
+            server.status = 'published'
+            server.config = {
+                **(server.config or {}),
+                'user_count': obj.user_count,
+                'active_user_count': obj.active_user_count,
+                'openclaw_version': obj.openclaw_version,
+                'plugin_version': obj.plugin_version,
+                'channels': [ch.model_dump() for ch in obj.channels] if obj.channels else (server.config or {}).get('channels', []),
+            }
+
+        return AgentRegisterServerResponse(
+            server_id=obj.server_id,
+            is_new=is_new,
+            status='ok',
+        )
+
+    @staticmethod
+    async def heartbeat(*, db: AsyncSession, server_id: str, obj: HeartbeatParam | AgentHeartbeatParam) -> HeartbeatResponse:
         """
         服务器心跳上报
 

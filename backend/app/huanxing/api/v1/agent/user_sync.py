@@ -46,7 +46,7 @@ async def agent_sync_user(
 )
 async def agent_update_user_info(
     db: CurrentSessionTransaction,
-    user_id: Annotated[int, Path(description='平台用户 ID（sys_user.id）')],
+    user_id: Annotated[str, Path(description='平台用户 UUID（sys_user.uuid）')],
     obj: AgentUpdateUserParam,
 ) -> ResponseModel:
     """Agent 更新用户信息（分身名字、模板、状态等）"""

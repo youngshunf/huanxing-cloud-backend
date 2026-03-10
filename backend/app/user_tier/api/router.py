@@ -25,8 +25,10 @@ from backend.app.user_tier.api.v1.app.subscription import router as app_subscrip
 # --- open/ 公开端（无认证）---
 from backend.app.user_tier.api.v1.open.pricing import router as open_pricing_router
 
-# --- agent/ Agent端（JWT/API Key）---
+# --- agent/ Agent端（X-Agent-Key）---
 from backend.app.user_tier.api.v1.agent.quota import router as agent_quota_router
+from backend.app.user_tier.api.v1.agent.subscription import router as agent_subscription_router
+from backend.app.user_tier.api.v1.agent.usage import router as agent_usage_router
 
 
 # ========================================
@@ -62,9 +64,11 @@ open_api.include_router(open_pricing_router, tags=['公开-定价信息'])
 
 
 # ========================================
-# Agent API（JWT / API Key）
+# Agent API（X-Agent-Key）
 # 路径前缀: /api/v1/user_tier/agent/
 # ========================================
 agent = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/user_tier/agent', tags=['订阅积分-Agent'])
 
 agent.include_router(agent_quota_router, prefix='/quota', tags=['Agent-配额查询'])
+agent.include_router(agent_subscription_router, prefix='/subscriptions', tags=['Agent-订阅查询'])
+agent.include_router(agent_usage_router, prefix='/usage', tags=['Agent-用量统计'])

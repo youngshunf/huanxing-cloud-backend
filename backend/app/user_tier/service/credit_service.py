@@ -161,6 +161,7 @@ class CreditService:
         # 获取免费等级配置
         free_tier = await subscription_tier_dao.select_model_by_column(db, tier_name='free', app_code=app_code)
         monthly_credits = free_tier.monthly_credits if free_tier else Decimal('500')  # 默认 500 积分
+        max_agents = free_tier.max_agents if free_tier else 1
 
         now = timezone.now()
         cycle_end = now + timedelta(days=30)
@@ -181,6 +182,7 @@ class CreditService:
             next_grant_date=None,
             status='active',
             auto_renew=True,
+            max_agents=max_agents,
         )
 
         db.add(subscription)

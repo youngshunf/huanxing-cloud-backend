@@ -22,6 +22,9 @@ from backend.app.huanxing.api.v1.open.share import router as open_share_router
 # --- agent/ Agent ---
 from backend.app.huanxing.api.v1.agent.document import router as agent_document_router
 from backend.app.huanxing.api.v1.agent.user_sync import router as agent_user_sync_router
+from backend.app.huanxing.api.v1.agent.user_check import router as agent_user_check_router
+from backend.app.huanxing.api.v1.agent.server import router as agent_server_router
+from backend.app.huanxing.api.v1.agent.dashboard import router as agent_dashboard_router
 
 
 # ========================================
@@ -64,3 +67,6 @@ agent = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/huanxing/agent', tags=
 
 agent.include_router(agent_document_router, prefix='/docs', tags=['唤星Agent-文档'])
 agent.include_router(agent_user_sync_router, prefix='/users', tags=['唤星Agent-用户同步'])
+agent.include_router(agent_user_check_router, prefix='/users', tags=['唤星Agent-用户预检'])
+agent.include_router(agent_server_router, prefix='/servers', tags=['唤星Agent-服务器上报'])
+agent.include_router(agent_dashboard_router, prefix='/dashboard', tags=['唤星Agent-数据看板'])
