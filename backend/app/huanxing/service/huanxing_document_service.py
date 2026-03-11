@@ -523,7 +523,7 @@ class HuanxingDocumentService:
                 <meta charset="utf-8">
                 <title>{doc.title}</title>
                 <style>
-                    body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }}
+                    body {{ font-family: "WenQuanYi Zen Hei", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", Arial, sans-serif; margin: 40px; line-height: 1.6; }}
                     h1, h2, h3 {{ color: #333; }}
                     code {{ background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }}
                     pre {{ background: #f4f4f4; padding: 10px; border-radius: 5px; overflow-x: auto; }}
