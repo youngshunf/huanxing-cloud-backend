@@ -23,7 +23,7 @@ from backend.plugin.code_generator.schema.column import CreateGenColumnParam
 from backend.plugin.code_generator.schema.gen import ImportParam
 from backend.plugin.code_generator.service.column_service import gen_column_service
 from backend.plugin.code_generator.utils.format_code import format_python_code
-from backend.plugin.code_generator.utils.gen_template import gen_template
+from backend.plugin.code_generator.utils.gen_template import gen_template, SCOPE_ROUTER_VAR, SCOPE_LABELS
 from backend.plugin.code_generator.utils.type_conversion import sql_type_to_pydantic
 from backend.utils.locks import acquire_distributed_reload_lock
 
@@ -78,6 +78,7 @@ class GenService:
                 schema_name=to_pascal(table_name),
                 filename=table_name,
                 tag=doc_comment,
+                api_scope=getattr(obj, 'api_scope', 'admin'),
             ).model_dump(),
         )
         db.add(new_business)
@@ -135,72 +136,132 @@ class GenService:
     @staticmethod
     async def _update_app_router(*, business: GenBusiness, app_path: str) -> str:
         """
-        更新应用路由文件（追加而非覆盖）
+        更新应用路由文件（追加而非覆盖），支持多 scope 路由
 
         :param business: 业务对象
         :param app_path: 应用代码路径
         :return: 生成的路由内容
         """
         router_file = anyio.Path(app_path) / business.app_name / 'api' / 'router.py'
-        
-        # 生成新路由内容
-        gen_vars = gen_template.get_vars(business, [])
-        new_router_code = await gen_template.get_template('python/router.jinja').render_async(**gen_vars)
-        
+        scopes = gen_template._parse_scopes(business)
+
         # 检查文件是否存在
         if await router_file.exists():
             # 读取现有内容
             async with await open_file(router_file, 'r', encoding='utf-8') as f:
                 existing_content = await f.read()
-            
-            # 检查是否已经包含该路由
-            import_line = f'from backend.app.{business.app_name}.api.{business.api_version}.{business.filename} import router as {business.table_name}_router'
-            if import_line in existing_content:
-                # 已经存在，直接返回
+
+            modified = False
+
+            for scope in scopes:
+                # 检查该 scope 的 import 是否已存在
+                import_line = (
+                    f'from backend.app.{business.app_name}.api.{business.api_version}'
+                    f'.{scope}.{business.filename} import router as {scope}_{business.table_name}_router'
+                )
+                if import_line in existing_content:
+                    continue
+
+                # 需要追加新的 import 和 include_router
+                modified = True
+                lines = existing_content.split('\n')
+
+                # 找到该 scope 对应的 section
+                scope_router_var = SCOPE_ROUTER_VAR[scope]
+                scope_label = SCOPE_LABELS[scope]
+
+                # 查找该 scope 的 section 是否存在
+                section_exists = False
+                section_end_idx = len(lines)
+
+                for i, line in enumerate(lines):
+                    # 查找该 scope 的路由变量定义
+                    if f'{scope_router_var} = APIRouter(' in line:
+                        section_exists = True
+                    # 查找该 scope 的最后一个 include_router
+                    if section_exists and f'{scope_router_var}.include_router(' in line:
+                        section_end_idx = i + 1
+
+                if section_exists:
+                    # 在该 scope section 中追加 import 和 include_router
+                    # 先找到正确的 import 位置（在该 scope 的 注释之后的 import 区域）
+                    import_insert_idx = 0
+                    for i, line in enumerate(lines):
+                        if f'from backend.app.{business.app_name}.api.{business.api_version}.{scope}.' in line:
+                            import_insert_idx = i + 1
+
+                    if import_insert_idx == 0:
+                        # 没找到现有的 scope import，找到 import 区域末尾
+                        for i, line in enumerate(lines):
+                            if line.startswith('from backend.app.'):
+                                import_insert_idx = i + 1
+
+                    lines.insert(import_insert_idx, import_line)
+
+                    # 追加 include_router（位置要在 section_end_idx 之后，因为插入了一行 import）
+                    prefix = f"/{business.table_name.replace('_', '-')}s"
+                    include_line_str = f"{scope_router_var}.include_router({scope}_{business.table_name}_router, prefix='{prefix}')"
+                    if business.tag:
+                        include_line_str = f"{scope_router_var}.include_router({scope}_{business.table_name}_router, prefix='{prefix}', tags=['{business.tag}-{business.doc_comment}'])"
+                    lines.insert(section_end_idx + 1, include_line_str)  # +1 because we already inserted import above
+                else:
+                    # 该 scope 的 section 不存在，在文件末尾追加新 section
+                    lines.append('')
+                    lines.append(f'# --- {scope_label} ---')
+                    lines.append(import_line)
+                    lines.append('')
+
+                    if scope == 'admin':
+                        var_def = f"v1 = APIRouter(prefix=f'{{settings.FASTAPI_API_V1_PATH}}/{business.app_name}'"
+                    elif scope == 'app':
+                        var_def = f"app = APIRouter(prefix=f'{{settings.FASTAPI_API_V1_PATH}}/{business.app_name}/app'"
+                    elif scope == 'open':
+                        var_def = f"open_api = APIRouter(prefix=f'{{settings.FASTAPI_API_V1_PATH}}/{business.app_name}/open'"
+                    elif scope == 'agent':
+                        var_def = f"agent = APIRouter(prefix=f'{{settings.FASTAPI_API_V1_PATH}}/{business.app_name}/agent'"
+                    else:
+                        continue
+
+                    if business.tag:
+                        var_def += f", tags=['{business.tag}']"
+                    var_def += ')'
+                    lines.append(var_def)
+                    lines.append('')
+
+                    prefix = f"/{business.table_name.replace('_', '-')}s"
+                    include_line_str = f"{scope_router_var}.include_router({scope}_{business.table_name}_router, prefix='{prefix}')"
+                    if business.tag:
+                        include_line_str = f"{scope_router_var}.include_router({scope}_{business.table_name}_router, prefix='{prefix}', tags=['{business.tag}-{business.doc_comment}'])"
+                    lines.append(include_line_str)
+
+                existing_content = '\n'.join(lines)
+
+            if not modified:
                 return existing_content
-            
-            # 追加新路由
-            lines = existing_content.split('\n')
-            import_section_end = 0
-            include_section_start = len(lines)
-            
-            # 找到 import 和 include 的位置
-            for i, line in enumerate(lines):
-                if line.startswith('from backend.app.'):
-                    import_section_end = i + 1
-                elif 'include_router' in line and i > import_section_end:
-                    include_section_start = i
-                    break
-            
-            # 插入新的 import
-            import_to_add = f'from backend.app.{business.app_name}.api.{business.api_version}.{business.filename} import router as {business.table_name}_router'
-            lines.insert(import_section_end, import_to_add)
-            
-            # 插入新的 include_router
-            include_to_add = f"v1.include_router({business.table_name}_router, prefix='/{business.table_name.replace('_', '/')}s')"
-            lines.insert(include_section_start + 1, include_to_add)
-            
-            content = '\n'.join(lines)
+
+            content = existing_content
         else:
-            # 文件不存在，使用新生成的内容
-            content = new_router_code
-        
+            # 文件不存在，使用模板生成新的路由文件
+            gen_vars = gen_template.get_vars(business, [])
+            content = await gen_template.get_template('python/router.jinja').render_async(**gen_vars)
+
         # 格式化代码
         content = await format_python_code(content)
-        
+
         # 写入文件
         await router_file.parent.mkdir(parents=True, exist_ok=True)
         async with await open_file(router_file, 'w', encoding='utf-8') as f:
             await f.write(content)
-        
+
         return content
 
     @staticmethod
-    async def _inject_app_router(*, app_name: str, write: bool = True) -> str | None:
+    async def _inject_app_router(*, app_name: str, scopes: list[str] | None = None, write: bool = True) -> str | None:
         """
-        注入应用路由到全局router.py
+        注入应用路由到全局router.py，支持多 scope 路由
 
-        :param app_name:
+        :param app_name: 应用名称
+        :param scopes: API scope 列表
         :param write: 是否写入文件
         :return:
         """
@@ -209,18 +270,71 @@ class GenService:
         async with await open_file(app_root_router, 'r', encoding='utf-8') as f:
             content = await f.read()
 
-        import_line = f'from backend.app.{app_name}.api.router import v1 as {app_name}_v1'
-        include_line = f'router.include_router({app_name}_v1)'
-        has_import = import_line in content  # type: ignore
-        has_include = include_line in content  # type: ignore
+        if scopes is None:
+            scopes = ['admin']
 
-        if has_import and has_include:
+        modified = False
+
+        for scope in scopes:
+            router_var = SCOPE_ROUTER_VAR[scope]
+
+            # 构建 import 和 include 行
+            if scope == 'admin':
+                import_var = f'{app_name}_v1'
+                import_line = f'from backend.app.{app_name}.api.router import v1 as {import_var}'
+                include_line = f'router.include_router({import_var})'
+            elif scope == 'app':
+                import_var = f'{app_name}_app'
+                import_line = f'from backend.app.{app_name}.api.router import app as {import_var}'
+                include_line = f'router.include_router({import_var})'
+            elif scope == 'open':
+                import_var = f'{app_name}_open'
+                import_line = f'from backend.app.{app_name}.api.router import open_api as {import_var}'
+                include_line = f'router.include_router({import_var})'
+            elif scope == 'agent':
+                import_var = f'{app_name}_agent'
+                import_line = f'from backend.app.{app_name}.api.router import agent as {import_var}'
+                include_line = f'router.include_router({import_var})'
+            else:
+                continue
+
+            has_import = import_line in content
+            has_include = include_line in content
+
+            if has_import and has_include:
+                continue
+
+            modified = True
+            if not has_import:
+                # 尝试合并到同一行的 import（检查是否已有该 app 的 import）
+                existing_import_prefix = f'from backend.app.{app_name}.api.router import '
+                if existing_import_prefix in content:
+                    # 尝试追加到现有 import 行
+                    lines = content.split('\n')
+                    for i, line in enumerate(lines):
+                        if line.startswith(existing_import_prefix):
+                            # 追加新的变量到该 import 行
+                            if scope == 'admin':
+                                addition = f'v1 as {import_var}'
+                            elif scope == 'app':
+                                addition = f'app as {import_var}'
+                            elif scope == 'open':
+                                addition = f'open_api as {import_var}'
+                            elif scope == 'agent':
+                                addition = f'agent as {import_var}'
+                            else:
+                                continue
+                            lines[i] = line.rstrip() + f', {addition}'
+                            break
+                    content = '\n'.join(lines)
+                else:
+                    content = f'{import_line}\n{content}'
+
+            if not has_include:
+                content = f'{content}\n{include_line}'
+
+        if not modified:
             return None
-
-        if not has_import:
-            content = f'{import_line}\n{content}'
-        if not has_include:
-            content = f'{content}\n{include_line}'
 
         content = await format_python_code(content)
 
@@ -253,7 +367,10 @@ class GenService:
         for filepath, code in rendered_codes.items():
             codes[f'{backend_path}{filepath}'] = code.encode('utf-8')
 
-        app_router_content = await self._inject_app_router(app_name=business.app_name, write=False)
+        scopes = gen_template._parse_scopes(business)
+        app_router_content = await self._inject_app_router(
+            app_name=business.app_name, scopes=scopes, write=False
+        )
         if app_router_content:
             codes[f'{backend_path}router.py'] = app_router_content.encode('utf-8')
 
@@ -328,6 +445,7 @@ class GenService:
             raise errors.NotFoundError(msg='业务不存在')
 
         gen_path = business.gen_path or str(BASE_PATH / 'app')
+        scopes = gen_template._parse_scopes(business)
 
         async with acquire_distributed_reload_lock():
             # 先处理 __init__.py 文件（追加模式）
@@ -353,8 +471,8 @@ class GenService:
 
             # 更新应用级路由（追加模式）
             await self._update_app_router(business=business, app_path=gen_path)
-            # 注入全局路由
-            await self._inject_app_router(app_name=business.app_name)
+            # 注入全局路由（支持多 scope）
+            await self._inject_app_router(app_name=business.app_name, scopes=scopes)
 
         return gen_path
 
@@ -376,7 +494,10 @@ class GenService:
         rendered_codes = await self._render_tpl_code(db=db, business=business)
         all_files.update(rendered_codes)
 
-        app_router_content = await self._inject_app_router(app_name=business.app_name, write=False)
+        scopes = gen_template._parse_scopes(business)
+        app_router_content = await self._inject_app_router(
+            app_name=business.app_name, scopes=scopes, write=False
+        )
         if app_router_content:
             all_files['router.py'] = app_router_content
 

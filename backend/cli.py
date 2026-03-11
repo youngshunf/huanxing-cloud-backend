@@ -803,7 +803,7 @@ class CodeGenerator:
             raise cappa.Exit('代码生成插件不存在，请先安装此插件')
 
     async def __call__(self) -> None:
-        # Only call generate() when no subcommand is provided
+        # Only call interactive generate() when no subcommand is provided
         if self.subcmd is None:
             await generate(preview=self.preview)
 

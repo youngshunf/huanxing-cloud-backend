@@ -20,6 +20,7 @@ class GenBusinessSchemaBase(SchemaBase):
     datetime_mixin: bool = Field(True, description='是否包含时间 Mixin 列')
     api_version: str = Field('v1', description='API 版本')
     tag: str | None = Field(None, description='API 标签（用于路由分组）')
+    api_scope: str = Field('admin', description='API scope (admin/app/agent/open，逗号分隔)')
     gen_path: str | None = Field(None, description='生成路径（默认在 backend/app 目录下）')
     remark: str | None = Field(None, description='备注')
 
@@ -30,6 +31,17 @@ class GenBusinessSchemaBase(SchemaBase):
         if not is_english_identifier(v):
             raise errors.RequestError(msg='必须以英文字母开头且只能包含英文字母和下划线')
         return v
+
+    @field_validator('api_scope')
+    @classmethod
+    def validate_api_scope(cls, v: str) -> str:
+        """验证 API scope 值"""
+        valid_scopes = {'admin', 'app', 'agent', 'open'}
+        scopes = [s.strip() for s in v.split(',')]
+        for scope in scopes:
+            if scope not in valid_scopes:
+                raise errors.RequestError(msg=f'无效的 API scope: {scope}，可选值: {", ".join(valid_scopes)}')
+        return ','.join(scopes)
 
 
 class CreateGenBusinessParam(GenBusinessSchemaBase):

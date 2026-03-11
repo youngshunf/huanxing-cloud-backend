@@ -21,5 +21,6 @@ class GenBusiness(Base):
     datetime_mixin: Mapped[bool] = mapped_column(default=True, comment='是否包含时间 Mixin 列')
     api_version: Mapped[str] = mapped_column(sa.String(32), default='v1', comment='API 版本')
     tag: Mapped[str | None] = mapped_column(sa.String(64), default=None, comment='API 标签')
+    api_scope: Mapped[str] = mapped_column(sa.String(64), default='admin', comment='API scope (admin/app/agent/open，逗号分隔)')
     gen_path: Mapped[str | None] = mapped_column(sa.String(256), default=None, comment='生成路径')
     remark: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='备注')

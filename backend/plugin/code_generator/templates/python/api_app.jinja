@@ -1,0 +1,109 @@
+"""{{ doc_comment }} - 用户端 API
+
+认证方式: DependsJwtAuth（仅当前登录用户）
+数据隔离: 通过 request.user.id 限制为用户自己的数据
+"""
+from typing import Annotated
+
+from fastapi import APIRouter, Path, Request
+
+from backend.app.{{ app_name }}.schema.{{ filename }} import (
+    Create{{ schema_name }}Param,
+    Get{{ schema_name }}Detail,
+    Update{{ schema_name }}Param,
+)
+from backend.app.{{ app_name }}.service.{{ filename }}_service import {{ table_name }}_service
+from backend.common.exception import errors
+from backend.common.pagination import DependsPagination, PageData
+from backend.common.response.response_schema import ResponseModel, ResponseSchemaModel, response_base
+from backend.common.security.jwt import DependsJwtAuth
+from backend.database.db import CurrentSession, CurrentSessionTransaction
+
+router = APIRouter()
+
+
+@router.get(
+    '',
+    summary='获取我的{{ doc_comment }}列表',
+    dependencies=[DependsJwtAuth, DependsPagination],
+)
+async def get_my_{{ table_name }}s(
+    request: Request,
+    db: CurrentSession,
+) -> ResponseSchemaModel[PageData[Get{{ schema_name }}Detail]]:
+    user_id = request.user.id
+    page_data = await {{ table_name }}_service.get_list(db=db, user_id=user_id)
+    return response_base.success(data=page_data)
+
+
+@router.post(
+    '',
+    summary='创建{{ doc_comment }}',
+    dependencies=[DependsJwtAuth],
+)
+async def create_my_{{ table_name }}(
+    request: Request,
+    db: CurrentSessionTransaction,
+    obj: Create{{ schema_name }}Param,
+) -> ResponseModel:
+    user_id = request.user.id
+    result = await {{ table_name }}_service.create(db=db, obj=obj, user_id=user_id)
+    return response_base.success(data=result)
+
+
+@router.get(
+    '/{pk}',
+    summary='获取{{ doc_comment }}详情',
+    dependencies=[DependsJwtAuth],
+)
+async def get_my_{{ table_name }}(
+    request: Request,
+    db: CurrentSession,
+    pk: Annotated[int, Path(description='{{ doc_comment }} ID')],
+) -> ResponseSchemaModel[Get{{ schema_name }}Detail]:
+    {{ table_name }} = await {{ table_name }}_service.get(db=db, pk=pk)
+    if {{ table_name }}.user_id != request.user.id:
+        raise errors.ForbiddenError(msg='无权访问该{{ doc_comment }}')
+    return response_base.success(data={{ table_name }})
+
+
+@router.put(
+    '/{pk}',
+    summary='更新{{ doc_comment }}',
+    dependencies=[DependsJwtAuth],
+)
+async def update_my_{{ table_name }}(
+    request: Request,
+    db: CurrentSessionTransaction,
+    pk: Annotated[int, Path(description='{{ doc_comment }} ID')],
+    obj: Update{{ schema_name }}Param,
+) -> ResponseModel:
+    user_id = request.user.id
+    {{ table_name }} = await {{ table_name }}_service.get(db=db, pk=pk)
+    if {{ table_name }}.user_id != user_id:
+        raise errors.ForbiddenError(msg='无权修改该{{ doc_comment }}')
+    count = await {{ table_name }}_service.update(db=db, pk=pk, obj=obj, user_id=user_id)
+    if count > 0:
+        return response_base.success()
+    return response_base.fail()
+
+
+@router.delete(
+    '/{pk}',
+    summary='删除{{ doc_comment }}',
+    dependencies=[DependsJwtAuth],
+)
+async def delete_my_{{ table_name }}(
+    request: Request,
+    db: CurrentSessionTransaction,
+    pk: Annotated[int, Path(description='{{ doc_comment }} ID')],
+) -> ResponseModel:
+    user_id = request.user.id
+    {{ table_name }} = await {{ table_name }}_service.get(db=db, pk=pk)
+    if {{ table_name }}.user_id != user_id:
+        raise errors.ForbiddenError(msg='无权删除该{{ doc_comment }}')
+    from backend.app.{{ app_name }}.schema.{{ filename }} import Delete{{ schema_name }}Param
+    count = await {{ table_name }}_service.delete(db=db, obj=Delete{{ schema_name }}Param(pks=[pk]))
+    if count > 0:
+        return response_base.success()
+    return response_base.fail()

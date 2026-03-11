@@ -52,6 +52,9 @@ enable_data_scope = false
 # 是否启用软删除
 enable_soft_delete = true
 
+# 默认 API scope (admin/app/agent/open，逗号分隔支持多个)
+default_api_scope = "admin,app,agent,open"
+
 [frontend]
 # 默认图标
 default_icon = "lucide:list"

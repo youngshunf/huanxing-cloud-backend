@@ -143,11 +143,14 @@ async def generate_dict_sql(
                 {'label': '选项2', 'value': '2', 'color': 'green'},
             ]
 
+        # 截断 name 以适应 sys_dict_type.name varchar(32)
+        dict_type_name_short = dict_type_name[:32] if len(dict_type_name) > 32 else dict_type_name
+
         sql_lines.extend([
             f'-- {dict_type_name} 字典类型',
             'INSERT INTO sys_dict_type (name, code, remark, created_time, updated_time)',
             'VALUES',
-            f"('{dict_type_name}', '{dict_type_code}', '{table_info.comment or app}模块-{dict_type_name}', NOW(), NULL)",
+            f"('{dict_type_name_short}', '{dict_type_code}', '{table_info.comment or app}模块-{dict_type_name}', NOW(), NULL)",
             'ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, remark = EXCLUDED.remark, updated_time = NOW();',
             '',
             f'-- {dict_type_name} 字典数据',
@@ -278,11 +281,14 @@ async def generate_dict_sql_from_db(
                 {'label': '选项2', 'value': '2', 'color': 'green'},
             ]
 
+        # 截断 name 以适应 sys_dict_type.name varchar(32)
+        dict_type_name_short = dict_type_name[:32] if len(dict_type_name) > 32 else dict_type_name
+
         sql_lines.extend([
             f'-- {dict_type_name} 字典类型',
             'INSERT INTO sys_dict_type (name, code, remark, created_time, updated_time)',
             'VALUES',
-            f"('{dict_type_name}', '{dict_type_code}', '{table_comment}模块-{dict_type_name}', NOW(), NULL)",
+            f"('{dict_type_name_short}', '{dict_type_code}', '{table_comment}模块-{dict_type_name}', NOW(), NULL)",
             'ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, remark = EXCLUDED.remark, updated_time = NOW();',
             '',
             f'-- {dict_type_name} 字典数据',

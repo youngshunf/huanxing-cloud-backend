@@ -120,6 +120,11 @@ class CodeGenConfig:
         return self.get('backend', 'api_version', 'v1')
 
     @property
+    def default_api_scope(self) -> str:
+        """Get default API scope (admin/app/agent/open, comma separated)."""
+        return self.get('backend', 'default_api_scope', 'admin')
+
+    @property
     def default_icon(self) -> str:
         """Get default menu icon."""
         return self.get('frontend', 'default_icon', 'lucide:list')

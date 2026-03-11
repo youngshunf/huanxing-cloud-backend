@@ -18,6 +18,22 @@ SQLALCHEMY_RESERVED_NAMES = {
     'query': 'query_data',
 }
 
+# API scope 中文标签映射
+SCOPE_LABELS = {
+    'admin': '管理端（JWT + RBAC）',
+    'app': '用户端（仅 JWT）',
+    'agent': 'Agent（Agent Key）',
+    'open': '公开（无需认证）',
+}
+
+# API scope 对应的路由变量名映射
+SCOPE_ROUTER_VAR = {
+    'admin': 'v1',
+    'app': 'app',
+    'open': 'open_api',
+    'agent': 'agent',
+}
+
 
 class GenTemplate:
     def __init__(self) -> None:
@@ -43,6 +59,17 @@ class GenTemplate:
         return self.env.get_template(jinja_file)
 
     @staticmethod
+    def _parse_scopes(business: GenBusiness) -> list[str]:
+        """
+        解析 business 的 api_scope 字段为 scope 列表
+
+        :param business: 代码生成业务对象
+        :return: scope 列表
+        """
+        api_scope = getattr(business, 'api_scope', None) or 'admin'
+        return [s.strip() for s in api_scope.split(',') if s.strip()]
+
+    @staticmethod
     def get_template_path_mapping(business: GenBusiness) -> dict[str, str]:
         """
         获取模板文件到生成文件的路径映射
@@ -54,9 +81,9 @@ class GenTemplate:
         filename = business.filename
         api_version = business.api_version
         pk_suffix = '_snowflake' if settings.DATABASE_PK_MODE == 'snowflake' else ''
+        scopes = GenTemplate._parse_scopes(business)
 
-        return {
-            'python/api.jinja': f'{app_name}/api/{api_version}/{filename}.py',
+        mapping = {
             'python/router.jinja': f'{app_name}/api/router.py',
             'python/crud.jinja': f'{app_name}/crud/crud_{filename}.py',
             'python/model.jinja': f'{app_name}/model/{filename}.py',
@@ -65,6 +92,14 @@ class GenTemplate:
             f'sql/mysql/init{pk_suffix}.jinja': f'{app_name}/sql/mysql/init{pk_suffix}.sql',
             f'sql/postgresql/init{pk_suffix}.jinja': f'{app_name}/sql/postgresql/init{pk_suffix}.sql',
         }
+
+        # 为每个 scope 生成对应的 API 文件
+        for scope in scopes:
+            template_name = f'python/api_{scope}.jinja'
+            output_path = f'{app_name}/api/{api_version}/{scope}/{filename}.py'
+            mapping[template_name] = output_path
+
+        return mapping
 
     def get_init_files(self, business: GenBusiness) -> dict[str, str]:
         """
@@ -77,8 +112,9 @@ class GenTemplate:
         table_name = business.table_name
         class_name = business.class_name or to_pascal(table_name)
         filename = business.filename
+        scopes = self._parse_scopes(business)
 
-        return {
+        init_files = {
             f'{app_name}/__init__.py': self.init_content,
             f'{app_name}/api/__init__.py': self.init_content,
             f'{app_name}/api/{business.api_version}/__init__.py': self.init_content,
@@ -89,6 +125,12 @@ class GenTemplate:
             f'{app_name}/schema/__init__.py': self.init_content,
             f'{app_name}/service/__init__.py': self.init_content,
         }
+
+        # 为每个 scope 目录生成 __init__.py
+        for scope in scopes:
+            init_files[f'{app_name}/api/{business.api_version}/{scope}/__init__.py'] = self.init_content
+
+        return init_files
 
     @staticmethod
     def _rename_reserved_fields(models: Sequence[GenColumn]) -> list[dict]:
@@ -129,6 +171,7 @@ class GenTemplate:
         """
         # 将 ORM 对象转换为字典，并重命名保留字段
         processed_models = GenTemplate._rename_reserved_fields(models)
+        scopes = GenTemplate._parse_scopes(business)
 
         vars_dict = {
             'app_name': business.app_name,
@@ -146,6 +189,11 @@ class GenTemplate:
             'models': processed_models,
             'model_types': [model.type for model in models],
             'now': timezone.now,  # Keep as callable for templates
+            # 多 scope 相关变量
+            'api_scope': business.api_scope if hasattr(business, 'api_scope') else 'admin',
+            'api_scopes': scopes,
+            'scope_labels': SCOPE_LABELS,
+            'scope_router_var': SCOPE_ROUTER_VAR,
         }
 
         if settings.DATABASE_PK_MODE == 'snowflake':

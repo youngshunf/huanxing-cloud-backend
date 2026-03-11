@@ -1,8 +1,48 @@
 from fastapi import APIRouter
 
-from backend.app.{{ app_name }}.api.{{ api_version }}.{{ filename }} import router as {{ table_name }}_router
 from backend.core.conf import settings
 
-v1 = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/{{ app_name }}'{% if tag %}, tags=['{{ tag }}']{% endif %})
+{% for scope in api_scopes %}
+# --- {{ scope_labels[scope] }} ---
+from backend.app.{{ app_name }}.api.{{ api_version }}.{{ scope }}.{{ filename }} import router as {{ scope }}_{{ table_name }}_router
+{% endfor %}
 
-v1.include_router({{ table_name }}_router, prefix='/{{ table_name.replace('_', '/') }}s')
+{% if 'admin' in api_scopes %}
+# ========================================
+# 管理端 API（JWT + RBAC）
+# 路径前缀: /api/v1/{{ app_name }}/
+# ========================================
+v1 = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/{{ app_name }}'{% if tag %}, tags=['{{ tag }}管理']{% endif %})
+
+v1.include_router(admin_{{ table_name }}_router, prefix='/{{ table_name.replace('_', '-') }}s'{% if tag %}, tags=['{{ tag }}管理-{{ doc_comment }}']{% endif %})
+{% endif %}
+
+{% if 'app' in api_scopes %}
+# ========================================
+# 用户端 API（仅 JWT，无 RBAC）
+# 路径前缀: /api/v1/{{ app_name }}/app/
+# ========================================
+app = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/{{ app_name }}/app'{% if tag %}, tags=['{{ tag }}用户端']{% endif %})
+
+app.include_router(app_{{ table_name }}_router, prefix='/{{ table_name.replace('_', '-') }}s'{% if tag %}, tags=['{{ tag }}用户端-{{ doc_comment }}']{% endif %})
+{% endif %}
+
+{% if 'open' in api_scopes %}
+# ========================================
+# 公开 API（无需认证）
+# 路径前缀: /api/v1/{{ app_name }}/open/
+# ========================================
+open_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/{{ app_name }}/open'{% if tag %}, tags=['{{ tag }}公开']{% endif %})
+
+open_api.include_router(open_{{ table_name }}_router{% if tag %}, tags=['{{ tag }}公开-{{ doc_comment }}']{% endif %})
+{% endif %}
+
+{% if 'agent' in api_scopes %}
+# ========================================
+# Agent API
+# 路径前缀: /api/v1/{{ app_name }}/agent/
+# ========================================
+agent = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/{{ app_name }}/agent'{% if tag %}, tags=['{{ tag }}Agent']{% endif %})
+
+agent.include_router(agent_{{ table_name }}_router, prefix='/{{ table_name.replace('_', '-') }}s'{% if tag %}, tags=['{{ tag }}Agent-{{ doc_comment }}']{% endif %})
+{% endif %}

@@ -6,10 +6,30 @@
 
 - ✅ **前端代码**：Vue组件 + TypeScript配置 + API + 路由
 - ✅ **后端代码**：Model + CRUD + Schema + Service + API
+- ✅ **多 Scope 支持**：支持 admin/app/agent/open 四种认证模式
 - ✅ **菜单SQL**：父级菜单 + 4个按钮权限
 - ✅ **字典SQL**：自动识别 status/type 等字段
 - ✅ **智能跳过**：已存在文件不覆盖，不报错
 - ✅ **配置驱动**：所有参数通过 config.toml 管理
+
+## 🔐 API Scope 说明
+
+代码生成器支持 4 种 API scope，对应不同的认证方式和数据访问策略：
+
+| Scope | 路径 | 认证方式 | 用途 |
+|-------|------|----------|------|
+| `admin` | `api/v1/admin/` | JWT + RBAC + Permission | 管理端，完整权限控制 |
+| `app` | `api/v1/app/` | JWT（用户数据隔离） | 用户端，只操作自己的数据 |
+| `agent` | `api/v1/agent/` | Agent Key + X-User-Id | Agent 调用，API Key 认证 |
+| `open` | `api/v1/open/` | 无认证 | 公开只读接口 |
+
+### 设置 Scope
+
+在代码生成业务中设置 `api_scope` 字段：
+
+- **单个 scope**：`"admin"` — 仅生成管理端 API
+- **多个 scope**：`"admin,app"` — 同时生成管理端和用户端 API
+- **全部 scope**：`"admin,app,agent,open"` — 生成所有四种 API
 
 ## 🚀 快速开始
 
@@ -31,13 +51,17 @@ uv run fba codegen generate --sql-file backend/sql/user.sql --app user
 uv run fba codegen generate --sql-file backend/sql/user.sql --app user --execute
 ```
 
-### 命令参数
+### 通过 API 导入表
 
-| 参数 | 必填 | 说明 | 示例 |
-|------|------|------|------|
-| `--sql-file` | ✅ | SQL建表文件路径 | `backend/sql/user.sql` |
-| `--app` | ✅ | 应用/模块名称 | `user`, `admin`, `project` |
-| `--execute` | ❌ | 自动执行生成的SQL到数据库 | 加上此参数即可 |
+```json
+POST /api/v1/code-generation/generations/imports
+{
+    "app": "huanxing",
+    "table_schema": "fba",
+    "table_name": "huanxing_project",
+    "api_scope": "admin,app"
+}
+```
 
 ## ⚙️ 配置文件
 
@@ -64,161 +88,88 @@ generate_menu_sql = true                 # 是否生成菜单SQL
 generate_dict_sql = true                 # 是否生成字典SQL
 ```
 
-### 字典自动生成配置
+### 后端配置
 ```toml
-[dict]
-# 自动生成字典的字段名模式
-auto_dict_patterns = [
-    "status",
-    "type",
-    "state",
-    "category",
-    "level",
-]
-
-# 默认字典选项（用于 status 字段）
-default_status_options = [
-    { label = "启用", value = 1, color = "green" },
-    { label = "禁用", value = 0, color = "red" },
-]
+[backend]
+default_api_scope = "admin"              # 默认 API scope
 ```
 
 ## 📦 生成内容
 
-### 1. 前端代码（自动跳过已存在文件）
+### 后端代码结构（多 Scope）
 
+```
+backend/app/<app>/
+├── model/<表名>.py             # SQLAlchemy模型
+├── crud/crud_<表名>.py         # CRUD操作
+├── schema/<表名>.py            # Pydantic Schema
+├── service/<表名>_service.py   # 业务逻辑
+├── api/
+│   ├── router.py              # 路由总入口（多 scope 子路由器）
+│   └── v1/
+│       ├── admin/<表名>.py    # 管理端 API（JWT + RBAC）
+│       ├── app/<表名>.py      # 用户端 API（JWT + 数据隔离）
+│       ├── agent/<表名>.py    # Agent API（Agent Key）
+│       └── open/<表名>.py     # 公开 API（无认证）
+└── sql/                        # 初始化SQL（MySQL/PostgreSQL）
+```
+
+> 只有在 `api_scope` 中指定的 scope 目录才会被生成。
+
+### 前端代码
 ```
 clound-frontend/apps/web-antd/src/
 ├── views/<app>/<表名>/
 │   ├── index.vue      # 主页面（列表+表单）
 │   └── data.ts        # 表格列和表单配置
-├── api/<app>.ts   # API接口定义
+├── api/<app>.ts       # API接口定义
 └── router/routes/modules/<app>.ts  # 路由配置
 ```
 
-### 2. 后端代码（全部生成）
-
-```
-backend/app/<app>/
-├── model/<表名>.py             # SQLAlchemy模型
-├── crud/crud_<表名>.py       # CRUD操作
-├── schema/<表名>.py           # Pydantic Schema
-├── service/<表名>_service.py  # 业务逻辑
-├── api/v1/<表名>.py          # API路由
-└── sql/                        # 初始化SQL（MySQL/PostgreSQL）
-```
-
-### 3. SQL文件
+### SQL文件
 
 - ✅ `backend/sql/generated/<表名>_menu.sql` - 菜单和权限
-  - 1个父级菜单
-  - 4个按钮权限（新增、编辑、删除、查看）
-  
 - ✅ `backend/sql/generated/<表名>_dict.sql` - 数据字典
-  - 自动为 `status`、`type`、`state`、`level` 等字段生成字典
 
 ## 🎯 使用示例
 
-### 示例1：新建用户管理模块
+### 示例1：仅管理端
 
 ```bash
-# 1. 准备SQL文件：backend/sql/users.sql
-# 2. 执行生成命令
+# 默认 scope 就是 admin
 uv run fba codegen generate --sql-file backend/sql/users.sql --app user
-
-# 生成结果：
-# - 前端：views/user/users/index.vue
-# - 后端：app/user/model/users.py
-# - SQL：sql/generated/users_menu.sql
 ```
 
-### 示例2：快速原型（生成并执行SQL）
+### 示例2：管理端 + 用户端
 
-```bash
-# 适合开发环境快速迭代
-uv run fba codegen generate --sql-file backend/sql/products.sql --app product --execute
+通过 API 导入时设置 `api_scope: "admin,app"`，会同时生成：
+- `api/v1/admin/users.py` — 管理端接口（JWT + RBAC）
+- `api/v1/app/users.py` — 用户端接口（JWT + 数据隔离）
 
-# 会自动执行：
-# - 菜单SQL插入到数据库
-# - 字典SQL插入到数据库
-```
+### 示例3：全部四种 scope
 
-### 示例3：批量生成
-
-```bash
-# 一次生成多个表
-for sql_file in backend/sql/*.sql; do
-  table_name=$(basename "$sql_file" .sql)
-  uv run fba codegen generate --sql-file "$sql_file" --app admin
-done
-```
+设置 `api_scope: "admin,app,agent,open"`，生成完整的四套 API。
 
 ## ❓ 常见问题
 
 ### Q1: 生成的文件位置不对？
+检查 `config.toml` 中的 `frontend_dir` 和 `backend_app_dir` 配置。
 
-**A:** 检查 `config.toml` 中的 `frontend_dir` 和 `backend_app_dir` 配置。
+### Q2: 如何修改 api_scope？
+在代码生成业务列表中编辑对应业务的 `api_scope` 字段即可。
 
-### Q2: 没有生成字典SQL？
+### Q3: 新增 scope 后已有文件怎么办？
+已存在的文件不会被覆盖，只会生成新 scope 的 API 文件。
 
-**A:** 确保字段名包含 `status`、`type`、`state` 或 `level`。可在 `config.toml` 中自定义：
-```toml
-[dict]
-auto_dict_patterns = ["status", "type", "state", "level", "category"]
-```
+### Q4: scope 的认证方式能自定义吗？
+可以修改 `templates/python/api_<scope>.jinja` 模板来自定义认证逻辑。
 
-### Q3: SQL执行失败？
+## 🔧 数据库迁移
 
-**A:** 如果数据库表结构不匹配，命令会显示警告但不中断。手动执行生成的SQL文件即可。
+如果从旧版本升级，需要执行：
 
-### Q4: 如何覆盖已存在的文件？
-
-**A:** 在 `config.toml` 中设置：
-```toml
-[generation]
-existing_file_behavior = "overwrite"
-```
-
-### Q5: 后端代码生成失败？
-
-**A:** 确保：
-1. Python 模板文件存在：`templates/python/*.jinja`
-2. 数据库 `gen_business` 表结构匹配
-3. SQL文件格式正确
-
-## 📚 相关文档
-
-- **快速参考**：`backend/代码生成使用说明.md`
-- **完整指南**：项目根目录下的 `CODE_GENERATION_GUIDE.md`
-- **原框架文档**：`docs/代码生成/README.md`
-
-## 🔧 高级配置
-
-### 自定义字典选项
-
-```toml
-[dict]
-# 状态字段默认选项
-default_status_options = [
-    { label = "开启", value = 1, color = "blue" },
-    { label = "关闭", value = 0, color = "gray" },
-    { label = "禁用", value = -1, color = "red" },
-]
-
-# 类型字段默认选项
-default_type_options = [
-    { label = "普通", value = 1, color = "blue" },
-    { label = "高级", value = 2, color = "gold" },
-    { label = "VIP", value = 3, color = "purple" },
-]
-```
-
-### 菜单父级关联
-
-```toml
-[menu]
-parent_menu_id = 100  # 设置父级菜单ID
-menu_sort_start = 200 # 菜单排序起始值
+```sql
+ALTER TABLE gen_business ADD COLUMN api_scope VARCHAR(64) DEFAULT 'admin' NOT NULL COMMENT 'API scope (admin/app/agent/open)';
 ```
 
 ---

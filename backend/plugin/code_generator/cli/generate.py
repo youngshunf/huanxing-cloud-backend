@@ -12,16 +12,23 @@ from backend.plugin.code_generator.config_loader import codegen_config
 from backend.plugin.code_generator.frontend.dict_generator import (
     execute_dict_sql,
     generate_dict_sql,
+    generate_dict_sql_from_db,
     save_dict_sql_to_file,
 )
 from backend.plugin.code_generator.frontend.generator import frontend_generator
 from backend.plugin.code_generator.frontend.menu_generator import (
     execute_menu_sql,
     generate_menu_sql,
+    generate_menu_sql_from_db,
     save_menu_sql_to_file,
 )
 from backend.plugin.code_generator.parser.sql_parser import sql_parser
+from backend.plugin.code_generator.schema.gen import ImportParam
+from backend.plugin.code_generator.service.gen_service import gen_service
+from backend.plugin.code_generator.crud.crud_gen import gen_dao
+from backend.plugin.code_generator.crud.crud_business import gen_business_dao
 from backend.utils.console import console
+from sqlalchemy import text
 
 
 @cappa.command(help='一键生成完整的前后端代码、菜单SQL和字典SQL', default_long=True)
@@ -45,6 +52,10 @@ class Generate:
         bool,
         cappa.Arg(default=False, help='自动执行生成的SQL（菜单和字典）'),
     ] = False
+    schema: Annotated[
+        str,
+        cappa.Arg(default='public', help='数据库schema（默认public）'),
+    ] = 'public'
 
     def __post_init__(self):
         """验证参数"""
@@ -71,30 +82,91 @@ class Generate:
             if not self.module:
                 self.module = table_info.name  # keep underscores for consistent directory naming
 
+            # 步骤0: 检查表是否存在于数据库，不存在则自动执行建表SQL
+            console.print('\n[bold white]🔍 步骤 0/4: 检查并创建数据库表...[/]')
+            async with async_db_session() as db:
+                db_table_info = await gen_dao.get_table(db, self.schema, table_info.name)
+            
+            if not db_table_info:
+                console.print(f'   ⚠ 表 [yellow]{table_info.name}[/] 不存在，准备自动执行SQL建表...', flush=True)
+                async with async_db_session.begin() as db:
+                    # 分割多条语句执行
+                    for stmt in sql_content.split(';'):
+                        if stmt.strip():
+                            await db.execute(text(stmt))
+                console.print('   [green]✓ 建表SQL执行成功[/]')
+            else:
+                console.print(f'   ✓ 表 [cyan]{table_info.name}[/] 已存在，无需重复建表')
+
+            # 导入表元数据到 gen_business / gen_column
+            console.print('\n[bold white]📥 步骤 0.5/4: 导入表元数据...[/]')
+            business_id = None
+            try:
+                async with async_db_session() as db:
+                    existing_business = await gen_business_dao.get_by_name(db, table_info.name)
+                
+                if existing_business:
+                    business_id = existing_business.id
+                    if existing_business.app_name != self.app:
+                        async with async_db_session.begin() as db:
+                            await gen_business_dao.update(db, business_id, {'app_name': self.app})
+                        console.print(f'   ✓ 表元数据已存在 (id={business_id})，app 已更新为 [cyan]{self.app}[/]')
+                    else:
+                        console.print(f'   ✓ 表元数据已存在 (id={business_id})')
+                else:
+                    import_param = ImportParam(
+                        app=self.app,
+                        table_schema=self.schema,
+                        table_name=table_info.name,
+                    )
+                    async with async_db_session.begin() as db:
+                        await gen_service.import_business_and_model(db=db, obj=import_param)
+                    
+                    async with async_db_session() as db:
+                        business = await gen_business_dao.get_by_name(db, table_info.name)
+                        business_id = business.id if business else None
+                    
+                    if business_id:
+                        console.print(f'   [green]✓ 表元数据导入成功 (id={business_id})[/]')
+                    else:
+                        raise BaseExceptionError('表元数据导入失败')
+            except Exception as e:
+                raise BaseExceptionError(f'导入表元数据失败: {e}')
+
             # 步骤1: 生成前端代码
             if codegen_config.generate_frontend:
-                console.print('[bold white]🎨 步骤 1/4: 生成前端代码...[/]')
-                await self._generate_frontend(table_info)
-                console.print()
+                console.print('\n[bold white]🎨 步骤 1/4: 生成前端代码...[/]')
+                await self._generate_frontend(business_id, table_info.name)
 
-            # 步骤2: 生成后端代码（预留接口）
+            # 步骤2: 生成后端代码
             if codegen_config.generate_backend:
-                console.print('[bold white]🔧 步骤 2/4: 生成后端代码...[/]')
-                console.print('   [yellow]⚠ 后端代码生成功能开发中[/]\n')
+                console.print('\n[bold white]🔧 步骤 2/4: 生成后端代码...[/]')
+                from backend.plugin.code_generator.path_conf import JINJA2_TEMPLATE_DIR
+                python_template_dir = JINJA2_TEMPLATE_DIR / 'python'
+                has_python_templates = python_template_dir.exists() and any(python_template_dir.glob('*.jinja'))
+                
+                if not has_python_templates:
+                    console.print('   [yellow]⚠ 后端代码模板不存在，跳过[/]')
+                else:
+                    try:
+                        async with async_db_session.begin() as db:
+                            gen_path = await gen_service.generate(db=db, pk=business_id)
+                        console.print(f'   [green]✓ 后端代码生成成功[/]')
+                    except Exception as e:
+                        console.print(f'   [red]✗ 后端代码生成失败: {e}[/]')
+                        raise
 
             # 步骤3: 生成菜单SQL
             if codegen_config.generate_menu_sql:
-                console.print('[bold white]📋 步骤 3/4: 生成菜单SQL...[/]')
-                await self._generate_menu_sql(table_info)
-                console.print()
+                console.print('\n[bold white]📋 步骤 3/4: 生成菜单SQL...[/]')
+                await self._generate_menu_sql(business_id, table_info.name)
 
             # 步骤4: 生成字典SQL
             if codegen_config.generate_dict_sql:
-                console.print('[bold white]📚 步骤 4/4: 生成字典SQL...[/]')
-                await self._generate_dict_sql(table_info)
-                console.print()
+                console.print('\n[bold white]📚 步骤 4/4: 生成字典SQL...[/]')
+                await self._generate_dict_sql(business_id, table_info.name)
 
-            console.print('[bold green]✨ 代码生成完成！[/]\n')
+            console.print('\n[bold green]✨ 代码生成完成！[/]\n')
             console.print('[bold cyan]═══════════════════════════════════════════════[/]')
             console.print('[bold yellow]📝 提示：[/]')
             console.print(f'   • 配置文件: [cyan]{codegen_config.CONFIG_FILE}[/]')
@@ -106,16 +178,14 @@ class Generate:
         except Exception as e:
             raise cappa.Exit(e.msg if isinstance(e, BaseExceptionError) else str(e), code=1)
 
-    async def _generate_frontend(self, table_info) -> None:
+    async def _generate_frontend(self, business_id: int, table_name: str) -> None:
         """生成前端代码"""
         try:
-            # 使用配置的 existing_file_behavior
             force = codegen_config.existing_file_behavior == 'overwrite'
-
-            await frontend_generator.generate_from_sql(
-                sql_file=self.sql_file,
+            await frontend_generator.generate_from_db(
+                business_id=business_id,
                 app=self.app,
-                module=self.module,
+                module=table_name,
                 output_dir=codegen_config.frontend_dir,
                 force=force,
             )
@@ -124,37 +194,35 @@ class Generate:
             console.print(f'   [red]✗ 前端代码生成失败: {e}[/]')
             raise
 
-    async def _generate_menu_sql(self, table_info) -> None:
+    async def _generate_menu_sql(self, business_id: int, table_name: str) -> None:
         """生成菜单SQL"""
         try:
-            menu_sql = await generate_menu_sql(
-                table_info=table_info,
+            menu_sql = await generate_menu_sql_from_db(
+                business_id=business_id,
                 app=self.app,
-                module=self.module,
-                parent_menu_id=codegen_config.parent_menu_id,
+                module=table_name,
             )
 
             # 保存到文件
-            output_file = codegen_config.menu_sql_dir / f'{table_info.name}_menu.sql'
+            output_file = codegen_config.menu_sql_dir / f'{table_name}_menu.sql'
             await save_menu_sql_to_file(menu_sql, output_file)
             console.print(f'   ✓ 菜单SQL已保存: [cyan]{output_file}[/]')
 
-            # 自动执行SQL（如果配置或命令行指定）
+            # 自动执行SQL
             auto_execute = self.execute or codegen_config.auto_execute_menu_sql
             if auto_execute:
                 async with async_db_session.begin() as db:
                     await execute_menu_sql(menu_sql, db)
                 console.print('   [green]✓ 菜单SQL已执行[/]')
-
         except Exception as e:
             console.print(f'   [red]✗ 菜单SQL生成失败: {e}[/]')
             raise
 
-    async def _generate_dict_sql(self, table_info) -> None:
+    async def _generate_dict_sql(self, business_id: int, table_name: str) -> None:
         """生成字典SQL"""
         try:
-            dict_sql = await generate_dict_sql(
-                table_info=table_info,
+            dict_sql = await generate_dict_sql_from_db(
+                business_id=business_id,
                 app=self.app,
             )
 
@@ -163,17 +231,15 @@ class Generate:
                 return
 
             # 保存到文件
-            output_file = codegen_config.dict_sql_dir / f'{table_info.name}_dict.sql'
+            output_file = codegen_config.dict_sql_dir / f'{table_name}_dict.sql'
             await save_dict_sql_to_file(dict_sql, output_file)
             console.print(f'   ✓ 字典SQL已保存: [cyan]{output_file}[/]')
 
-            # 自动执行SQL（如果配置或命令行指定）
+            # 自动执行SQL
             auto_execute = self.execute or codegen_config.auto_execute_dict_sql
             if auto_execute:
                 async with async_db_session.begin() as db:
                     await execute_dict_sql(dict_sql, db)
                 console.print('   [green]✓ 字典SQL已执行[/]')
-
         except Exception as e:
             console.print(f'   [yellow]⚠ 字典SQL生成失败: {e}[/]')
-            # 字典SQL生成失败不应该中断整个流程
