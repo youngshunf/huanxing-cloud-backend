@@ -436,7 +436,7 @@ class LLMGateway:
             'messages': messages,
             'api_key': api_key,
             'stream': request.stream,
-            'timeout': timeout or 60,  # P0-2: 默认 60 秒超时
+            'timeout': timeout or 600,  # P0-2: 默认 60 秒超时
         }
 
         # 设置 API base URL
@@ -1115,7 +1115,7 @@ class LLMGateway:
             credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
 
             # 构建请求参数
-            params = self._build_litellm_params(model_config, provider, request)
+            params = self._build_litellm_params(model_config, provider, request, timeout=600)
             params['stream'] = is_streaming
             request_id = usage_tracker.generate_request_id()
 
@@ -1268,7 +1268,7 @@ class LLMGateway:
             credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
 
             # 构建请求参数
-            params = self._build_anthropic_params(model_config, provider, request)
+            params = self._build_anthropic_params(model_config, provider, request, timeout=600)
             params['stream'] = False
             request_id = usage_tracker.generate_request_id()
 
@@ -1619,7 +1619,7 @@ class LLMGateway:
             tried_models.append(model_config.model_name)
 
             # 构建请求参数
-            params = self._build_litellm_params(model_config, provider, request, timeout=120)
+            params = self._build_litellm_params(model_config, provider, request, timeout=600)
             params['stream'] = True
             # P1-3: 请求精确 token 计数
             params['stream_options'] = {'include_usage': True}
@@ -1888,7 +1888,7 @@ class LLMGateway:
             'max_tokens': effective_max_tokens,
             'api_key': api_key,
             'stream': request.stream,
-            'timeout': timeout or 60,  # P0-2: 默认 60 秒超时
+            'timeout': timeout or 600,  # P0-2: 默认 60 秒超时
         }
 
         # 设置 API base URL
@@ -2168,7 +2168,7 @@ class LLMGateway:
         candidates = []
         for model_config, provider in models_with_providers:
             credit_rate = await credit_service.get_model_credit_rate(db, model_config.id)
-            params = self._build_anthropic_params(model_config, provider, request, timeout=120)
+            params = self._build_anthropic_params(model_config, provider, request, timeout=600)
             params['stream'] = True
             
             candidates.append({
