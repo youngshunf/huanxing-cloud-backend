@@ -514,6 +514,31 @@ class LLMGateway:
         """
         return provider_type == 'anthropic'
 
+    def _build_embedding_model_name(
+        self, model_name: str, provider_type: str, has_custom_api_base: bool
+    ) -> str:
+        """
+        为 Embedding 构建 LiteLLM 模型名称。
+
+        Embedding 与 Chat 不同：LiteLLM 对未知模型名会报 "Provider NOT provided"，
+        因为 embedding 没有和 chat 一样的模型名自动识别机制。
+
+        规则：
+        1. provider_type 为 openai 且有自定义 api_base → 加 openai/ 前缀
+           （确保 litellm 知道用 OpenAI 协议，同时模型名原样传给上游）
+        2. provider_type 不在 auto_detect 列表 → 加 provider_type/ 前缀
+        3. 其他情况 → 不加前缀（litellm 能自动识别）
+        """
+        auto_detect_providers = {'openai', 'anthropic', 'cohere', 'mistral'}
+
+        if provider_type in auto_detect_providers:
+            if has_custom_api_base:
+                # 自定义 api_base + openai 类型：需要前缀让 litellm 识别协议
+                return f'openai/{model_name}'
+            return model_name
+
+        return f'{provider_type}/{model_name}'
+
     def _build_openai_params_from_anthropic(
         self,
         anthropic_params: dict[str, Any],
@@ -2775,9 +2800,12 @@ class LLMGateway:
                     continue  # 解密失败，尝试下一个供应商
 
             # 构建模型名称
+            # Embedding 特殊处理：对于自定义 api_base 的 openai 类型供应商，
+            # 如果模型名不在 litellm 已知列表中，需要加 openai/ 前缀
+            # 让 litellm 知道使用 OpenAI 协议发送请求
             has_custom_api_base = bool(provider.api_base_url)
-            litellm_model = self._build_model_name(
-                model_config.model_name, provider.provider_type, force_prefix=has_custom_api_base
+            litellm_model = self._build_embedding_model_name(
+                model_config.model_name, provider.provider_type, has_custom_api_base
             )
 
             params: dict = {
