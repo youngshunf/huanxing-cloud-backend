@@ -254,15 +254,16 @@ setup_config() {
     
     # 创建数据库（PostgreSQL）
     log_info "检查数据库连接..."
-    source backend/.env
-    db_host=$(echo $DATABASE_HOST | tr -d "'\"")
-    db_port=$(echo $DATABASE_PORT | tr -d "'\"")
-    db_user=$(echo $DATABASE_USER | tr -d "'\"")
-    db_name=$(echo $DATABASE_SCHEMA | tr -d "'\"")
+    # 使用 grep + sed 安全读取 .env 变量（避免 source 因特殊字符报错）
+    db_host=$(grep -E '^DATABASE_HOST=' backend/.env | head -1 | cut -d'=' -f2- | tr -d "'\"")
+    db_port=$(grep -E '^DATABASE_PORT=' backend/.env | head -1 | cut -d'=' -f2- | tr -d "'\"")
+    db_user=$(grep -E '^DATABASE_USER=' backend/.env | head -1 | cut -d'=' -f2- | tr -d "'\"")
+    db_name=$(grep -E '^DATABASE_SCHEMA=' backend/.env | head -1 | cut -d'=' -f2- | tr -d "'\"")
+    db_pass=$(grep -E '^DATABASE_PASSWORD=' backend/.env | head -1 | cut -d'=' -f2- | tr -d "'\"")
     
     # 测试 PostgreSQL 连接
     if command -v psql &> /dev/null; then
-        if PGPASSWORD="$DATABASE_PASSWORD" psql -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c "SELECT 1" &>/dev/null; then
+        if PGPASSWORD="$db_pass" psql -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" -c "SELECT 1" &>/dev/null; then
             log_info "✅ PostgreSQL 连接成功"
         else
             log_warn "⚠️ PostgreSQL 连接失败，请检查数据库配置"
