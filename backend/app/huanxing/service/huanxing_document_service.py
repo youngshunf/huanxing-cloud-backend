@@ -128,7 +128,7 @@ class HuanxingDocumentService:
         summary = generate_summary(obj.content)
         
         # 处理标签
-        tags_str = json.dumps(obj.tags) if obj.tags else None
+        tags_str = json.dumps(obj.tags, ensure_ascii=False) if obj.tags else None
         
         # 准备文档数据
         doc_data = {
@@ -153,7 +153,7 @@ class HuanxingDocumentService:
             doc_data['share_expires_at'] = tz.now() + timedelta(hours=obj.auto_share.expires_hours)
             if obj.auto_share.password:
                 doc_data['share_password'] = hash_password(obj.auto_share.password)
-            share_url = f"{settings.HUANXING_SITE_URL}/share/{doc_data['share_token']}"
+            share_url = f"{settings.HUANXING_SITE_URL}/s/{doc_data['share_token']}"
         
         # 创建文档
         doc = await huanxing_document_dao.create(db, doc_data)
@@ -219,7 +219,7 @@ class HuanxingDocumentService:
         
         # 处理标签
         if obj.tags is not None:
-            update_data['tags'] = json.dumps(obj.tags)
+            update_data['tags'] = json.dumps(obj.tags, ensure_ascii=False)
         
         count = await huanxing_document_dao.update(db, pk, update_data)
         return count
@@ -471,7 +471,7 @@ class HuanxingDocumentService:
         
         await huanxing_document_dao.update(db, document_id, update_data)
         
-        return f"{settings.HUANXING_SITE_URL}/share/{share_token}"
+        return f"{settings.HUANXING_SITE_URL}/s/{share_token}"
     
     @staticmethod
     async def cancel_share(*, db: AsyncSession, document_id: int) -> int:
