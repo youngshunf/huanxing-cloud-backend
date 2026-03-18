@@ -1,4 +1,4 @@
-"""订阅升级/降级服务 - 管理 API Key 过期策略
+"""订阅升级/降级服务 - 管理 API Key 过期策略 + new-api quota 同步
 @author Ysf
 """
 
@@ -16,6 +16,16 @@ from backend.utils.timezone import timezone
 
 class SubscriptionService:
     """订阅升级/降级服务"""
+
+    @staticmethod
+    async def _sync_newapi_quota(db: AsyncSession, user_id: int, tier_name: str) -> None:
+        """同步 new-api quota（内部方法，失败不阻断主流程）"""
+        try:
+            from backend.app.llm.service.llm_newapi_user_mapping_service import llm_newapi_user_mapping_service
+            quota = llm_newapi_user_mapping_service.tier_to_quota(tier_name)
+            await llm_newapi_user_mapping_service.sync_quota(db, user_id, quota)
+        except Exception as e:
+            log.warning(f'[Subscription] new-api quota 同步失败: user_id={user_id}, tier={tier_name}, error={e}')
 
     @staticmethod
     async def upgrade_subscription(
@@ -91,6 +101,9 @@ class SubscriptionService:
             f'更新 {active_count} 个活跃 Key，重新激活 {reactivated_count} 个过期 Key'
         )
 
+        # 同步 new-api quota
+        await SubscriptionService._sync_newapi_quota(db, user_id, new_tier)
+
     @staticmethod
     async def downgrade_to_free(db: AsyncSession, user_id: int, app_code: str = 'huanxing') -> None:
         """
@@ -138,6 +151,9 @@ class SubscriptionService:
             f'[Subscription] 用户 {user_id} 降级到免费版，'
             f'{updated_count} 个活跃 Key 设置 7 天后过期'
         )
+
+        # 同步 new-api quota（降级到 free）
+        await SubscriptionService._sync_newapi_quota(db, user_id, 'free')
 
 
 subscription_service = SubscriptionService()

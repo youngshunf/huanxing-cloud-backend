@@ -27,7 +27,7 @@ from backend.common.security.jwt import (
 from backend.core.conf import settings
 from backend.database.db import uuid4_str
 from backend.database.redis import redis_client
-from backend.app.llm.service.api_key_service import api_key_service
+from backend.app.llm.service.llm_newapi_user_mapping_service import llm_newapi_user_mapping_service
 from backend.utils.dynamic_config import load_login_config
 from backend.utils.timezone import timezone
 
@@ -169,13 +169,18 @@ class AuthService:
                 status=LoginLogStatusType.success.value,
                 msg=t('success.login.success'),
             )
-            # 获取 LLM Token
-            llm_token = None
+            # 获取 LLM Token（通过 new-api 创建/获取）
             try:
-                api_key = await api_key_service.get_or_create_default_key(db, user.id)
-                llm_token = api_key._decrypted_key
-            except Exception:
-                pass  # 获取失败不影响登录
+                newapi_username = user.phone or user.username
+                mapping = await llm_newapi_user_mapping_service.ensure_newapi_user(
+                    db, user.id,
+                    username=newapi_username,
+                    nickname=user.nickname or '',
+                )
+                llm_token = mapping.newapi_token_key
+            except Exception as e:
+                log.error(f'new-api 用户创建失败: {e}')
+                raise errors.ServerError(msg='LLM 服务初始化失败，请稍后重试')
             
             data = GetLoginToken(
                 access_token=access_token_data.access_token,

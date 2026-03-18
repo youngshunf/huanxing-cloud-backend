@@ -324,14 +324,15 @@ class LLMGateway:
         first_model_type = None
         first_model_id = None
 
-        # 第一步：精确匹配 model_config 表（不过滤熔断，统一交给排序处理）
-        model = await model_config_dao.get_by_name(db, model_name)
-        if model and model.enabled:
+        # 第一步：精确匹配 model_config 表（支持同名多供应商，不过滤熔断，统一交给排序处理）
+        matched_models = await model_config_dao.get_all_by_name(db, model_name)
+        for model in matched_models:
             provider = await provider_dao.get(db, model.provider_id)
             if provider and provider.enabled:
                 models_with_providers.append((model, provider))
-                first_model_type = model.model_type
-                first_model_id = model.id
+                if first_model_type is None:
+                    first_model_type = model.model_type
+                    first_model_id = model.id
 
         # 第二步：别名映射（精确匹配未命中时）
         if not models_with_providers:
@@ -444,6 +445,12 @@ class LLMGateway:
             params['api_base'] = provider.api_base_url
             params['base_url'] = provider.api_base_url
 
+        # 当 provider_type=openai 但模型名可能被 litellm 自动识别为其他协议时
+        # （如 claude-* 会被识别为 Anthropic），显式指定 custom_llm_provider
+        # 强制 litellm 使用 OpenAI 协议，避免协议不匹配导致 tool_calls 丢失
+        if has_custom_api_base and provider.provider_type == 'openai':
+            params['custom_llm_provider'] = 'openai'
+
         # 详细日志
         log.info(f'[LLM Gateway] 调用参数: model={model_name}, provider_name={provider.name}, '
                  f'provider_type={provider.provider_type}, api_base={provider.api_base_url}, '
@@ -494,8 +501,10 @@ class LLMGateway:
         auto_detect_providers = {'openai', 'anthropic', 'cohere', 'mistral'}
 
         if provider_type in auto_detect_providers:
-            # 对于 LiteLLM 可自动识别的供应商，即使有自定义 api_base 也不加前缀
-            # 因为第三方代理（如 cliproxy）通常不识别带前缀的模型名
+            # 对于 LiteLLM 可自动识别的供应商，不加前缀
+            # 注意：当 provider_type=openai 但模型名像 claude-* 时，
+            # litellm 会自动走 Anthropic 协议。这种情况通过
+            # _build_litellm_params 中设置 custom_llm_provider='openai' 解决
             return model_name
 
         # 其他供应商需要前缀让 LiteLLM 识别使用哪种 API 协议
@@ -1166,6 +1175,19 @@ class LLMGateway:
                 timer.stop()
                 breaker.record_success()
 
+                # 🔍 DEBUG: dump raw response for tool_calls investigation
+                try:
+                    _fr = None
+                    if hasattr(response, 'choices') and response.choices:
+                        _c = response.choices[0]
+                        _fr = getattr(_c, 'finish_reason', None)
+                    if _fr == 'tool_calls':
+                        # Dump full response to see where tool_calls went
+                        _resp_json = response.json() if hasattr(response, 'json') else str(response)
+                        log.warning(f'[LLM Gateway] RAW-RESPONSE-DUMP finish_reason=tool_calls: {_resp_json[:1000]}')
+                except Exception as _e:
+                    log.error(f'[LLM Gateway] RAW-RESPONSE-DUMP error: {_e}')
+
                 # 调试日志：记录响应详情
                 self._log_debug_response(response, is_streaming=is_streaming, elapsed_ms=timer.elapsed_ms)
                 if not is_streaming:
@@ -1328,6 +1350,12 @@ class LLMGateway:
                         f'将 Anthropic 格式请求转换为 OpenAI 格式调用'
                     )
                     openai_params = self._build_openai_params_from_anthropic(params)
+                    # 强制 litellm 使用 OpenAI 协议，避免根据模型名自动识别
+                    # （如 claude-* 会被识别为 Anthropic 协议，导致 tool_calls 丢失）
+                    openai_params['custom_llm_provider'] = 'openai'
+                    # 确保 api_base 传递给 litellm（_build_anthropic_params 不含此字段）
+                    if provider.api_base_url:
+                        openai_params['api_base'] = provider.api_base_url
                     raw_response = await self.litellm.acompletion(**openai_params)
                     response = self._convert_openai_response_to_anthropic(
                         raw_response, model_config.model_name, request_id
@@ -1523,7 +1551,104 @@ class LLMGateway:
             message = choice.get('message', {})
             
             # 处理 tool_calls，确保它们是可序列化的 dict
-            tool_calls_raw = message.get('tool_calls')
+            # 多种方式提取 tool_calls，兼容 litellm 各种返回格式
+            finish_reason = choice.get("finish_reason") if hasattr(choice, "get") else getattr(choice, "finish_reason", None)
+            
+            tool_calls_raw = None
+            # 方式1: dict-like .get()
+            if hasattr(message, 'get'):
+                tool_calls_raw = message.get('tool_calls')
+            # 方式2: getattr
+            if tool_calls_raw is None:
+                tool_calls_raw = getattr(message, 'tool_calls', None)
+            # 方式3: dict() 转换后取
+            if tool_calls_raw is None and finish_reason == 'tool_calls':
+                try:
+                    msg_dict = dict(message) if hasattr(message, '__iter__') else {}
+                    tool_calls_raw = msg_dict.get('tool_calls')
+                except Exception:
+                    pass
+            # 方式4: model_dump() (pydantic v2)
+            if tool_calls_raw is None and finish_reason == 'tool_calls':
+                try:
+                    msg_dict = message.model_dump() if hasattr(message, 'model_dump') else {}
+                    tool_calls_raw = msg_dict.get('tool_calls')
+                except Exception:
+                    pass
+            # 方式5: json() → parse
+            if tool_calls_raw is None and finish_reason == 'tool_calls':
+                try:
+                    import json as _json
+                    msg_json = message.json() if hasattr(message, 'json') else '{}'
+                    msg_parsed = _json.loads(msg_json)
+                    tool_calls_raw = msg_parsed.get('tool_calls')
+                except Exception:
+                    pass
+            
+            # 方式6: 从 litellm _hidden_params 获取原始 Anthropic 响应中的 tool_use blocks
+            # litellm 在处理大量工具时会丢失 tool_calls，这是终极 fallback
+            if tool_calls_raw is None and finish_reason == 'tool_calls':
+                try:
+                    hidden = getattr(response, '_hidden_params', {}) or {}
+                    original_response = hidden.get('original_response')
+                    log.warning(
+                        f'[LLM Gateway] 方式6 debug: '
+                        f'hidden_keys={list(hidden.keys()) if isinstance(hidden, dict) else "not_dict"}, '
+                        f'orig_type={type(original_response).__name__}, '
+                        f'orig_repr={repr(original_response)[:300] if original_response else "None"}, '
+                        f'response_type={type(response).__name__}, '
+                        f'response_dir_sample={[a for a in dir(response) if not a.startswith("__")][:20]}'
+                    )
+                    if original_response and isinstance(original_response, str):
+                        import json as _json
+                        orig = _json.loads(original_response)
+                        # Anthropic 格式: content 数组中的 tool_use blocks
+                        content_blocks = orig.get('content', [])
+                        tool_use_blocks = [b for b in content_blocks if b.get('type') == 'tool_use']
+                        if tool_use_blocks:
+                            log.warning(f'[LLM Gateway] 方式6: 从原始 Anthropic 响应提取到 {len(tool_use_blocks)} 个 tool_use blocks')
+                            tool_calls_raw = []
+                            for block in tool_use_blocks:
+                                tc = {
+                                    'id': block.get('id', ''),
+                                    'type': 'function',
+                                    'function': {
+                                        'name': block.get('name', ''),
+                                        'arguments': _json.dumps(block.get('input', {})),
+                                    }
+                                }
+                                tool_calls_raw.append(tc)
+                    elif original_response and hasattr(original_response, 'content'):
+                        # 如果是 Anthropic SDK 对象
+                        content_blocks = original_response.content
+                        tool_use_blocks = [b for b in content_blocks if getattr(b, 'type', '') == 'tool_use']
+                        if tool_use_blocks:
+                            import json as _json
+                            log.warning(f'[LLM Gateway] 方式6b: 从 Anthropic SDK 对象提取到 {len(tool_use_blocks)} 个 tool_use blocks')
+                            tool_calls_raw = []
+                            for block in tool_use_blocks:
+                                tc = {
+                                    'id': getattr(block, 'id', ''),
+                                    'type': 'function',
+                                    'function': {
+                                        'name': getattr(block, 'name', ''),
+                                        'arguments': _json.dumps(getattr(block, 'input', {})),
+                                    }
+                                }
+                                tool_calls_raw.append(tc)
+                except Exception as e:
+                    log.error(f'[LLM Gateway] 方式6 提取失败: {e}')
+            
+            # DEBUG: 详细打印
+            log.warning(
+                f'[LLM Gateway] tool_calls extraction: '
+                f'choice_type={type(choice).__name__}, msg_type={type(message).__name__}, '
+                f'finish_reason={finish_reason}, '
+                f'tool_calls_raw_type={type(tool_calls_raw).__name__}, '
+                f'tool_calls_raw_bool={bool(tool_calls_raw) if tool_calls_raw is not None else "None"}, '
+                f'tool_calls_raw_repr={repr(tool_calls_raw)[:200]}'
+            )
+            
             tool_calls = None
             if tool_calls_raw:
                 tool_calls = []
@@ -1542,15 +1667,20 @@ class LLMGateway:
                         }
                         tool_calls.append(tc_dict)
             
+            # 提取 role 和 content（兼容 dict 和 object）
+            msg_role = message.get('role', 'assistant') if hasattr(message, 'get') else getattr(message, 'role', 'assistant')
+            msg_content = message.get('content') if hasattr(message, 'get') else getattr(message, 'content', None)
+            msg_finish = choice.get('finish_reason') if hasattr(choice, 'get') else getattr(choice, 'finish_reason', None)
+            
             choices.append(
                 ChatCompletionChoice(
                     index=i,
                     message=ChatMessage(
-                        role=message.get('role', 'assistant'),
-                        content=message.get('content'),
+                        role=msg_role,
+                        content=msg_content,
                         tool_calls=tool_calls,
                     ),
-                    finish_reason=choice.get('finish_reason'),
+                    finish_reason=msg_finish,
                 )
             )
 
@@ -2394,6 +2524,11 @@ class LLMGateway:
                     openai_params = self._build_openai_params_from_anthropic(params)
                     openai_params['stream'] = True
                     openai_params['stream_options'] = {'include_usage': True}
+                    # 强制 litellm 使用 OpenAI 协议
+                    openai_params['custom_llm_provider'] = 'openai'
+                    # 确保 api_base 传递给 litellm
+                    if api_base_url:
+                        openai_params['api_base'] = api_base_url
                     openai_stream = await self.litellm.acompletion(**openai_params)
 
                     message_id = usage_tracker.generate_request_id()

@@ -18,7 +18,7 @@ from backend.app.admin.schema.phone_auth import (
     SendCodeParam,
     SendCodeResponse,
 )
-from backend.app.llm.service.api_key_service import api_key_service
+from backend.app.llm.service.llm_newapi_user_mapping_service import llm_newapi_user_mapping_service
 from backend.app.openclaw.schema import GatewayConfigCreate
 from backend.app.openclaw.service import create_gateway_config
 from backend.common.exception import errors
@@ -138,8 +138,16 @@ async def phone_login(
         await db.flush()
         await db.refresh(user)
 
-        # 自动创建 API Key（新用户默认为免费用户，Key 有效期 7 天）
-        await api_key_service.create_default_key(db, user.id, is_free_user=True)
+        # 自动创建 new-api 用户 + 永不过期的 API Key（新用户赠送积分）
+        from backend.app.llm.service.llm_newapi_user_mapping_service import credits_to_quota
+        from backend.core.conf import settings
+        bonus_quota = credits_to_quota(settings.NEWAPI_REGISTER_BONUS_CREDITS)
+        mapping = await llm_newapi_user_mapping_service.ensure_newapi_user(
+            db, user.id,
+            username=phone,
+            nickname=nickname,
+            initial_quota=bonus_quota,
+        )
 
         # 初始化订阅和赠送积分
         from backend.app.user_tier.service.credit_service import credit_service
@@ -174,9 +182,19 @@ async def phone_login(
         httponly=True,
     )
 
-    # 获取 LLM Token
-    api_key = await api_key_service.get_or_create_default_key(db, user.id)
-    llm_token = api_key._decrypted_key
+    # 获取 LLM Token（通过 new-api）
+    try:
+        newapi_username = user.phone or user.username
+        mapping = await llm_newapi_user_mapping_service.ensure_newapi_user(
+            db, user.id,
+            username=newapi_username,
+            nickname=user.nickname or '',
+        )
+        llm_token = mapping.newapi_token_key
+    except Exception as e:
+        from backend.common.log import log
+        log.error(f'new-api 用户创建失败: {e}')
+        raise errors.ServerError(msg='LLM 服务初始化失败，请稍后重试')
 
     # 获取或创建 Gateway Token
     gateway_token_response = await create_gateway_config(
@@ -236,12 +254,12 @@ async def get_llm_token(
     payload = jwt_decode(token)
     user_id = payload.id
 
-    # 获取或创建 API Key
-    api_key = await api_key_service.get_or_create_default_key(db, user_id)
+    # 获取或创建 API Key（通过 new-api）
+    api_key = await llm_newapi_user_mapping_service.get_api_key(db, user_id)
 
     return response_base.success(
         data=GetLLMTokenResponse(
-            api_token=api_key._decrypted_key,
-            expires_at=api_key.expires_at,
+            api_token=api_key,
+            expires_at=None,  # new-api token 永不过期
         )
     )

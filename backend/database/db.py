@@ -97,6 +97,18 @@ async def get_db_transaction() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+async def get_newapi_db() -> AsyncGenerator[AsyncSession, None]:
+    """获取 new-api 数据库会话"""
+    async with newapi_async_db_session() as session:
+        yield session
+
+
+async def get_newapi_db_transaction() -> AsyncGenerator[AsyncSession, None]:
+    """获取 new-api 带事务的数据库会话"""
+    async with newapi_async_db_session.begin() as session:
+        yield session
+
+
 async def create_tables() -> None:
     """创建数据库表"""
     from backend.common.model import MappedBase
@@ -126,3 +138,19 @@ async_db_session = create_database_async_session(async_engine)
 # Session Annotated
 CurrentSession = Annotated[AsyncSession, Depends(get_db)]
 CurrentSessionTransaction = Annotated[AsyncSession, Depends(get_db_transaction)]
+
+# new-api 独立数据库（同一 PostgreSQL 实例，不同 database）
+NEWAPI_DATABASE_URL = URL.create(
+    drivername='postgresql+asyncpg',
+    username=settings.DATABASE_USER,
+    password=settings.DATABASE_PASSWORD,
+    host=settings.DATABASE_HOST,
+    port=settings.DATABASE_PORT,
+    database=settings.NEWAPI_DATABASE_SCHEMA,
+)
+newapi_async_engine = create_database_async_engine(NEWAPI_DATABASE_URL)
+newapi_async_db_session = create_database_async_session(newapi_async_engine)
+
+# new-api Session Annotated
+NewApiSession = Annotated[AsyncSession, Depends(get_newapi_db)]
+NewApiSessionTransaction = Annotated[AsyncSession, Depends(get_newapi_db_transaction)]

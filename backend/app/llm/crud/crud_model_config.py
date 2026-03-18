@@ -19,6 +19,15 @@ class CRUDModelConfig(CRUDPlus[ModelConfig]):
     async def get_by_name(self, db: AsyncSession, model_name: str) -> ModelConfig | None:
         return await self.select_model_by_column(db, model_name=model_name)
 
+    async def get_all_by_name(self, db: AsyncSession, model_name: str) -> list[ModelConfig]:
+        """获取所有同名模型（不同供应商），用于多供应商路由"""
+        stmt = select(ModelConfig).where(
+            ModelConfig.model_name == model_name,
+            ModelConfig.enabled.is_(True),
+        )
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_by_name_and_type(self, db: AsyncSession, model_name: str, model_type: str) -> ModelConfig | None:
         """按模型名称和类型查询"""
         return await self.select_model_by_column(db, model_name=model_name, model_type=model_type, enabled=True)

@@ -59,6 +59,15 @@ class Settings(BaseSettings):
     DATABASE_CHARSET: str = 'utf8mb4'
     DATABASE_PK_MODE: Literal['autoincrement', 'snowflake'] = 'autoincrement'
 
+    # new-api 独立数据库（与主库同一 PostgreSQL 实例，不同 database）
+    NEWAPI_DATABASE_SCHEMA: str = 'newapi'
+
+    # 唤星积分 → new-api quota 换算比例（1 积分 = N quota）
+    NEWAPI_CREDITS_TO_QUOTA_RATE: int = 500
+
+    # 新用户注册赠送积分
+    NEWAPI_REGISTER_BONUS_CREDITS: int = 500
+
     # .env Redis
     REDIS_HOST: str
     REDIS_PORT: int

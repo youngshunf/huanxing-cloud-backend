@@ -7,7 +7,7 @@ from backend.app.openclaw.api.router import v1 as openclaw_v1
 from fastapi import APIRouter
 
 from backend.app.admin.api.router import v1 as admin_v1, client as admin_client
-from backend.app.llm.api.router import v1 as llm_v1
+from backend.app.llm.api.router import v1 as llm_v1, app as llm_app
 from backend.app.task.api.router import v1 as task_v1
 
 # HASN Modules
@@ -47,3 +47,5 @@ router.include_router(hasn_core_v1)
 router.include_router(hasn_social_v1)
 
 
+
+router.include_router(llm_app)

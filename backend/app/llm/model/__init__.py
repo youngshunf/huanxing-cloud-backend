@@ -21,3 +21,4 @@ __all__ = [
     'UsageLog',
     'UserApiKey',
 ]
+from backend.app.llm.model.llm_newapi_user_mapping import LlmNewapiUserMapping as LlmNewapiUserMapping

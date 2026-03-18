@@ -3,6 +3,8 @@
 from fastapi import APIRouter
 
 from backend.app.llm.api.v1 import api_keys, compress_stats, images, media_tasks, model_alias, model_groups, models, providers, proxy, rate_limits, usage, videos
+from backend.app.llm.api.v1.admin.llm_newapi_user_mapping import router as admin_llm_newapi_user_mapping_router
+from backend.app.llm.api.v1.app.llm_newapi_user_mapping import router as app_llm_newapi_user_mapping_router
 
 from backend.core.conf import settings
 
@@ -43,3 +45,13 @@ v1.include_router(images.router, prefix='/proxy/v1/images', tags=['媒体生成 
 
 # 视频生成 API
 v1.include_router(videos.router, prefix='/proxy/v1/videos', tags=['媒体生成 - 视频'])
+
+# new-api 用户映射管理（管理端）
+v1.include_router(admin_llm_newapi_user_mapping_router, prefix='/newapi-mappings', tags=['new-api 用户映射管理'])
+
+
+# --- 用户端（仅 JWT） ---
+app = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/llm/app')
+
+# new-api 用量查询与额度
+app.include_router(app_llm_newapi_user_mapping_router, prefix='/newapi', tags=['new-api 用量与额度'])
