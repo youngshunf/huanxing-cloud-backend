@@ -52,7 +52,6 @@ class RateLimiter:
         *rates: Rate,
         identifier: IdentifierCallable = default_identifier,
         bucket: AbstractBucket | None = None,
-        limiter: Limiter | None = None,
         callback: CallbackCallable = default_callback,
     ) -> None:
         """
@@ -61,7 +60,6 @@ class RateLimiter:
         :param rates: pyrate_limiter Rate 对象，支持传入单个或多个
         :param identifier: 自定义标识符函数
         :param bucket: pyrate_limiter AbstractBucket 实例
-        :param limiter: pyrate_limiter Limiter 实例
         :param callback: 自定义限流回调函数
         :return:
         """
@@ -70,27 +68,33 @@ class RateLimiter:
         self.rates = list(rates)
         self.identifier = identifier
         self.bucket = bucket
-        self.limiter = limiter
         self.callback = callback
+        self._limiters: dict[str, Limiter] = {}
 
-    async def __call__(self, request: Request, response: Response) -> None:
-        if self.limiter is None:
-            if self.bucket is None:
-                self.bucket = await RedisBucket.init(  # type: ignore
+    async def _get_limiter(self, identifier: str) -> Limiter:
+        """按 identifier 获取或创建对应的 Limiter"""
+        if identifier not in self._limiters:
+            if self.bucket is not None:
+                bucket = self.bucket
+            else:
+                bucket = await RedisBucket.init(  # type: ignore
                     rates=self.rates,
                     redis=redis_client,
-                    bucket_key=f'{settings.REQUEST_LIMITER_REDIS_PREFIX}',
+                    bucket_key=f'{settings.REQUEST_LIMITER_REDIS_PREFIX}:{identifier}',
                 )
-            self.limiter = Limiter(self.bucket)
+            self._limiters[identifier] = Limiter(bucket)
+        return self._limiters[identifier]
 
+    async def __call__(self, request: Request, response: Response) -> None:
         if is_async_callable(self.identifier):
             identifier = await self.identifier(request)
         else:
             identifier = await run_in_threadpool(self.identifier, request)
 
-        acquired = await self.limiter.try_acquire_async(identifier, blocking=False)
+        limiter = await self._get_limiter(identifier)
+        acquired = await limiter.try_acquire_async(identifier, blocking=False)
         if not acquired:
-            retry_after = ceil(self.bucket.failing_rate.interval / 1000)
+            retry_after = ceil(self.rates[0].interval / 1000) if self.rates else 60
             if is_async_callable(self.callback):
                 await self.callback(request, response, retry_after)
             else:

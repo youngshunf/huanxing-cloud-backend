@@ -140,7 +140,6 @@ async def phone_login(
 
         # 自动创建 new-api 用户 + 永不过期的 API Key（新用户赠送积分）
         from backend.app.llm.service.llm_newapi_user_mapping_service import credits_to_quota
-        from backend.core.conf import settings
         bonus_quota = credits_to_quota(settings.NEWAPI_REGISTER_BONUS_CREDITS)
         mapping = await llm_newapi_user_mapping_service.ensure_newapi_user(
             db, user.id,
@@ -190,7 +189,7 @@ async def phone_login(
             username=newapi_username,
             nickname=user.nickname or '',
         )
-        llm_token = mapping.newapi_token_key
+        llm_token = f'sk-{mapping.newapi_token_key}'
     except Exception as e:
         from backend.common.log import log
         log.error(f'new-api 用户创建失败: {e}')
@@ -223,6 +222,7 @@ async def phone_login(
             refresh_token=refresh_token_data.refresh_token,
             refresh_token_expire_time=refresh_token_data.refresh_token_expire_time,
             llm_token=llm_token,
+            llm_base_url=settings.LLM_API_BASE_URL,
             gateway_token=gateway_token,
             is_new_user=is_new_user,
             user=user_info,

@@ -62,8 +62,8 @@ class Settings(BaseSettings):
     # new-api 独立数据库（与主库同一 PostgreSQL 实例，不同 database）
     NEWAPI_DATABASE_SCHEMA: str = 'newapi'
 
-    # 唤星积分 → new-api quota 换算比例（1 积分 = N quota）
-    NEWAPI_CREDITS_TO_QUOTA_RATE: int = 500
+    # 唤星积分 → new-api quota 换算比例（1 积分 = 1 美元 = 500000 quota）
+    NEWAPI_CREDITS_TO_QUOTA_RATE: int = 500_000
 
     # 新用户注册赠送积分
     NEWAPI_REGISTER_BONUS_CREDITS: int = 500

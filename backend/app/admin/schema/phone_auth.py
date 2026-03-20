@@ -37,6 +37,7 @@ class PhoneLoginResponse(SchemaBase):
     refresh_token: str = Field(description='刷新令牌')
     refresh_token_expire_time: datetime = Field(description='刷新令牌过期时间')
     llm_token: str = Field(description='LLM API Token')
+    llm_base_url: str | None = Field(default=None, description='LLM API Base URL')
     gateway_token: str = Field(description='Gateway 认证 Token')
     is_new_user: bool = Field(description='是否新用户')
     user: 'PhoneLoginUserInfo' = Field(description='用户信息')

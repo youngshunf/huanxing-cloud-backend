@@ -126,11 +126,11 @@ class LlmNewapiUserMappingService:
                 newapi_db, username=newapi_username, display_name=display, quota=quota,
             )
 
-            # 2. 生成 token key 并创建 token
+            # 2. 生成 token key 并创建 token（无限额度，由 users.quota 控制）
             token_key = newapi_direct_dao.generate_token_key()
             newapi_token_id = await newapi_direct_dao.create_newapi_token(
                 newapi_db, user_id=newapi_user_id, token_key=token_key,
-                name=f'{app_code} 默认 Key', quota=quota,
+                name=f'{app_code} 默认 Key',
             )
 
         # 3. 创建映射记录（唤星库）
@@ -268,7 +268,7 @@ class LlmNewapiUserMappingService:
         mapping = await llm_newapi_user_mapping_dao.get_by_user(db, huanxing_user_id, app_code)
         if not mapping:
             raise errors.NotFoundError(msg='用户未关联 LLM 服务')
-        return mapping.newapi_token_key
+        return f'sk-{mapping.newapi_token_key}'
 
     @staticmethod
     def tier_to_quota(tier_name: str, features: dict | None = None) -> int:

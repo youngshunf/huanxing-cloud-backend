@@ -48,9 +48,17 @@ class CRUDNewApiDirect:
 
     @staticmethod
     def generate_token_key() -> str:
-        """生成 new-api 格式的 API Key: sk-hx-{42 random chars} = 48 chars"""
-        random_part = secrets.token_urlsafe(32)[:42]
-        return f'sk-hx-{random_part}'
+        """生成 new-api 格式的 API Key（数据库存储值，不含 sk- 前缀）
+
+        格式: hx{46 random chars} = 48 chars
+        用户使用时加 sk- 前缀: sk-hx{46 random chars}
+        new-api 中间件会去掉 sk- 后按 - split 取 parts[0]，
+        所以数据库里的 key 不能包含 -
+        """
+        random_part = secrets.token_urlsafe(48)
+        # 只保留字母数字，去掉 - 和 _
+        random_part = ''.join(c for c in random_part if c.isalnum())[:46]
+        return f'hx{random_part}'
 
     @staticmethod
     async def create_newapi_user(
@@ -88,16 +96,21 @@ class CRUDNewApiDirect:
         user_id: int,
         token_key: str,
         name: str = '默认 Key',
-        quota: int = 50000,
+        quota: int = 0,
+        unlimited_quota: bool = True,
     ) -> int:
-        """在 new-api tokens 表创建 token，返回 token_id"""
+        """在 new-api tokens 表创建 token，返回 token_id
+
+        唤星创建的 token 默认无限额度（unlimited_quota=true），
+        由 users.quota 统一控制用户可用额度。
+        """
         now = int(time.time())
         result = await db.execute(
             text("""
                 INSERT INTO tokens (user_id, "key", status, name, created_time, accessed_time,
                                     expired_time, remain_quota, used_quota, unlimited_quota,
                                     model_limits_enabled)
-                VALUES (:user_id, :key, 1, :name, :created_time, 0, -1, :quota, 0, false, false)
+                VALUES (:user_id, :key, 1, :name, :created_time, 0, -1, :quota, 0, :unlimited_quota, false)
                 RETURNING id
             """),
             {
@@ -106,6 +119,7 @@ class CRUDNewApiDirect:
                 'name': name,
                 'created_time': now,
                 'quota': quota,
+                'unlimited_quota': unlimited_quota,
             },
         )
         row = result.fetchone()
@@ -118,13 +132,9 @@ class CRUDNewApiDirect:
         newapi_user_id: int,
         new_quota: int,
     ) -> None:
-        """同步更新 new-api 的 users.quota 和 tokens.remain_quota"""
+        """更新 new-api 的 users.quota（token 为无限额度，无需同步）"""
         await db.execute(
             text('UPDATE users SET quota = :quota WHERE id = :user_id'),
-            {'quota': new_quota, 'user_id': newapi_user_id},
-        )
-        await db.execute(
-            text('UPDATE tokens SET remain_quota = :quota WHERE user_id = :user_id AND status = 1'),
             {'quota': new_quota, 'user_id': newapi_user_id},
         )
 
