@@ -50,14 +50,13 @@ class CRUDNewApiDirect:
     def generate_token_key() -> str:
         """生成 new-api 格式的 API Key（数据库存储值，不含 sk- 前缀）
 
-        格式: hx{46 random chars} = 48 chars
+        格式: hx{46 random chars} = 48 chars，恰好填满 CHAR(48) 列。
         用户使用时加 sk- 前缀: sk-hx{46 random chars}
         new-api 中间件会去掉 sk- 后按 - split 取 parts[0]，
         所以数据库里的 key 不能包含 -
         """
-        random_part = secrets.token_urlsafe(48)
-        # 只保留字母数字，去掉 - 和 _
-        random_part = ''.join(c for c in random_part if c.isalnum())[:46]
+        # token_urlsafe 约 2/3 是字母数字，生成 128 字节确保过滤后有足够字符
+        random_part = ''.join(c for c in secrets.token_urlsafe(128) if c.isalnum())[:46]
         return f'hx{random_part}'
 
     @staticmethod
