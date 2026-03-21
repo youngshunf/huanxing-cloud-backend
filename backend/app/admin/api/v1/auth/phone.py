@@ -36,6 +36,8 @@ router = APIRouter()
 # 验证码 Redis 前缀
 SMS_CODE_PREFIX = 'sms_code'
 SMS_CODE_EXPIRE = 1800  # 30 分钟
+SMS_RATE_PREFIX = 'sms_rate'
+SMS_RATE_EXPIRE = 60  # 每个手机号 60 秒限流
 
 
 def generate_code(length: int = 6) -> str:
@@ -47,16 +49,24 @@ def generate_code(length: int = 6) -> str:
     '/send-code',
     summary='发送验证码',
     description='发送手机验证码，用于登录或注册',
-    dependencies=[Depends(RateLimiter(Rate(1, Duration.MINUTE)))],
 )
 async def send_verification_code(obj: SendCodeParam) -> ResponseSchemaModel[SendCodeResponse]:
     """
     发送手机验证码
 
-    - 每分钟最多发送 1 次
-    - 验证码有效期 5 分钟
+    - 每个手机号每分钟最多发送 1 次
+    - 验证码有效期 30 分钟
     """
     phone = obj.phone
+
+    # 按手机号限流（60 秒内只能发一次）
+    rate_key = f'{SMS_RATE_PREFIX}:{phone}'
+    if await redis_client.exists(rate_key):
+        ttl = await redis_client.ttl(rate_key)
+        raise errors.HTTPError(
+            code=429,
+            msg=f'发送过于频繁，请 {ttl} 秒后重试',
+        )
 
     # 生成验证码
     code = generate_code()
@@ -74,6 +84,9 @@ async def send_verification_code(obj: SendCodeParam) -> ResponseSchemaModel[Send
     success = await sms_service.send_code(phone, code)
     if not success and settings.ENVIRONMENT != 'dev':
         raise errors.RequestError(msg='验证码发送失败，请稍后重试')
+
+    # 发送成功后设置限流 key（60 秒内同一手机号不可再次发送）
+    await redis_client.setex(rate_key, SMS_RATE_EXPIRE, '1')
 
     return response_base.success(data=SendCodeResponse(success=True, message='验证码已发送'))
 
