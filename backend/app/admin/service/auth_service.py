@@ -190,6 +190,7 @@ class AuthService:
                 refresh_token_expire_time=refresh_token_data.refresh_token_expire_time,
                 password_expire_days_remaining=days_remaining,
                 llm_token=llm_token,
+                llm_base_url=settings.LLM_API_BASE_URL,
                 user=user,  # type: ignore
             )
             return data

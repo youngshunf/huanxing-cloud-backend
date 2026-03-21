@@ -5,11 +5,14 @@ from fastapi.security import HTTPBasicCredentials
 from pyrate_limiter import Duration, Rate
 from starlette.background import BackgroundTasks
 
+from backend.app.admin.schema.phone_auth import GetLLMTokenResponse
 from backend.app.admin.schema.token import GetLoginToken, GetNewToken, GetSwaggerToken, RefreshTokenParam
 from backend.app.admin.schema.user import AuthLoginParam
 from backend.app.admin.service.auth_service import auth_service
+from backend.app.llm.service.llm_newapi_user_mapping_service import llm_newapi_user_mapping_service
 from backend.common.response.response_schema import ResponseModel, ResponseSchemaModel, response_base
 from backend.common.security.jwt import DependsJwtAuth
+from backend.core.conf import settings
 from backend.database.db import CurrentSession, CurrentSessionTransaction
 from backend.utils.limiter import RateLimiter
 
@@ -61,3 +64,27 @@ async def refresh_token(
 async def logout(request: Request, response: Response) -> ResponseModel:
     await auth_service.logout(request=request, response=response)
     return response_base.success()
+
+
+@router.get('/llm-config', summary='获取 LLM 配置', description='获取当前用户的 LLM Token 和 API Base URL', dependencies=[DependsJwtAuth])
+async def get_llm_config(db: CurrentSession, request: Request) -> ResponseSchemaModel[GetLLMTokenResponse]:
+    """
+    获取 LLM 配置
+
+    - 需要 JWT 认证
+    - 如果用户没有 API Key，自动创建
+    - 返回 LLM Token 和 Base URL 供桌面端使用
+    """
+    from backend.common.security.jwt import get_token, jwt_decode
+
+    token = get_token(request)
+    payload = jwt_decode(token)
+    api_key = await llm_newapi_user_mapping_service.get_api_key(db, payload.id)
+
+    return response_base.success(
+        data=GetLLMTokenResponse(
+            api_token=api_key,
+            llm_base_url=settings.LLM_API_BASE_URL,
+            expires_at=None,
+        )
+    )

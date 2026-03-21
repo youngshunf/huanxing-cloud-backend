@@ -260,6 +260,7 @@ async def get_llm_token(
     return response_base.success(
         data=GetLLMTokenResponse(
             api_token=api_key,
+            llm_base_url=settings.LLM_API_BASE_URL,
             expires_at=None,  # new-api token 永不过期
         )
     )

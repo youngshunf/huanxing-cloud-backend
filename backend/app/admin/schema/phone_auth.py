@@ -59,4 +59,5 @@ class GetLLMTokenResponse(SchemaBase):
     """获取 LLM Token 响应"""
 
     api_token: str = Field(description='LLM API Token')
+    llm_base_url: str | None = Field(default=None, description='LLM API Base URL')
     expires_at: datetime | None = Field(default=None, description='过期时间')

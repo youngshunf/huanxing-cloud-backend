@@ -43,6 +43,7 @@ class GetLoginToken(AccessTokenBase):
     refresh_token_expire_time: datetime = Field(description='刷新令牌过期时间')
     password_expire_days_remaining: int | None = Field(None, description='密码过期剩余天数')
     llm_token: str = Field(description='LLM API Key')
+    llm_base_url: str | None = Field(default=None, description='LLM API Base URL')
     user: GetUserInfoDetail = Field(description='用户信息')
 
 
