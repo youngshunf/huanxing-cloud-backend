@@ -177,7 +177,7 @@ class AuthService:
                     username=newapi_username,
                     nickname=user.nickname or '',
                 )
-                llm_token = mapping.newapi_token_key
+                llm_token = f'sk-{mapping.newapi_token_key}'
             except Exception as e:
                 log.error(f'new-api 用户创建失败: {e}')
                 raise errors.ServerError(msg='LLM 服务初始化失败，请稍后重试')
