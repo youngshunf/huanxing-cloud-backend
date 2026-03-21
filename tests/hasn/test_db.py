@@ -14,7 +14,6 @@ import pytest
 from sqlalchemy import text
 
 
-@pytest.mark.skip(reason='表尚未创建')
 def test_hasn_clients_table_exists(db_conn):
     """DB-01: hasn_clients 表存在"""
     result = db_conn.execute(text(
@@ -23,7 +22,6 @@ def test_hasn_clients_table_exists(db_conn):
     assert result.scalar() is True
 
 
-@pytest.mark.skip(reason='表尚未创建')
 def test_hasn_clients_columns(db_conn):
     """DB-01: hasn_clients 表包含所有必要字段"""
     result = db_conn.execute(text(
@@ -34,7 +32,6 @@ def test_hasn_clients_columns(db_conn):
         assert col in columns, f'缺少字段: {col}'
 
 
-@pytest.mark.skip(reason='表尚未创建')
 def test_hasn_clients_unique_constraint(db_conn):
     """DB-01: client_id 有唯一约束"""
     result = db_conn.execute(text(
@@ -43,7 +40,6 @@ def test_hasn_clients_unique_constraint(db_conn):
     assert result.scalar() >= 1
 
 
-@pytest.mark.skip(reason='表尚未创建')
 def test_hasn_clients_indexes(db_conn):
     """DB-01: hasn_clients 有 user_hasn_id 和 status 索引"""
     result = db_conn.execute(text(
@@ -54,7 +50,6 @@ def test_hasn_clients_indexes(db_conn):
     assert 'idx_hasn_clients_status' in index_names
 
 
-@pytest.mark.skip(reason='表尚未创建')
 def test_hasn_clients_insert(db_conn):
     """DB-01: 可以插入测试行"""
     db_conn.execute(text(
@@ -65,7 +60,6 @@ def test_hasn_clients_insert(db_conn):
     db_conn.execute(text("DELETE FROM hasn_clients WHERE client_id = 'c_test_001'"))
 
 
-@pytest.mark.skip(reason='表尚未创建')
 def test_hasn_agents_table_exists(db_conn):
     """DB-02: hasn_agents 表存在"""
     result = db_conn.execute(text(
@@ -74,7 +68,6 @@ def test_hasn_agents_table_exists(db_conn):
     assert result.scalar() is True
 
 
-@pytest.mark.skip(reason='表尚未创建')
 def test_hasn_agents_new_fields(db_conn):
     """DB-02: hasn_agents 包含 type/server_id/home_client_id/created_via 字段"""
     result = db_conn.execute(text(
@@ -85,7 +78,6 @@ def test_hasn_agents_new_fields(db_conn):
         assert col in columns, f'缺少新增字段: {col}'
 
 
-@pytest.mark.skip(reason='表尚未创建')
 def test_hasn_agents_all_columns(db_conn):
     """DB-02: hasn_agents 包含全部字段"""
     result = db_conn.execute(text(
@@ -96,7 +88,6 @@ def test_hasn_agents_all_columns(db_conn):
         assert col in columns, f'缺少字段: {col}'
 
 
-@pytest.mark.skip(reason='表尚未创建')
 def test_hasn_agents_foreign_key(db_conn):
     """DB-02: home_client_id 外键引用 hasn_clients(id)"""
     result = db_conn.execute(text("""
@@ -110,7 +101,6 @@ def test_hasn_agents_foreign_key(db_conn):
     assert result.scalar() is not None, '缺少 home_client_id 外键'
 
 
-@pytest.mark.skip(reason='表尚未创建')
 def test_hasn_agents_unique_constraints(db_conn):
     """DB-02: hasn_id 和 star_id 有唯一约束"""
     result = db_conn.execute(text("""
@@ -124,7 +114,6 @@ def test_hasn_agents_unique_constraints(db_conn):
     assert 'star_id' in unique_columns, '缺少 star_id 唯一约束'
 
 
-@pytest.mark.skip(reason='旧表不存在或已 DROP')
 def test_hasn_agents_old_table_dropped(db_conn):
     """DB-03: 旧 hasn_agents 表已清除（VARCHAR 主键版本不存在）"""
     # 验证 hasn_agents 的 id 列类型是 bigint 而不是 varchar
