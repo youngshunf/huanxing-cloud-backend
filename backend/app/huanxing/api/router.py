@@ -25,6 +25,8 @@ from backend.app.huanxing.api.v1.agent.user_sync import router as agent_user_syn
 from backend.app.huanxing.api.v1.agent.user_check import router as agent_user_check_router
 from backend.app.huanxing.api.v1.agent.server import router as agent_server_router
 from backend.app.huanxing.api.v1.agent.dashboard import router as agent_dashboard_router
+from backend.app.huanxing.api.v1.agent.file import router as agent_file_router
+from backend.app.huanxing.api.v1.agent.website import router as agent_website_router
 
 
 # ========================================
@@ -70,3 +72,5 @@ agent.include_router(agent_user_sync_router, prefix='/users', tags=['唤星Agent
 agent.include_router(agent_user_check_router, prefix='/users', tags=['唤星Agent-用户预检'])
 agent.include_router(agent_server_router, prefix='/servers', tags=['唤星Agent-服务器上报'])
 agent.include_router(agent_dashboard_router, prefix='/dashboard', tags=['唤星Agent-数据看板'])
+agent.include_router(agent_file_router, prefix='/files', tags=['唤星Agent-文件'])
+agent.include_router(agent_website_router, prefix='/website', tags=['唤星Agent-网站部署'])
