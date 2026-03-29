@@ -1,0 +1,54 @@
+-- =====================================================
+-- HASN 联系人关系表 (三维权限矩阵: relation_type × trust_level × scope)
+-- =====================================================
+CREATE TABLE "public"."hasn_contacts" (
+  "id"                  bigserial PRIMARY KEY,
+  "owner_id"            varchar(36) NOT NULL,
+  "peer_id"             varchar(36) NOT NULL,
+  "peer_type"           varchar(10) NOT NULL,
+  "relation_type"       varchar(20) NOT NULL DEFAULT 'social',
+  "trust_level"         smallint NOT NULL DEFAULT 1,
+  "scope"               jsonb,
+  "custom_permissions"  jsonb NOT NULL DEFAULT '{}',
+  "nickname"            varchar(100),
+  "tags"                text[],
+  "subscription"        boolean NOT NULL DEFAULT false,
+  "status"              varchar(20) NOT NULL DEFAULT 'pending',
+  "request_message"     text,
+  "auto_expire"         timestamptz(6),
+  "connected_at"        timestamptz(6),
+  "last_interaction_at" timestamptz(6),
+  "interaction_count"   int4 NOT NULL DEFAULT 0,
+  "created_time"        timestamptz(6) NOT NULL DEFAULT now(),
+  "updated_time"        timestamptz(6),
+  CONSTRAINT "uq_hasn_contact_relation" UNIQUE ("owner_id", "peer_id", "relation_type")
+);
+
+CREATE INDEX "idx_contact_owner" ON "public"."hasn_contacts" ("owner_id");
+CREATE INDEX "idx_contact_peer" ON "public"."hasn_contacts" ("peer_id");
+CREATE INDEX "idx_contact_type" ON "public"."hasn_contacts" ("owner_id", "relation_type");
+CREATE INDEX "idx_contact_level" ON "public"."hasn_contacts" ("owner_id", "relation_type", "trust_level");
+CREATE INDEX "idx_contact_status" ON "public"."hasn_contacts" ("status");
+CREATE INDEX "idx_contact_expire" ON "public"."hasn_contacts" ("auto_expire") WHERE auto_expire IS NOT NULL;
+CREATE INDEX "idx_contact_subscription" ON "public"."hasn_contacts" ("owner_id") WHERE subscription = true;
+
+COMMENT ON TABLE "public"."hasn_contacts" IS 'HASN 联系人关系表';
+COMMENT ON COLUMN "public"."hasn_contacts"."id" IS '主键 ID';
+COMMENT ON COLUMN "public"."hasn_contacts"."owner_id" IS '关系拥有者 hasn_id';
+COMMENT ON COLUMN "public"."hasn_contacts"."peer_id" IS '对方 hasn_id';
+COMMENT ON COLUMN "public"."hasn_contacts"."peer_type" IS '对方类型 (human:人类:blue/agent:代理:green)';
+COMMENT ON COLUMN "public"."hasn_contacts"."relation_type" IS '关系类型 (social:社交:blue/commerce:商业:orange/service:履约:green/professional:专业:purple/platform:平台:cyan)';
+COMMENT ON COLUMN "public"."hasn_contacts"."trust_level" IS '信任等级 (0:已拉黑:red/1:陌生人:gray/2:普通好友:blue/3:信任好友:green/4:所有者:purple)';
+COMMENT ON COLUMN "public"."hasn_contacts"."scope" IS '关系作用域 (JSONB)';
+COMMENT ON COLUMN "public"."hasn_contacts"."custom_permissions" IS '自定义权限覆盖 (JSONB)';
+COMMENT ON COLUMN "public"."hasn_contacts"."nickname" IS '备注名';
+COMMENT ON COLUMN "public"."hasn_contacts"."tags" IS '分组标签';
+COMMENT ON COLUMN "public"."hasn_contacts"."subscription" IS '是否订阅推送';
+COMMENT ON COLUMN "public"."hasn_contacts"."status" IS '状态 (pending:待处理:blue/connected:已连接:green/blocked:已拉黑:red/archived:已归档:gray)';
+COMMENT ON COLUMN "public"."hasn_contacts"."request_message" IS '好友请求附言';
+COMMENT ON COLUMN "public"."hasn_contacts"."auto_expire" IS '自动过期时间';
+COMMENT ON COLUMN "public"."hasn_contacts"."connected_at" IS '建立连接时间';
+COMMENT ON COLUMN "public"."hasn_contacts"."last_interaction_at" IS '最后互动时间';
+COMMENT ON COLUMN "public"."hasn_contacts"."interaction_count" IS '互动次数';
+COMMENT ON COLUMN "public"."hasn_contacts"."created_time" IS '创建时间';
+COMMENT ON COLUMN "public"."hasn_contacts"."updated_time" IS '更新时间';

@@ -115,18 +115,23 @@ async def publish_skill(
     # 解析技能包
     try:
         with zipfile.ZipFile(BytesIO(content), 'r') as zf:
-            # 读取 config.yaml
-            if 'config.yaml' not in zf.namelist():
-                raise errors.RequestError(msg='技能包缺少 config.yaml')
-            
-            config_content = zf.read('config.yaml').decode('utf-8')
-            config = yaml.safe_load(config_content)
+            config = None
+            if 'config.toml' in zf.namelist():
+                config_content = zf.read('config.toml').decode('utf-8')
+                import rtoml
+                parsed = rtoml.loads(config_content)
+                config = parsed.get('skill', parsed)
+            elif 'config.yaml' in zf.namelist():
+                config_content = zf.read('config.yaml').decode('utf-8')
+                config = yaml.safe_load(config_content)
+            else:
+                raise errors.RequestError(msg='技能包缺少 config.toml 或 config.yaml')
             
             # 验证必需字段
             required_fields = ['id', 'name', 'version', 'description']
             for field in required_fields:
-                if field not in config:
-                    raise errors.RequestError(msg=f'config.yaml 缺少必需字段: {field}')
+                if not config.get(field):
+                    raise errors.RequestError(msg=f'配置缺少必需字段: {field}')
             
             # 读取图标（可选）
             icon_content = None
@@ -312,18 +317,33 @@ async def publish_app(
     # 解析应用包
     try:
         with zipfile.ZipFile(BytesIO(content), 'r') as zf:
-            # 读取 manifest.json
-            if 'manifest.json' not in zf.namelist():
-                raise errors.RequestError(msg='应用包缺少 manifest.json')
-            
-            manifest_content = zf.read('manifest.json').decode('utf-8')
-            manifest = json.loads(manifest_content)
+            manifest = None
+            if 'config.toml' in zf.namelist():
+                manifest_content = zf.read('config.toml').decode('utf-8')
+                import rtoml
+                parsed = rtoml.loads(manifest_content)
+                agent_info = parsed.get('agent', {})
+                manifest = {
+                    'id': agent_info.get('name') or parsed.get('id'),
+                    'name': agent_info.get('display_name') or agent_info.get('name') or parsed.get('name'),
+                    'version': agent_info.get('version') or parsed.get('version', '1.0.0'),
+                    'description': agent_info.get('description') or parsed.get('description', 'Agent App'),
+                    'skill_dependencies': parsed.get('plugins', {}).get('skills', []) if isinstance(parsed.get('plugins'), dict) else [],
+                    'pricing_type': parsed.get('marketplace', {}).get('pricing_type', 'free'),
+                    'category': parsed.get('marketplace', {}).get('category'),
+                    'tags': parsed.get('marketplace', {}).get('tags', []),
+                }
+            elif 'manifest.json' in zf.namelist():
+                manifest_content = zf.read('manifest.json').decode('utf-8')
+                manifest = json.loads(manifest_content)
+            else:
+                raise errors.RequestError(msg='应用包缺少 config.toml 或 manifest.json')
             
             # 验证必需字段
             required_fields = ['id', 'name', 'version', 'description']
             for field in required_fields:
-                if field not in manifest:
-                    raise errors.RequestError(msg=f'manifest.json 缺少必需字段: {field}')
+                if not manifest.get(field):
+                    raise errors.RequestError(msg=f'配置缺少必需字段: {field}')
             
             # 读取图标（可选，支持多种路径）
             icon_content = None

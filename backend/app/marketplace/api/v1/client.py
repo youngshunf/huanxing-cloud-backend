@@ -7,6 +7,8 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Path, Query
 from pydantic import BaseModel
+import os
+import yaml
 
 from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skill_dao
 from backend.app.marketplace.crud.crud_marketplace_skill_version import marketplace_skill_version_dao
@@ -24,6 +26,29 @@ from backend.common.response.response_schema import ResponseModel, ResponseSchem
 from backend.database.db import CurrentSession
 
 router = APIRouter()
+
+
+# ============================================================
+# 公开的配置 API
+# ============================================================
+
+@router.get('/common-skills', summary='公开接口：获取全局公共技能配置')
+async def get_common_skills() -> ResponseSchemaModel[dict]:
+    """获取云端的 common-skills 配置，用于向桌面端下发内置技能更新列表"""
+    # 临时从本地 huanxing-hub 中读取，未来可改为从数据库或配置中心获取
+    # 这里使用环境变量或默认路径作为过渡
+    hub_path = os.environ.get('HUANXING_HUB_DIR', '../huanxing-hub')
+    
+    # 尝试多种可能的路径
+    for path_candidate in [hub_path, '/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-hub']:
+        yaml_file = os.path.join(path_candidate, 'common-skills.yaml')
+        if os.path.exists(yaml_file):
+            with open(yaml_file, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+                return response_base.success(data=data)
+    
+    # 缺省空结构
+    return response_base.success(data={"version": "1.0", "skills": []})
 
 
 # ============================================================

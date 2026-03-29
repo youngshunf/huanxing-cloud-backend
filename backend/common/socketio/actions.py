@@ -21,7 +21,7 @@ async def handle_hasn_message(sid, data: dict):
     对应设计文档 cmd=SEND: {to, content, metadata}
     """
     from backend.database.db import async_db_session
-    from backend.app.hasn_social.service.route_guard import route_guard
+    from backend.app.hasn_core.service.route_guard import route_guard
     from backend.app.hasn_core.crud.crud_message import crud_hasn_message
     from backend.app.hasn_core.crud.crud_conversation import crud_hasn_conversation
     from backend.app.hasn_core.service.ws_router import ws_router

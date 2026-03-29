@@ -236,6 +236,7 @@ async def phone_login(
             refresh_token_expire_time=refresh_token_data.refresh_token_expire_time,
             llm_token=llm_token,
             llm_base_url=settings.LLM_API_BASE_URL,
+            agent_key=settings.AGENT_SECRET_KEY.split(',')[0].strip(),
             gateway_token=gateway_token,
             is_new_user=is_new_user,
             user=user_info,

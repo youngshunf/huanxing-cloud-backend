@@ -250,12 +250,11 @@ class HuanxingDocumentService:
             WHERE id = :doc_id AND user_id = :user_id
         """)
         await db.execute(stmt2, {
-            "doc_id": document_id, 
-            "user_id": user_id, 
+            "doc_id": document_id,
+            "user_id": user_id,
             "content": content,
             "word_count": len(content),
         })
-        await db.commit()
     
     @staticmethod
     async def get_autosave(*, db: AsyncSession, document_id: int, user_id: int) -> dict | None:

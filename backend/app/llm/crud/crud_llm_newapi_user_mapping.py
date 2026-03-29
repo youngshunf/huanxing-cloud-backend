@@ -238,5 +238,20 @@ class CRUDNewApiDirect:
         return records, total
 
 
+    @staticmethod
+    async def get_batch_users_quota(db: AsyncSession, newapi_user_ids: list[int]) -> dict[int, dict]:
+        """批量查询多个 new-api 用户的 quota 信息，返回 {newapi_user_id: {...}}"""
+        if not newapi_user_ids:
+            return {}
+        result = await db.execute(
+            text('SELECT id, quota, used_quota, request_count FROM users WHERE id = ANY(:ids)'),
+            {'ids': newapi_user_ids},
+        )
+        return {
+            row[0]: {'quota': row[1], 'used_quota': row[2], 'request_count': row[3]}
+            for row in result.fetchall()
+        }
+
+
 llm_newapi_user_mapping_dao: CRUDLlmNewapiUserMapping = CRUDLlmNewapiUserMapping(LlmNewapiUserMapping)
 newapi_direct_dao: CRUDNewApiDirect = CRUDNewApiDirect()

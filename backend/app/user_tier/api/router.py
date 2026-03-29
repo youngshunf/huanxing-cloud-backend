@@ -18,6 +18,7 @@ from backend.app.user_tier.api.v1.admin.transaction import router as admin_trans
 from backend.app.user_tier.api.v1.admin.package import router as admin_package_router
 from backend.app.user_tier.api.v1.admin.tier import router as admin_tier_router
 from backend.app.user_tier.api.v1.admin.rate import router as admin_rate_router
+from backend.app.user_tier.api.v1.admin.newapi_quota import router as admin_newapi_quota_router
 
 # --- app/ 用户端（JWT）---
 from backend.app.user_tier.api.v1.app.subscription import router as app_subscription_router
@@ -43,6 +44,7 @@ v1.include_router(admin_transaction_router, prefix='/transactions', tags=['管�
 v1.include_router(admin_package_router, prefix='/packages', tags=['管理-积分包'])
 v1.include_router(admin_tier_router, prefix='/tiers', tags=['管理-订阅等级'])
 v1.include_router(admin_rate_router, prefix='/rates', tags=['管理-模型费率'])
+v1.include_router(admin_newapi_quota_router, prefix='/newapi-quota', tags=['管理-Token额度用量'])
 
 
 # ========================================

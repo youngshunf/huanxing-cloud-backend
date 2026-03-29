@@ -117,6 +117,7 @@ class HuanxingServerService:
             create_param = CreateHuanxingServerParam(
                 server_id=obj.server_id,
                 server_name=obj.server_name or obj.server_id,
+                instance_type=obj.instance_type,
                 ip_address=ip_address,
                 port=obj.port,
                 region=obj.region,
@@ -128,9 +129,18 @@ class HuanxingServerService:
                 config={
                     'user_count': obj.user_count,
                     'active_user_count': obj.active_user_count,
-                    'openclaw_version': obj.openclaw_version,
-                    'plugin_version': obj.plugin_version,
+                    'cpu_usage': obj.cpu_usage,
+                    'memory_usage': obj.memory_usage,
+                    'total_memory_gb': obj.total_memory_gb,
+                    'disk_usage': obj.disk_usage,
+                    'total_disk_gb': obj.total_disk_gb,
+                    'zeroclaw_version': obj.zeroclaw_version,
                     'channels': [ch.model_dump() for ch in obj.channels] if obj.channels else [],
+                    'device_fingerprint': obj.device_fingerprint,
+                    'os_name': obj.os_name,
+                    'os_version': obj.os_version,
+                    'app_version': obj.app_version,
+                    'device_model': obj.device_model,
                 },
             )
             await huanxing_server_dao.create(db, create_param)
@@ -139,6 +149,8 @@ class HuanxingServerService:
             server.ip_address = ip_address
             if obj.server_name:
                 server.server_name = obj.server_name
+            if obj.instance_type:
+                server.instance_type = obj.instance_type
             if obj.port is not None:
                 server.port = obj.port
             if obj.region:
@@ -154,9 +166,18 @@ class HuanxingServerService:
                 **(server.config or {}),
                 'user_count': obj.user_count,
                 'active_user_count': obj.active_user_count,
-                'openclaw_version': obj.openclaw_version,
-                'plugin_version': obj.plugin_version,
+                'cpu_usage': obj.cpu_usage,
+                'memory_usage': obj.memory_usage,
+                'total_memory_gb': obj.total_memory_gb,
+                'disk_usage': obj.disk_usage,
+                'total_disk_gb': obj.total_disk_gb,
+                'zeroclaw_version': obj.zeroclaw_version,
                 'channels': [ch.model_dump() for ch in obj.channels] if obj.channels else (server.config or {}).get('channels', []),
+                'device_fingerprint': obj.device_fingerprint,
+                'os_name': obj.os_name,
+                'os_version': obj.os_version,
+                'app_version': obj.app_version,
+                'device_model': obj.device_model,
             }
 
         return AgentRegisterServerResponse(
@@ -189,9 +210,15 @@ class HuanxingServerService:
             'active_user_count': obj.active_user_count,
             'cpu_usage': obj.cpu_usage,
             'memory_usage': obj.memory_usage,
+            'total_memory_gb': obj.total_memory_gb,
             'disk_usage': obj.disk_usage,
-            'openclaw_version': obj.openclaw_version,
-            'plugin_version': obj.plugin_version,
+            'total_disk_gb': obj.total_disk_gb,
+            'zeroclaw_version': obj.zeroclaw_version,
+            'device_fingerprint': obj.device_fingerprint,
+            'os_name': obj.os_name,
+            'os_version': obj.os_version,
+            'app_version': obj.app_version,
+            'device_model': obj.device_model,
         }
 
         return HeartbeatResponse(

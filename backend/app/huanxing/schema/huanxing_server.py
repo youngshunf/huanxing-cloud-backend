@@ -8,6 +8,7 @@ class HuanxingServerSchemaBase(SchemaBase):
     """唤星服务器基础模型"""
     server_id: str = Field(description='服务器唯一标识（如 server-001）')
     server_name: str | None = Field(None, description='服务器名称（如 京东云-华北1）')
+    instance_type: str | None = Field('server', description='实例类型: server/desktop/mobile')
     ip_address: str = Field(description='服务器IP地址')
     port: int | None = Field(None, description='SSH端口')
     region: str | None = Field(None, description='地域（如 cn-north-1）')
@@ -54,9 +55,10 @@ class HeartbeatParam(SchemaBase):
     active_user_count: int = Field(0, description='本机活跃用户数')
     cpu_usage: float | None = Field(None, description='CPU使用率（百分比）')
     memory_usage: float | None = Field(None, description='内存使用率（百分比）')
+    total_memory_gb: float | None = Field(None, description='总内存容量(GB)')
     disk_usage: float | None = Field(None, description='磁盘使用率（百分比）')
-    openclaw_version: str | None = Field(None, description='OpenClaw 版本')
-    plugin_version: str | None = Field(None, description='huanxing-cloud 插件版本')
+    total_disk_gb: float | None = Field(None, description='总磁盘容量(GB)')
+    zeroclaw_version: str | None = Field(None, description='ZeroClaw 版本')
 
 
 class HeartbeatResponse(SchemaBase):
@@ -102,17 +104,28 @@ class AgentRegisterServerParam(SchemaBase):
     """Agent 注册/更新服务器参数"""
     server_id: str = Field(description='服务器唯一标识（如 huanxing-prod-01）')
     server_name: str | None = Field(None, description='服务器名称')
+    instance_type: str = Field('server', description='实例类型: server/desktop/mobile')
     ip_address: str | None = Field(None, description='服务器IP（不传则自动获取）')
     port: int | None = Field(None, description='SSH端口')
     region: str | None = Field(None, description='地域')
     provider: str | None = Field(None, description='云服务商')
     max_users: int | None = Field(None, description='最大用户容量')
     gateway_status: str | None = Field(None, description='Gateway状态')
-    openclaw_version: str | None = Field(None, description='OpenClaw 版本')
-    plugin_version: str | None = Field(None, description='插件版本')
+    zeroclaw_version: str | None = Field(None, description='ZeroClaw 版本')
     user_count: int = Field(0, description='当前用户总数')
     active_user_count: int = Field(0, description='活跃用户数')
+    cpu_usage: float | None = Field(None, description='CPU使用率（百分比）')
+    memory_usage: float | None = Field(None, description='内存使用率（百分比）')
+    total_memory_gb: float | None = Field(None, description='总内存容量(GB)')
+    disk_usage: float | None = Field(None, description='磁盘使用率（百分比）')
+    total_disk_gb: float | None = Field(None, description='总磁盘容量(GB)')
     channels: list[ServerChannelInfo] | None = Field(None, description='服务器渠道配置列表')
+    # ── 设备信息（桌面端/移动端上报）──
+    device_fingerprint: str | None = Field(None, description='设备指纹（唯一标识设备）')
+    os_name: str | None = Field(None, description='操作系统名称（如 macOS/Windows/Linux/iOS/Android）')
+    os_version: str | None = Field(None, description='系统版本（如 15.2/11/24H2）')
+    app_version: str | None = Field(None, description='唤星客户端版本')
+    device_model: str | None = Field(None, description='设备型号（如 MacBook Pro M3）')
 
 
 class AgentRegisterServerResponse(SchemaBase):
@@ -129,6 +142,13 @@ class AgentHeartbeatParam(SchemaBase):
     active_user_count: int = Field(0, description='本机活跃用户数')
     cpu_usage: float | None = Field(None, description='CPU使用率（百分比）')
     memory_usage: float | None = Field(None, description='内存使用率（百分比）')
+    total_memory_gb: float | None = Field(None, description='总内存容量(GB)')
     disk_usage: float | None = Field(None, description='磁盘使用率（百分比）')
-    openclaw_version: str | None = Field(None, description='OpenClaw 版本')
-    plugin_version: str | None = Field(None, description='插件版本')
+    total_disk_gb: float | None = Field(None, description='总磁盘容量(GB)')
+    zeroclaw_version: str | None = Field(None, description='ZeroClaw 版本')
+    # ── 设备信息（桌面端/移动端上报）──
+    device_fingerprint: str | None = Field(None, description='设备指纹')
+    os_name: str | None = Field(None, description='操作系统名称')
+    os_version: str | None = Field(None, description='系统版本')
+    app_version: str | None = Field(None, description='客户端版本')
+    device_model: str | None = Field(None, description='设备型号')

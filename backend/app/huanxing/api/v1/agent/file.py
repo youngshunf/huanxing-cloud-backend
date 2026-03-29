@@ -1,3 +1,4 @@
+import urllib.parse
 from datetime import datetime
 from typing import Annotated
 
@@ -32,7 +33,8 @@ async def agent_upload_s3_files(
     # 取第一个 S3 配置作为 Agent 使用的配置
     s3_storage = s3_storages[0]
 
-    upload_file_verify(file)
+    if not file or not file.filename:
+        raise errors.RequestError(msg='上传文件不能为空')
 
     date_str = datetime.now().strftime('%Y-%m-%d')
     original_filename = file.filename
@@ -41,16 +43,18 @@ async def agent_upload_s3_files(
 
     await write_file(s3_storage, file)
 
+    encoded_filename = urllib.parse.quote(file.filename)
+
     # 构建完整 URL，参考 plugin/s3/api/v1/file.py
     if s3_storage.cdn_domain:
         base_url = s3_storage.cdn_domain.rstrip('/')
-        url = f'{base_url}/{file.filename}'
+        url = f'{base_url}/{encoded_filename}'
     else:
         bucket_path = f'/{s3_storage.bucket}'
         if s3_storage.prefix:
             prefix = s3_storage.prefix if s3_storage.prefix.startswith('/') else f'/{s3_storage.prefix}'
-            url = f'{s3_storage.endpoint}{bucket_path}{prefix}/{file.filename}'
+            url = f'{s3_storage.endpoint}{bucket_path}{prefix}/{encoded_filename}'
         else:
-            url = f'{s3_storage.endpoint}{bucket_path}/{file.filename}'
+            url = f'{s3_storage.endpoint}{bucket_path}/{encoded_filename}'
 
     return response_base.success(data={'url': url})

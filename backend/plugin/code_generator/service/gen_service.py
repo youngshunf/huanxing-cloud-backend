@@ -199,7 +199,7 @@ class GenService:
                     lines.insert(import_insert_idx, import_line)
 
                     # 追加 include_router（位置要在 section_end_idx 之后，因为插入了一行 import）
-                    prefix = f"/{business.table_name.replace('_', '-')}s"
+                    prefix = f"/{business.table_name.replace('_', '/')}s"
                     include_line_str = f"{scope_router_var}.include_router({scope}_{business.table_name}_router, prefix='{prefix}')"
                     if business.tag:
                         include_line_str = f"{scope_router_var}.include_router({scope}_{business.table_name}_router, prefix='{prefix}', tags=['{business.tag}-{business.doc_comment}'])"
@@ -228,7 +228,7 @@ class GenService:
                     lines.append(var_def)
                     lines.append('')
 
-                    prefix = f"/{business.table_name.replace('_', '-')}s"
+                    prefix = f"/{business.table_name.replace('_', '/')}s"
                     include_line_str = f"{scope_router_var}.include_router({scope}_{business.table_name}_router, prefix='{prefix}')"
                     if business.tag:
                         include_line_str = f"{scope_router_var}.include_router({scope}_{business.table_name}_router, prefix='{prefix}', tags=['{business.tag}-{business.doc_comment}'])"

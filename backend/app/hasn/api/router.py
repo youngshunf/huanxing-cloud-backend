@@ -3,27 +3,110 @@ from fastapi import APIRouter
 from backend.core.conf import settings
 
 # --- 管理端（JWT + RBAC） ---
+from backend.app.hasn.api.v1.admin.hasn_humans import router as admin_hasn_humans_router
 from backend.app.hasn.api.v1.admin.hasn_clients import router as admin_hasn_clients_router
 from backend.app.hasn.api.v1.admin.hasn_agents import router as admin_hasn_agents_router
+from backend.app.hasn.api.v1.admin.hasn_contacts import router as admin_hasn_contacts_router
+from backend.app.hasn.api.v1.admin.hasn_conversations import router as admin_hasn_conversations_router
+from backend.app.hasn.api.v1.admin.hasn_messages import router as admin_hasn_messages_router
+from backend.app.hasn.api.v1.admin.hasn_unread_counts import router as admin_hasn_unread_counts_router
+from backend.app.hasn.api.v1.admin.hasn_group_members import router as admin_hasn_group_members_router
+from backend.app.hasn.api.v1.admin.hasn_agent_capabilities import router as admin_hasn_agent_capabilities_router
+from backend.app.hasn.api.v1.admin.hasn_trade_sessions import router as admin_hasn_trade_sessions_router
+from backend.app.hasn.api.v1.admin.hasn_notifications import router as admin_hasn_notifications_router
+from backend.app.hasn.api.v1.admin.hasn_audit_log import router as admin_hasn_audit_log_router
+
+v1 = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn', tags=['HASN 管理端'])
+
+v1.include_router(admin_hasn_humans_router, prefix='/hasn/humanss', tags=['用户管理'])
+v1.include_router(admin_hasn_clients_router, prefix='/hasn/clientss', tags=['客户端设备'])
+v1.include_router(admin_hasn_agents_router, prefix='/hasn/agentss', tags=['Agent管理'])
+v1.include_router(admin_hasn_contacts_router, prefix='/hasn/contactss', tags=['联系人管理'])
+v1.include_router(admin_hasn_conversations_router, prefix='/hasn/conversationss', tags=['会话管理'])
+v1.include_router(admin_hasn_messages_router, prefix='/hasn/messagess', tags=['消息管理'])
+v1.include_router(admin_hasn_unread_counts_router, prefix='/hasn/unread/countss', tags=['未读计数'])
+v1.include_router(admin_hasn_group_members_router, prefix='/hasn/group/memberss', tags=['群成员管理'])
+v1.include_router(admin_hasn_agent_capabilities_router, prefix='/hasn/agent/capabilitiess', tags=['Agent能力'])
+v1.include_router(admin_hasn_trade_sessions_router, prefix='/hasn/trade/sessionss', tags=['交易会话'])
+v1.include_router(admin_hasn_notifications_router, prefix='/hasn/notificationss', tags=['通知管理'])
+v1.include_router(admin_hasn_audit_log_router, prefix='/hasn/audit/logs', tags=['审计日志'])
+
 # --- 用户端（仅 JWT） ---
+from backend.app.hasn.api.v1.app.hasn_humans import router as app_hasn_humans_router
 from backend.app.hasn.api.v1.app.hasn_clients import router as app_hasn_clients_router
 from backend.app.hasn.api.v1.app.hasn_agents import router as app_hasn_agents_router
+from backend.app.hasn.api.v1.app.hasn_contacts import router as app_hasn_contacts_router
+from backend.app.hasn.api.v1.app.hasn_conversations import router as app_hasn_conversations_router
+from backend.app.hasn.api.v1.app.hasn_messages import router as app_hasn_messages_router
+from backend.app.hasn.api.v1.app.hasn_unread_counts import router as app_hasn_unread_counts_router
+from backend.app.hasn.api.v1.app.hasn_group_members import router as app_hasn_group_members_router
+from backend.app.hasn.api.v1.app.hasn_agent_capabilities import router as app_hasn_agent_capabilities_router
+from backend.app.hasn.api.v1.app.hasn_trade_sessions import router as app_hasn_trade_sessions_router
+from backend.app.hasn.api.v1.app.hasn_notifications import router as app_hasn_notifications_router
+from backend.app.hasn.api.v1.app.hasn_audit_log import router as app_hasn_audit_log_router
 
-# ========================================
-# 管理端 API（JWT + RBAC）
-# 路径前缀: /api/v1/hasn/
-# ========================================
-v1 = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn', tags=['HASN 客户端设备管理'])
+app = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn/app', tags=['HASN 用户端'])
 
-v1.include_router(admin_hasn_clients_router, prefix='/hasn-clientss', tags=['HASN 客户端设备管理-HASN 客户端设备'])
-v1.include_router(admin_hasn_agents_router, prefix='/hasn-agentss', tags=['HASN Agent -HASN Agent '])
+app.include_router(app_hasn_humans_router, prefix='/hasn/humanss', tags=['用户管理'])
+app.include_router(app_hasn_clients_router, prefix='/hasn/clientss', tags=['客户端设备'])
+app.include_router(app_hasn_agents_router, prefix='/hasn/agentss', tags=['Agent管理'])
+app.include_router(app_hasn_contacts_router, prefix='/hasn/contactss', tags=['联系人管理'])
+app.include_router(app_hasn_conversations_router, prefix='/hasn/conversationss', tags=['会话管理'])
+app.include_router(app_hasn_messages_router, prefix='/hasn/messagess', tags=['消息管理'])
+app.include_router(app_hasn_unread_counts_router, prefix='/hasn/unread/countss', tags=['未读计数'])
+app.include_router(app_hasn_group_members_router, prefix='/hasn/group/memberss', tags=['群成员管理'])
+app.include_router(app_hasn_agent_capabilities_router, prefix='/hasn/agent/capabilitiess', tags=['Agent能力'])
+app.include_router(app_hasn_trade_sessions_router, prefix='/hasn/trade/sessionss', tags=['交易会话'])
+app.include_router(app_hasn_notifications_router, prefix='/hasn/notificationss', tags=['通知管理'])
+app.include_router(app_hasn_audit_log_router, prefix='/hasn/audit/logs', tags=['审计日志'])
 
-# ========================================
-# 用户端 API（仅 JWT，无 RBAC）
-# 路径前缀: /api/v1/hasn/app/
-# ========================================
-app = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn/app', tags=['HASN 客户端设备用户端'])
+# --- Agent（Agent Key） ---
+from backend.app.hasn.api.v1.agent.hasn_humans import router as agent_hasn_humans_router
+from backend.app.hasn.api.v1.agent.hasn_clients import router as agent_hasn_clients_router
+from backend.app.hasn.api.v1.agent.hasn_agents import router as agent_hasn_agents_router
+from backend.app.hasn.api.v1.agent.hasn_contacts import router as agent_hasn_contacts_router
+from backend.app.hasn.api.v1.agent.hasn_conversations import router as agent_hasn_conversations_router
+from backend.app.hasn.api.v1.agent.hasn_messages import router as agent_hasn_messages_router
+from backend.app.hasn.api.v1.agent.hasn_unread_counts import router as agent_hasn_unread_counts_router
+from backend.app.hasn.api.v1.agent.hasn_group_members import router as agent_hasn_group_members_router
+from backend.app.hasn.api.v1.agent.hasn_agent_capabilities import router as agent_hasn_agent_capabilities_router
+from backend.app.hasn.api.v1.agent.hasn_trade_sessions import router as agent_hasn_trade_sessions_router
+from backend.app.hasn.api.v1.agent.hasn_notifications import router as agent_hasn_notifications_router
+from backend.app.hasn.api.v1.agent.hasn_audit_log import router as agent_hasn_audit_log_router
 
-app.include_router(app_hasn_clients_router, prefix='/hasn-clientss', tags=['HASN 客户端设备用户端-HASN 客户端设备'])
+agent = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn/agent', tags=['HASN Agent端'])
 
+agent.include_router(agent_hasn_humans_router, prefix='/hasn/humanss', tags=['用户管理'])
+agent.include_router(agent_hasn_clients_router, prefix='/hasn/clientss', tags=['客户端设备'])
+agent.include_router(agent_hasn_agents_router, prefix='/hasn/agentss', tags=['Agent管理'])
+agent.include_router(agent_hasn_contacts_router, prefix='/hasn/contactss', tags=['联系人管理'])
+agent.include_router(agent_hasn_conversations_router, prefix='/hasn/conversationss', tags=['会话管理'])
+agent.include_router(agent_hasn_messages_router, prefix='/hasn/messagess', tags=['消息管理'])
+agent.include_router(agent_hasn_unread_counts_router, prefix='/hasn/unread/countss', tags=['未读计数'])
+agent.include_router(agent_hasn_group_members_router, prefix='/hasn/group/memberss', tags=['群成员管理'])
+agent.include_router(agent_hasn_agent_capabilities_router, prefix='/hasn/agent/capabilitiess', tags=['Agent能力'])
+agent.include_router(agent_hasn_trade_sessions_router, prefix='/hasn/trade/sessionss', tags=['交易会话'])
+agent.include_router(agent_hasn_notifications_router, prefix='/hasn/notificationss', tags=['通知管理'])
+agent.include_router(agent_hasn_audit_log_router, prefix='/hasn/audit/logs', tags=['审计日志'])
+
+# --- 公开（无需认证，仅 Agent 能力发现） ---
+from backend.app.hasn.api.v1.open.hasn_agent_capabilities import router as open_hasn_agent_capabilities_router
+
+open_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn/open', tags=['HASN 公开接口'])
+
+open_api.include_router(open_hasn_agent_capabilities_router, prefix='/hasn/agent/capabilitiess', tags=['Agent能力发现'])
+
+# --- WebSocket 端点 ---
+from backend.app.hasn.api.ws_client import router as ws_client_router
+
+ws = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn', tags=['HASN WebSocket'])
+
+ws.include_router(ws_client_router)
+
+# --- 用户端业务 API（联系人 + 认证） ---
+from backend.app.hasn.api.v1.app.contacts import router as app_contacts_router
+from backend.app.hasn.api.v1.app.hasn_auth_api import router as app_hasn_auth_router
+
+app.include_router(app_contacts_router, tags=['联系人管理'])
+app.include_router(app_hasn_auth_router, tags=['HASN认证'])
 

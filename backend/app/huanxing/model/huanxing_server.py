@@ -16,6 +16,7 @@ class HuanxingServer(Base):
     id: Mapped[id_key] = mapped_column(init=False)
     server_id: Mapped[str] = mapped_column(sa.String(64), default='', comment='服务器唯一标识（如 server-001）')
     server_name: Mapped[str | None] = mapped_column(sa.String(128), default=None, comment='服务器名称（如 京东云-华北1）')
+    instance_type: Mapped[str | None] = mapped_column(sa.String(20), default='server', comment='实例类型: server/desktop/mobile')
     ip_address: Mapped[str] = mapped_column(sa.String(45), default='', comment='服务器IP地址')
     port: Mapped[int | None] = mapped_column(sa.INTEGER(), default=None, comment='SSH端口')
     region: Mapped[str | None] = mapped_column(sa.String(64), default=None, comment='地域（如 cn-north-1）')

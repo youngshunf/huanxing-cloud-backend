@@ -1,6 +1,6 @@
 -- =====================================================
---  菜单初始化 SQL (PostgreSQL)
--- 自动生成于: 2026-03-09 00:21:59.078837
+-- HASN管理 菜单初始化 SQL (PostgreSQL)
+-- 自动生成于: 2026-03-27 20:19:21.485468
 -- 支持幂等操作：已存在则更新，不存在则新增
 -- =====================================================
 
@@ -16,7 +16,7 @@ BEGIN
     
     IF v_parent_id IS NULL THEN
         INSERT INTO sys_menu (title, name, path, sort, icon, type, component, perms, status, display, cache, link, remark, parent_id, created_time, updated_time)
-        VALUES ('', 'Hasn', '/hasn', 1, 'lucide:folder', 0, 'BasicLayout', NULL, 1, 1, 1, '', 'hasn模块', NULL, NOW(), NULL)
+        VALUES ('Hasn', 'Hasn', '/hasn', 1, 'lucide:folder', 0, 'BasicLayout', NULL, 1, 1, 1, '', 'hasn模块', NULL, NOW(), NULL)
         RETURNING id INTO v_parent_id;
     END IF;
 
@@ -27,14 +27,14 @@ BEGIN
     
     IF v_menu_id IS NULL THEN
         INSERT INTO sys_menu (title, name, path, sort, icon, type, component, perms, status, display, cache, link, remark, parent_id, created_time, updated_time)
-        VALUES ('', 'HasnContacts', '/hasn/hasn_contacts', 1, 'lucide:list', 1, '/hasn/hasn_contacts/index', NULL, 1, 1, 1, '', 'HasnContacts', v_parent_id, NOW(), NULL)
+        VALUES ('HASN管理', 'HasnContacts', '/hasn/hasn_contacts', 1, 'lucide:list', 1, '/hasn/hasn_contacts/index', NULL, 1, 1, 1, '', 'HASN 联系人关系表', v_parent_id, NOW(), NULL)
         RETURNING id INTO v_menu_id;
     ELSE
         UPDATE sys_menu SET
-            title = '',
+            title = 'HASN管理',
             name = 'HasnContacts',
             component = '/hasn/hasn_contacts/index',
-            remark = 'HasnContacts',
+            remark = 'HASN 联系人关系表',
             parent_id = v_parent_id,
             updated_time = NOW()
         WHERE id = v_menu_id;

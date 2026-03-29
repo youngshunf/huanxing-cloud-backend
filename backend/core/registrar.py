@@ -62,6 +62,10 @@ async def register_init(app: FastAPI) -> AsyncGenerator[None, None]:
     # 启动缓存 Pub/Sub 监听器
     cache_pubsub_manager.start_listener()
 
+    # 注册支付业务回调
+    from backend.app.user_tier.service.pay_callbacks import register_callbacks
+    register_callbacks()
+
     yield
 
     # 停止缓存 Pub/Sub 监听器

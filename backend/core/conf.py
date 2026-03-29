@@ -385,6 +385,12 @@ class Settings(BaseSettings):
     SMS_ALIYUN_SIGN_NAME: str | None = None
     SMS_ALIYUN_TEMPLATE_CODE: str | None = None
 
+    ##################################################
+    # [ Agent ] Website Deployment
+    ##################################################
+    WEBSITE_DEPLOY_DIR: str | None = '/var/www/html/agents_sites'
+    WEBSITE_BASE_URL: str | None = 'https://huanxing.dcfuture.cn/agents_sites'
+
     @model_validator(mode='before')
     @classmethod
     def check_env(cls, values: Any) -> Any:

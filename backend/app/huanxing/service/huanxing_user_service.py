@@ -54,12 +54,12 @@ class HuanxingUserService:
         """
         Agent 同步用户（注册时调用）
 
-        用 server_id + user_id + agent_id 联合查找：
+        用 server_id + user_id 查找：
         - 存在 → 更新
         - 不存在 → 创建
         """
-        existing = await huanxing_user_dao.get_by_composite(
-            db, obj.server_id, obj.user_id, obj.agent_id
+        existing = await huanxing_user_dao.get_by_user_and_server(
+            db, obj.user_id, obj.server_id
         )
         if existing:
             update_data = UpdateHuanxingUserParam(
