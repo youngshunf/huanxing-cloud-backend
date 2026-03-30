@@ -12,6 +12,7 @@ class MarketplaceAppSchemaBase(SchemaBase):
     name: str = Field(description='应用名称')
     description: str | None = Field(None, description='应用描述')
     icon_url: str | None = Field(None, description='应用图标URL')
+    emoji: str | None = Field(None, description='emoji图标')
     author_id: int | None = Field(None, description='作者用户ID')
     author_name: str | None = Field(None, description='作者名称')
     category: str | None = Field(None, description='分类')
@@ -22,6 +23,7 @@ class MarketplaceAppSchemaBase(SchemaBase):
     is_official: bool = Field(description='是否官方应用')
     download_count: int = Field(description='下载次数')
     skill_dependencies: str | None = Field(None, description='依赖的技能ID列表，逗号分隔')
+    sop_dependencies: str | None = Field(None, description='依赖的SOP ID列表，逗号分隔')
 
 
 class CreateMarketplaceAppParam(MarketplaceAppSchemaBase):

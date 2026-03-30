@@ -3,4 +3,7 @@ from backend.app.marketplace.model.marketplace_skill import MarketplaceSkill as 
 from backend.app.marketplace.model.marketplace_skill_version import MarketplaceSkillVersion as MarketplaceSkillVersion
 from backend.app.marketplace.model.marketplace_app import MarketplaceApp as MarketplaceApp
 from backend.app.marketplace.model.marketplace_app_version import MarketplaceAppVersion as MarketplaceAppVersion
+from backend.app.marketplace.model.marketplace_sop import MarketplaceSop as MarketplaceSop
+from backend.app.marketplace.model.marketplace_sop_version import MarketplaceSopVersion as MarketplaceSopVersion
 from backend.app.marketplace.model.marketplace_download import MarketplaceDownload as MarketplaceDownload
+

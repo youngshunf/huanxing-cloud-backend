@@ -14,11 +14,15 @@ from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skil
 from backend.app.marketplace.crud.crud_marketplace_skill_version import marketplace_skill_version_dao
 from backend.app.marketplace.crud.crud_marketplace_app import marketplace_app_dao
 from backend.app.marketplace.crud.crud_marketplace_app_version import marketplace_app_version_dao
+from backend.app.marketplace.crud.crud_marketplace_sop import marketplace_sop_dao
+from backend.app.marketplace.crud.crud_marketplace_sop_version import marketplace_sop_version_dao
 from backend.app.marketplace.crud.crud_marketplace_category import marketplace_category_dao
 from backend.app.marketplace.schema.marketplace_skill import GetMarketplaceSkillDetail
 from backend.app.marketplace.schema.marketplace_skill_version import GetMarketplaceSkillVersionDetail
 from backend.app.marketplace.schema.marketplace_app import GetMarketplaceAppDetail
 from backend.app.marketplace.schema.marketplace_app_version import GetMarketplaceAppVersionDetail
+from backend.app.marketplace.schema.marketplace_sop import GetMarketplaceSopDetail
+from backend.app.marketplace.schema.marketplace_sop_version import GetMarketplaceSopVersionDetail
 from backend.app.marketplace.schema.marketplace_category import GetMarketplaceCategoryDetail
 from backend.common.exception import errors
 from backend.common.pagination import DependsPagination, PageData, paging_data
@@ -500,3 +504,78 @@ async def list_categories(
     """公开的分类列表接口，无需登录"""
     categories = await marketplace_category_dao.get_all(db)
     return response_base.success(data=categories)
+
+
+# ============================================================
+# 公开的 SOP 工作流 API
+# ============================================================
+
+@router.get('/sops', summary='公开接口：获取SOP工作流列表', dependencies=[DependsPagination])
+async def list_sops(
+    db: CurrentSession,
+    category: Optional[str] = Query(None, description='分类筛选'),
+    pricing_type: Optional[str] = Query(None, description='定价类型'),
+    is_official: Optional[bool] = Query(None, description='是否官方'),
+) -> ResponseSchemaModel[PageData[GetMarketplaceSopDetail]]:
+    """公开的SOP列表接口，无需登录"""
+    sop_select = await marketplace_sop_dao.get_select_public(
+        category=category,
+        pricing_type=pricing_type,
+        is_official=is_official,
+    )
+    page_data = await paging_data(db, sop_select)
+    
+    for item in page_data['items']:
+        latest = await marketplace_sop_version_dao.get_latest_by_sop(db, item['sop_id'])
+        item['latest_version'] = latest.version if latest else None
+    
+    return response_base.success(data=page_data)
+
+
+@router.get('/sops/{sop_id}', summary='公开接口：获取SOP详情')
+async def get_sop(
+    db: CurrentSession,
+    sop_id: Annotated[str, Path(description='SOP ID')],
+) -> ResponseSchemaModel[GetMarketplaceSopDetail]:
+    """公开的SOP详情接口⌨࿠"""
+    sop = await marketplace_sop_dao.get_by_id(db, sop_id)
+    if not sop:
+        raise errors.NotFoundError(msg='SOP不存在')
+    
+    sop_data = GetMarketplaceSopDetail.model_validate(sop)
+    latest = await marketplace_sop_version_dao.get_latest_by_sop(db, sop_id)
+    sop_data.latest_version = latest.version if latest else None
+    
+    return response_base.success(data=sop_data)
+
+
+@router.get('/sops/{sop_id}/versions', summary='公开接口：获取SOP版本列表')
+async def get_sop_versions(
+    db: CurrentSession,
+    sop_id: Annotated[str, Path(description='SOP ID')],
+) -> ResponseSchemaModel[list[GetMarketplaceSopVersionDetail]]:
+    """公开的SOP版本列表接口"""
+    versions = await marketplace_sop_version_dao.get_versions_by_sop(db, sop_id)
+    return response_base.success(data=versions)
+
+
+@router.get('/download/sop/{sop_id}/latest', summary='公开接口：获取SOP最新版本下载信息')
+async def download_sop_latest(
+    db: CurrentSession,
+    sop_id: Annotated[str, Path(description='SOP ID')],
+) -> ResponseSchemaModel:
+    """获取SOP最新版本的下载信息"""
+    version = await marketplace_sop_version_dao.get_latest_by_sop(db, sop_id)
+    if not version:
+        raise errors.NotFoundError(msg='SOP或版本不存在')
+    
+    await marketplace_sop_dao.increment_download_count(db, sop_id)
+    await db.commit()
+    
+    return response_base.success(data={
+        'id': sop_id,
+        'version': version.version,
+        'package_url': version.package_url,
+        'file_hash': version.file_hash,
+        'file_size': version.file_size,
+    })

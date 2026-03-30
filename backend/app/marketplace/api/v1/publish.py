@@ -25,6 +25,8 @@ from backend.app.marketplace.model import (
     MarketplaceSkillVersion,
     MarketplaceApp,
     MarketplaceAppVersion,
+    MarketplaceSop,
+    MarketplaceSopVersion,
 )
 from backend.app.marketplace.storage.s3_storage import marketplace_storage_service
 from backend.common.exception import errors
@@ -124,8 +126,11 @@ async def publish_skill(
             elif 'config.yaml' in zf.namelist():
                 config_content = zf.read('config.yaml').decode('utf-8')
                 config = yaml.safe_load(config_content)
+            elif 'manifest.yaml' in zf.namelist():
+                config_content = zf.read('manifest.yaml').decode('utf-8')
+                config = yaml.safe_load(config_content)
             else:
-                raise errors.RequestError(msg='技能包缺少 config.toml 或 config.yaml')
+                raise errors.RequestError(msg='技能包缺少 config.toml, config.yaml 或 manifest.yaml')
             
             # 验证必需字段
             required_fields = ['id', 'name', 'version', 'description']
@@ -176,6 +181,7 @@ async def publish_skill(
         file_hash=file_hash,
         file_size=file_size,
         icon_url=icon_url,
+        emoji=config.get('emoji'),
         author_id=publish_user.user_id,
         author_name=publish_user.nickname or publish_user.username,
     )
@@ -199,6 +205,7 @@ async def _save_skill_to_db(
     file_hash: str,
     file_size: int,
     icon_url: str | None,
+    emoji: str | None,
     author_id: int | None = None,
     author_name: str | None = None,
 ) -> None:
@@ -215,6 +222,7 @@ async def _save_skill_to_db(
             name=config['name'],
             description=config['description'],
             icon_url=icon_url,
+            emoji=emoji,
             author_id=author_id,
             author_name=author_name or config.get('author_name', ''),
             pricing_type=config.get('pricing_type', 'free'),
@@ -235,6 +243,7 @@ async def _save_skill_to_db(
             'pricing_type': config.get('pricing_type', 'free'),
             'tags': ','.join(config.get('tags', [])) if config.get('tags') else None,
             'category': config.get('category'),
+            'emoji': emoji,
         }
         if icon_url:
             update_data['icon_url'] = icon_url
@@ -326,6 +335,7 @@ async def publish_app(
                 manifest = {
                     'id': agent_info.get('name') or parsed.get('id'),
                     'name': agent_info.get('display_name') or agent_info.get('name') or parsed.get('name'),
+                    'emoji': agent_info.get('emoji') or parsed.get('emoji'),
                     'version': agent_info.get('version') or parsed.get('version', '1.0.0'),
                     'description': agent_info.get('description') or parsed.get('description', 'Agent App'),
                     'skill_dependencies': parsed.get('plugins', {}).get('skills', []) if isinstance(parsed.get('plugins'), dict) else [],
@@ -336,8 +346,24 @@ async def publish_app(
             elif 'manifest.json' in zf.namelist():
                 manifest_content = zf.read('manifest.json').decode('utf-8')
                 manifest = json.loads(manifest_content)
+            elif 'template.yaml' in zf.namelist():
+                template_content = zf.read('template.yaml').decode('utf-8')
+                import yaml
+                parsed = yaml.safe_load(template_content) or {}
+                manifest = {
+                    'id': parsed.get('id', parsed.get('name', 'unknown-app')),
+                    'name': parsed.get('name', 'unknown-name'),
+                    'emoji': parsed.get('emoji'),
+                    'version': parsed.get('version', '1.0.0'),
+                    'description': parsed.get('description', 'Agent App'),
+                    'skill_dependencies': parsed.get('skills', []),
+                    'sop_dependencies': parsed.get('sops', []),
+                    'pricing_type': parsed.get('pricing_type', 'free'),
+                    'category': parsed.get('category'),
+                    'tags': parsed.get('tags', []),
+                }
             else:
-                raise errors.RequestError(msg='应用包缺少 config.toml 或 manifest.json')
+                raise errors.RequestError(msg='应用包缺少 config.toml, manifest.json 或 template.yaml')
             
             # 验证必需字段
             required_fields = ['id', 'name', 'version', 'description']
@@ -393,6 +419,7 @@ async def publish_app(
         file_hash=file_hash,
         file_size=file_size,
         icon_url=icon_url,
+        emoji=manifest.get('emoji'),
         author_id=publish_user.user_id,
         author_name=publish_user.nickname or publish_user.username,
     )
@@ -400,6 +427,123 @@ async def publish_app(
     return response_base.success(data=PublishResult(
         id=app_id,
         version=final_version,
+        package_url=package_url,
+        file_hash=file_hash,
+        file_size=file_size,
+    ))
+
+
+# ============================================================
+# SOP 发布 API
+# ============================================================
+
+@router.post('/sop', summary='发布SOP工作流包')
+async def publish_sop(
+    db: CurrentSession,
+    publish_user: Annotated[PublishUser, Depends(verify_publish_api_key)],
+    file: Annotated[UploadFile, File(description='SOP包 ZIP 文件')],
+    version: Annotated[str | None, Form(description='版本号')] = None,
+    changelog: Annotated[str | None, Form(description='更新日志')] = None,
+) -> ResponseSchemaModel[PublishResult]:
+    """
+    发布SOP工作流包
+    
+    上传 ZIP 格式的SOP包，包含：
+    - SOP.toml (必需)
+    - SOP.md (必需)
+    - icon.svg (可选)
+    """
+    content = await file.read()
+    
+    try:
+        with zipfile.ZipFile(BytesIO(content), 'r') as zf:
+            # 解析 SOP.toml
+            if 'SOP.toml' not in zf.namelist():
+                raise errors.RequestError(msg='SOP包缺少 SOP.toml')
+            
+            import rtoml
+            toml_content = zf.read('SOP.toml').decode('utf-8')
+            parsed = rtoml.loads(toml_content)
+            sop_meta = parsed.get('sop', {})
+            
+            sop_id = sop_meta.get('name')
+            if not sop_id:
+                raise errors.RequestError(msg='SOP.toml 缺少 name 字段')
+            
+            description = sop_meta.get('description', '')
+            sop_version = version or sop_meta.get('version', '1.0.0')
+            execution_mode = sop_meta.get('execution_mode', 'supervised')
+            emoji = sop_meta.get('emoji')
+            category = sop_meta.get('category')
+            tags = sop_meta.get('tags', [])
+            
+            # 从 SOP.md 提取 skill 依赖
+            skill_deps = []
+            if 'SOP.md' in zf.namelist():
+                md_content = zf.read('SOP.md').decode('utf-8')
+                import re
+                # 匹配 `- tools: xxx, yyy, zzz` 行
+                for match in re.finditer(r'-\s*tools:\s*(.+)', md_content):
+                    tools_str = match.group(1).strip()
+                    for tool in tools_str.split(','):
+                        tool = tool.strip()
+                        if tool and tool not in skill_deps:
+                            skill_deps.append(tool)
+            
+            # 读取图标
+            icon_content = None
+            if 'icon.svg' in zf.namelist():
+                icon_content = zf.read('icon.svg')
+                
+    except zipfile.BadZipFile:
+        raise errors.RequestError(msg='无效的 ZIP 文件')
+    
+    # 计算哈希
+    file_hash = hashlib.sha256(content).hexdigest()
+    file_size = len(content)
+    
+    # 上传到 S3
+    package_url, _, _ = await marketplace_storage_service.upload_app_package(
+        db=db,
+        app_id=sop_id,
+        version=sop_version,
+        content=content,
+    )
+    
+    # 上传图标
+    icon_url = None
+    if icon_content:
+        icon_url = await marketplace_storage_service.upload_icon(
+            db=db,
+            item_type='sop',
+            item_id=sop_id,
+            content=icon_content,
+        )
+    
+    # 保存到数据库
+    await _save_sop_to_db(
+        db=db,
+        sop_id=sop_id,
+        name=sop_meta.get('name', sop_id),
+        description=description,
+        version=sop_version,
+        changelog=changelog,
+        package_url=package_url,
+        file_hash=file_hash,
+        file_size=file_size,
+        icon_url=icon_url,
+        emoji=emoji,
+        execution_mode=str(execution_mode) if execution_mode else 'supervised',
+        skill_dependencies=','.join(skill_deps) if skill_deps else None,
+        category=category,
+        tags=','.join(tags) if isinstance(tags, list) else tags,
+        author_id=publish_user.user_id,
+        author_name=publish_user.nickname or publish_user.username,
+    )
+    
+    return response_base.success(data=PublishResult(
+        id=sop_id,
+        version=sop_version,
         package_url=package_url,
         file_hash=file_hash,
         file_size=file_size,
@@ -416,6 +560,7 @@ async def _save_app_to_db(
     file_hash: str,
     file_size: int,
     icon_url: str | None,
+    emoji: str | None,
     author_id: int | None = None,
     author_name: str | None = None,
 ) -> None:
@@ -424,6 +569,10 @@ async def _save_app_to_db(
     capabilities = manifest.get('capabilities', {})
     skill_dependencies = capabilities.get('skills', []) or manifest.get('skill_dependencies', [])
     skill_deps_str = ','.join(skill_dependencies) if skill_dependencies else None
+
+    # 读取 SOP 依赖
+    sop_dependencies = manifest.get('sops', []) or manifest.get('sop_dependencies', [])
+    sop_deps_str = ','.join(sop_dependencies) if sop_dependencies else None
 
     # 读取 marketplace 元数据（兼容嵌套和顶层两种格式）
     marketplace_meta = manifest.get('marketplace', {})
@@ -443,11 +592,13 @@ async def _save_app_to_db(
             name=manifest['name'],
             description=manifest['description'],
             icon_url=icon_url,
+            emoji=emoji,
             author_id=author_id,
             author_name=author_name or manifest.get('author_name', ''),
             pricing_type=manifest.get('pricing_type') or manifest.get('pricing', {}).get('type', 'free'),
             price=Decimal('0'),
             skill_dependencies=skill_deps_str,
+            sop_dependencies=sop_deps_str,
             category=app_category,
             tags=app_tags,
             is_private=False,
@@ -463,8 +614,10 @@ async def _save_app_to_db(
             'description': manifest['description'],
             'pricing_type': manifest.get('pricing_type') or manifest.get('pricing', {}).get('type', 'free'),
             'skill_dependencies': skill_deps_str,
+            'sop_dependencies': sop_deps_str,
             'category': app_category,
             'tags': app_tags,
+            'emoji': emoji,
         }
         if icon_url:
             update_data['icon_url'] = icon_url
@@ -529,5 +682,114 @@ async def _save_app_to_db(
             is_latest=True,
         )
         db.add(app_version)
+    
+    await db.commit()
+
+
+async def _save_sop_to_db(
+    db: AsyncSession,
+    sop_id: str,
+    name: str,
+    description: str,
+    version: str,
+    changelog: str | None,
+    package_url: str,
+    file_hash: str,
+    file_size: int,
+    icon_url: str | None,
+    emoji: str | None,
+    execution_mode: str = 'supervised',
+    skill_dependencies: str | None = None,
+    category: str | None = None,
+    tags: str | None = None,
+    author_id: int | None = None,
+    author_name: str | None = None,
+) -> None:
+    """保存SOP到数据库"""
+    # 检查SOP是否存在
+    stmt = select(MarketplaceSop).where(MarketplaceSop.sop_id == sop_id)
+    result = await db.execute(stmt)
+    sop = result.scalar_one_or_none()
+    
+    if not sop:
+        sop = MarketplaceSop(
+            sop_id=sop_id,
+            name=name,
+            description=description,
+            icon_url=icon_url,
+            emoji=emoji,
+            author_id=author_id,
+            author_name=author_name or '',
+            category=category,
+            tags=tags,
+            execution_mode=execution_mode,
+            skill_dependencies=skill_dependencies,
+            pricing_type='free',
+            price=Decimal('0'),
+            is_private=False,
+            is_official=False,
+            download_count=0,
+        )
+        db.add(sop)
+        await db.flush()
+    else:
+        update_data = {
+            'name': name,
+            'description': description,
+            'execution_mode': execution_mode,
+            'skill_dependencies': skill_dependencies,
+            'category': category,
+            'tags': tags,
+            'emoji': emoji,
+        }
+        if icon_url:
+            update_data['icon_url'] = icon_url
+        if author_id and (not sop.author_id or sop.author_id == author_id):
+            update_data['author_id'] = author_id
+            update_data['author_name'] = author_name
+        
+        stmt = update(MarketplaceSop).where(
+            MarketplaceSop.sop_id == sop_id
+        ).values(**update_data)
+        await db.execute(stmt)
+    
+    # 清除旧版本的 is_latest 标志
+    stmt = update(MarketplaceSopVersion).where(
+        MarketplaceSopVersion.sop_id == sop_id,
+        MarketplaceSopVersion.is_latest == True,
+    ).values(is_latest=False)
+    await db.execute(stmt)
+    
+    # 检查版本是否存在
+    stmt = select(MarketplaceSopVersion).where(
+        MarketplaceSopVersion.sop_id == sop_id,
+        MarketplaceSopVersion.version == version,
+    )
+    result = await db.execute(stmt)
+    existing_version = result.scalar_one_or_none()
+    
+    if existing_version:
+        stmt = update(MarketplaceSopVersion).where(
+            MarketplaceSopVersion.sop_id == sop_id,
+            MarketplaceSopVersion.version == version,
+        ).values(
+            changelog=changelog,
+            package_url=package_url,
+            file_hash=file_hash,
+            file_size=file_size,
+            is_latest=True,
+        )
+        await db.execute(stmt)
+    else:
+        sop_version = MarketplaceSopVersion(
+            sop_id=sop_id,
+            version=version,
+            changelog=changelog,
+            package_url=package_url,
+            file_hash=file_hash,
+            file_size=file_size,
+            is_latest=True,
+        )
+        db.add(sop_version)
     
     await db.commit()

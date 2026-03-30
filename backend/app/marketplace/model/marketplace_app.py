@@ -18,6 +18,7 @@ class MarketplaceApp(Base):
     name: Mapped[str] = mapped_column(sa.String(200), default='', comment='应用名称')
     description: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='应用描述')
     icon_url: Mapped[str | None] = mapped_column(sa.String(500), default=None, comment='应用图标URL')
+    emoji: Mapped[str | None] = mapped_column(sa.String(20), default=None, comment='emoji图标')
     author_id: Mapped[int | None] = mapped_column(sa.BIGINT(), default=None, comment='作者用户ID')
     author_name: Mapped[str | None] = mapped_column(sa.String(100), default=None, comment='作者名称')
     category: Mapped[str | None] = mapped_column(sa.String(50), default=None, comment='分类')
@@ -28,3 +29,4 @@ class MarketplaceApp(Base):
     is_official: Mapped[bool] = mapped_column(sa.BOOLEAN(), default=True, comment='是否官方应用')
     download_count: Mapped[int] = mapped_column(sa.INTEGER(), default=0, comment='下载次数')
     skill_dependencies: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='依赖的技能ID列表，逗号分隔')
+    sop_dependencies: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='依赖的SOP ID列表，逗号分隔')

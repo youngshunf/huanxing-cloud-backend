@@ -270,6 +270,7 @@ class SkillPublisher:
             name=config.name,
             description=config.description,
             icon_url=icon_url,
+            emoji=getattr(config, 'emoji', None),
             author_name=config.author_name,
             category=config.category,
             tags=tags,
@@ -292,6 +293,7 @@ class SkillPublisher:
             'category': config.category,
             'tags': tags,
             'pricing_type': config.pricing,
+            'emoji': getattr(config, 'emoji', None),
         }
         if icon_url:
             update_data['icon_url'] = icon_url

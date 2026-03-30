@@ -258,6 +258,7 @@ class AppPublisher:
             name=manifest.name,
             description=manifest.description,
             icon_url=icon_url,
+            emoji=getattr(manifest, 'emoji', None),
             author_name=manifest.author_name,
             pricing_type=manifest.pricing_type,
             price=Decimal('0'),
@@ -278,6 +279,7 @@ class AppPublisher:
             'description': manifest.description,
             'pricing_type': manifest.pricing_type,
             'skill_dependencies': skill_deps_str,
+            'emoji': getattr(manifest, 'emoji', None),
         }
         if icon_url:
             update_data['icon_url'] = icon_url

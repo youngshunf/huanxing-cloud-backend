@@ -22,6 +22,7 @@ class SearchSkillItem(BaseModel):
     name: str
     description: str | None
     icon_url: str | None
+    emoji: str | None
     author_name: str | None
     category: str | None
     tags: str | None
@@ -37,6 +38,7 @@ class SearchAppItem(BaseModel):
     name: str
     description: str | None
     icon_url: str | None
+    emoji: str | None
     author_name: str | None
     category: str | None
     tags: str | None
@@ -103,6 +105,7 @@ async def search(
                 name=s.name,
                 description=s.description,
                 icon_url=s.icon_url,
+                emoji=s.emoji,
                 author_name=s.author_name,
                 category=s.category,
                 tags=s.tags,
@@ -145,6 +148,7 @@ async def search(
                 name=a.name,
                 description=a.description,
                 icon_url=a.icon_url,
+                emoji=a.emoji,
                 author_name=a.author_name,
                 category=a.category,
                 tags=a.tags,

@@ -5,6 +5,7 @@ CREATE TABLE "public"."marketplace_skill" (
   "name" varchar(200) COLLATE "pg_catalog"."default" NOT NULL,
   "description" text COLLATE "pg_catalog"."default",
   "icon_url" varchar(500) COLLATE "pg_catalog"."default",
+  "emoji" varchar(20) COLLATE "pg_catalog"."default",
   "author_id" int8,
   "author_name" varchar(100) COLLATE "pg_catalog"."default",
   "category" varchar(50) COLLATE "pg_catalog"."default",
@@ -29,6 +30,7 @@ COMMENT ON COLUMN "public"."marketplace_skill"."skill_id" IS '技能唯一标识
 COMMENT ON COLUMN "public"."marketplace_skill"."name" IS '技能名称';
 COMMENT ON COLUMN "public"."marketplace_skill"."description" IS '技能描述';
 COMMENT ON COLUMN "public"."marketplace_skill"."icon_url" IS 'SVG图标URL';
+COMMENT ON COLUMN "public"."marketplace_skill"."emoji" IS 'emoji图标';
 COMMENT ON COLUMN "public"."marketplace_skill"."author_id" IS '作者用户ID';
 COMMENT ON COLUMN "public"."marketplace_skill"."author_name" IS '作者名称';
 COMMENT ON COLUMN "public"."marketplace_skill"."category" IS '分类';
