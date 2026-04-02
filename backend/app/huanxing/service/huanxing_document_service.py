@@ -84,14 +84,55 @@ class HuanxingDocumentService:
         """
         huanxing_document_select = await huanxing_document_dao.get_select()
         from backend.app.huanxing.model.huanxing_document import HuanxingDocument
+        from backend.app.huanxing.model.huanxing_document_collaborator import HuanxingDocumentCollaborator
+        from sqlalchemy import or_, and_, select
+        
         if user_id is not None:
-            huanxing_document_select = huanxing_document_select.where(
-                HuanxingDocument.user_id == user_id
+            # 查询该用户自己拥有的文档，以及从协作者表里受保存的文档
+            collaborator_subquery = select(HuanxingDocumentCollaborator.document_id).where(
+                HuanxingDocumentCollaborator.user_id == user_id
             )
-        if folder_id is not None:
+            
+            if folder_id is not None:
+                huanxing_document_select = huanxing_document_select.where(
+                    or_(
+                        and_(HuanxingDocument.user_id == user_id, HuanxingDocument.folder_id == folder_id),
+                        and_(HuanxingDocument.user_id != user_id, HuanxingDocument.id.in_(
+                            select(HuanxingDocumentCollaborator.document_id).where(
+                                HuanxingDocumentCollaborator.user_id == user_id,
+                                HuanxingDocumentCollaborator.folder_id == folder_id
+                            )
+                        ))
+                    )
+                )
+            else:
+                huanxing_document_select = huanxing_document_select.where(
+                    or_(
+                        HuanxingDocument.user_id == user_id,
+                        HuanxingDocument.id.in_(collaborator_subquery)
+                    )
+                )
+                
+            # 我们必须排除那些已经撤销分享或分享过期的文档（失效兜底）
+            from backend.utils.timezone import timezone as tz
             huanxing_document_select = huanxing_document_select.where(
-                HuanxingDocument.folder_id == folder_id
+                or_(
+                    HuanxingDocument.user_id == user_id,
+                    and_(
+                        HuanxingDocument.share_token.isnot(None),
+                        or_(
+                            HuanxingDocument.share_expires_at.is_(None),
+                            HuanxingDocument.share_expires_at > tz.now()
+                        )
+                    )
+                )
             )
+        else:
+            if folder_id is not None:
+                huanxing_document_select = huanxing_document_select.where(
+                    HuanxingDocument.folder_id == folder_id
+                )
+                
         if status:
             huanxing_document_select = huanxing_document_select.where(
                 HuanxingDocument.status == status
@@ -100,7 +141,30 @@ class HuanxingDocumentService:
             huanxing_document_select = huanxing_document_select.where(
                 HuanxingDocument.title.ilike(f'%{title}%')
             )
-        return await paging_data(db, huanxing_document_select)
+            
+        # 按照更新时间倒序
+        huanxing_document_select = huanxing_document_select.order_by(HuanxingDocument.updated_at.desc())
+        page_dict = await paging_data(db, huanxing_document_select)
+        
+        if user_id is not None and "items" in page_dict and len(page_dict["items"]) > 0:
+            doc_ids = [item["id"] for item in page_dict["items"] if item["user_id"] != user_id]
+            if doc_ids:
+                collabs = (await db.execute(
+                    select(HuanxingDocumentCollaborator).where(
+                        HuanxingDocumentCollaborator.user_id == user_id,
+                        HuanxingDocumentCollaborator.document_id.in_(doc_ids)
+                    )
+                )).scalars().all()
+                collab_map = {c.document_id: c for c in collabs}
+                
+                for item in page_dict["items"]:
+                    if item["user_id"] != user_id:
+                        c = collab_map.get(item["id"])
+                        if c:
+                            item["folder_id"] = c.folder_id
+                            item["share_permission"] = c.permission
+                            
+        return page_dict
 
     @staticmethod
     async def get_all(*, db: AsyncSession) -> Sequence[HuanxingDocument]:
@@ -572,13 +636,73 @@ class HuanxingDocumentService:
     async def delete(*, db: AsyncSession, obj: DeleteHuanxingDocumentParam) -> int:
         """
         删除唤星文档
-
-        :param db: 数据库会话
-        :param obj: 唤星文档 ID 列表
-        :return:
         """
         count = await huanxing_document_dao.delete(db, obj.pks)
         return count
+
+    @staticmethod
+    async def save_shared_document(*, db: AsyncSession, user_id: int, share_token: str, folder_id: int | None = None) -> int:
+        from backend.app.huanxing.model.huanxing_document import HuanxingDocument
+        from backend.app.huanxing.model.huanxing_document_collaborator import HuanxingDocumentCollaborator
+        from backend.app.huanxing.model.huanxing_document_folder import HuanxingDocumentFolder
+        from backend.utils.timezone import timezone as tz
+        from sqlalchemy import select
+        import uuid
+
+        # 获取文档详情并验证权限
+        document = (await db.execute(select(HuanxingDocument).where(HuanxingDocument.share_token == share_token))).scalars().first()
+        if not document:
+            raise errors.NotFoundError(msg='分享链接不存在或已失效')
+        
+        # 验证是否已过期
+        if document.share_expires_at and document.share_expires_at < tz.now():
+            raise errors.ForbiddenError(msg='该分享链接已过期')
+            
+        # 不能分享给自己
+        if document.user_id == user_id:
+            raise errors.ForbiddenError(msg='不能保存自己创建的文档')
+
+        # 如果 folder_id 是空，就查找或创建名为"分享文档"的根目录
+        if folder_id is None:
+            folder = (await db.execute(
+                select(HuanxingDocumentFolder).where(
+                    HuanxingDocumentFolder.user_id == user_id,
+                    HuanxingDocumentFolder.name == '分享文档',
+                    HuanxingDocumentFolder.parent_id.is_(None)
+                )
+            )).scalars().first()
+            if not folder:
+                folder_obj = HuanxingDocumentFolder(
+                    user_id=user_id,
+                    name='分享文档',
+                    sort_order=999,
+                    uuid=str(uuid.uuid4())
+                )
+                db.add(folder_obj)
+                await db.flush()
+                folder_id = folder_obj.id
+            else:
+                folder_id = folder.id
+
+        # 检查是否已经保存过，已经存在直接更新目录即可
+        collab = (await db.execute(select(HuanxingDocumentCollaborator).where(
+            HuanxingDocumentCollaborator.document_id == document.id,
+            HuanxingDocumentCollaborator.user_id == user_id
+        ))).scalars().first()
+        
+        if collab:
+            collab.folder_id = folder_id
+            collab.permission = document.share_permission or 'view'
+        else:
+            new_collab = HuanxingDocumentCollaborator(
+                document_id=document.id,
+                user_id=user_id,
+                folder_id=folder_id,
+                permission=document.share_permission or 'view'
+            )
+            db.add(new_collab)
+
+        return 1
 
 
 huanxing_document_service: HuanxingDocumentService = HuanxingDocumentService()

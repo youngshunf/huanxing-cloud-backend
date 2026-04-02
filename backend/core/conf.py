@@ -126,7 +126,9 @@ class Settings(BaseSettings):
         rf'^{FASTAPI_API_V1_PATH}/client/version/.*$',  # 桌面端版本检测公开 API
         rf'^{FASTAPI_API_V1_PATH}/llm/proxy(/.*)?$',  # LLM Proxy API（使用 x-api-key 认证，不走 JWT）
         rf'^{FASTAPI_API_V1_PATH}/huanxing/open/.*$',  # 唤星公开 API（分享文档等）
-        rf'^{FASTAPI_API_V1_PATH}/hasn/.*$',  # HASN 社交网络 API（使用独立 JWT/ApiKey 认证）
+        rf'^{FASTAPI_API_V1_PATH}/hasn/agent/.*$',  # HASN Agent API（使用 AgentKey 认证）
+        rf'^{FASTAPI_API_V1_PATH}/hasn/open/.*$',  # HASN 公开 API
+        rf'^{FASTAPI_API_V1_PATH}/hasn/ws/.*$',  # HASN WebSocket
         rf'^{FASTAPI_API_V1_PATH}/huanxing/agent/.*$',  # 唤星 Agent API（使用 X-Agent-Key 认证，不走 JWT）
         rf'^{FASTAPI_API_V1_PATH}/user_tier/agent/.*$',  # 订阅积分 Agent API（使用 X-Agent-Key 认证，不走 JWT）
     ]

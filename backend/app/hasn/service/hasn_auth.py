@@ -94,11 +94,52 @@ def verify_client_jwt(token: str) -> dict[str, Any]:
         )
         if payload.get('type') != 'client':
             raise HTTPException(status_code=401, detail='非 Client JWT')
+        # 补充统一节点字段（兼容旧 JWT）
+        if 'node_id' not in payload:
+            payload['node_id'] = payload.get('client_id', '')
+        if 'node_type' not in payload:
+            payload['node_type'] = payload.get('client_type', 'desktop')
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail='Client JWT 已过期')
     except jwt.InvalidTokenError as e:
         raise HTTPException(status_code=401, detail=f'Client JWT 无效: {e}')
+
+
+# ─── Node API Key 验证（统一节点模型） ───
+
+async def verify_node_api_key(api_key: str) -> dict[str, Any]:
+    """
+    验证节点 API Key，返回节点身份信息。
+
+    API Key 格式: hasn_ak_{64字符随机字符串}
+    通过 hasn_clients 表中的 api_key_hash 查找对应节点记录。
+    """
+    if not api_key.startswith('hasn_ak_'):
+        raise HTTPException(status_code=401, detail='无效的 API Key 格式')
+
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+
+    async with async_db_session() as db:
+        result = await db.execute(
+            select(HasnClients).where(
+                HasnClients.api_key_hash == key_hash,
+                HasnClients.status == 'active',
+            )
+        )
+        client = result.scalar_one_or_none()
+
+    if not client:
+        raise HTTPException(status_code=401, detail='Node API Key 无效或节点已停用')
+
+    return {
+        'sub': client.user_hasn_id,
+        'node_id': client.client_id,
+        'node_type': client.client_type,
+        'capacity': getattr(client, 'capacity', 1) or 1,
+        'star_id': '',
+        'type': 'node_api_key',
+    }
 
 
 # ─── Agent API Key 验证 ───

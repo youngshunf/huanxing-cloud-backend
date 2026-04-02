@@ -4,6 +4,7 @@ from backend.app.huanxing.model.huanxing_document import HuanxingDocument as Hua
 from backend.app.huanxing.model.huanxing_document_version import HuanxingDocumentVersion as HuanxingDocumentVersion
 from backend.app.huanxing.model.huanxing_document_autosave import HuanxingDocumentAutosave as HuanxingDocumentAutosave
 from backend.app.huanxing.model.huanxing_document_folder import HuanxingDocumentFolder as HuanxingDocumentFolder
+from backend.app.huanxing.model.huanxing_document_collaborator import HuanxingDocumentCollaborator as HuanxingDocumentCollaborator
 from backend.app.huanxing.model.pay_app import PayApp as PayApp
 
 # 支付模块已迁移到独立的 backend.app.pay，以下从 pay 模块重新导出以保持兼容

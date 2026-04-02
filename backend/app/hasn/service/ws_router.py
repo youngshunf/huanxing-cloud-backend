@@ -1,18 +1,12 @@
 """HASN WebSocket 连接管理服务
 
-管理客户端和 Gateway 的在线状态，对齐 29 文档 §5.3 Redis 数据结构：
+统一节点架构 (v4.0)：所有接入 HASN 的实体都是 Node，不区分 client/gateway。
 
-客户端连接（desktop/mobile/web）:
-  hasn:client_conn            HASH  client_id → JSON{user_hasn_id, client_type, connected_at}
-  hasn:user_clients:{hasn_id} SET   {client_id, ...}
-  hasn:agent_client           HASH  agent_hasn_id → client_id
-  hasn:push:{client_id}       LIST  待推消息队列
-
-Gateway 连接（cloud）:
-  hasn:gw:conns               HASH  conn_id → JSON{server_id, agent_count}
-  hasn:gw:conns_by_server     HASH  server_id → conn_id
-  hasn:gw:agents              HASH  agent_hasn_id → conn_id
-  hasn:push:{conn_id}         LIST  待推消息队列
+Redis 数据结构：
+  hasn:node_conn              HASH  node_id → JSON{node_type, capacity, connected_at}
+  hasn:user_nodes:{hasn_id}   SET   {node_id, ...}    (一个用户的所有在线节点)
+  hasn:agent_node             HASH  agent_hasn_id → node_id  (Agent → 宿主节点)
+  hasn:push:{node_id}         LIST  待推消息队列
 
 离线消息:
   hasn:offline:{hasn_id}      LIST  (7天 TTL)
@@ -31,74 +25,88 @@ from backend.utils.timezone import timezone
 
 from backend.app.hasn.model.hasn_agents import HasnAgents
 
-# Redis 键前缀
-CLIENT_CONN_KEY = 'hasn:client_conn'
-USER_CLIENTS_PREFIX = 'hasn:user_clients'
-AGENT_CLIENT_KEY = 'hasn:agent_client'
-GW_AGENTS_KEY = 'hasn:gw:agents'
+# Redis 键前缀（统一节点模型）
+NODE_CONN_KEY = 'hasn:node_conn'
+USER_NODES_PREFIX = 'hasn:user_nodes'
+AGENT_NODE_KEY = 'hasn:agent_node'
 PUSH_PREFIX = 'hasn:push'
 OFFLINE_PREFIX = 'hasn:offline'
 OFFLINE_TTL = 7 * 86400  # 7 天
 
+# 兼容别名（旧代码过渡期引用）
+CLIENT_CONN_KEY = NODE_CONN_KEY
+USER_CLIENTS_PREFIX = USER_NODES_PREFIX
+AGENT_CLIENT_KEY = AGENT_NODE_KEY
+
 
 class WsRouterService:
-    """WebSocket 连接路由管理"""
+    """WebSocket 连接路由管理（统一节点模型）"""
 
-    # ─── 客户端连接管理 ───
+    # ─── 节点连接管理 ───
 
-    async def register_client(
+    async def register_node(
         self,
-        client_id: str,
+        node_id: str,
         user_hasn_id: str,
-        client_type: str,
+        node_type: str,
         ws: WebSocket,
+        capacity: int = 1,
     ) -> None:
-        """注册客户端在线"""
+        """注册节点在线"""
         conn_info = json.dumps({
             'user_hasn_id': user_hasn_id,
-            'client_type': client_type,
+            'node_type': node_type,
+            'capacity': capacity,
             'connected_at': timezone.now().isoformat(),
         })
-        await redis_client.hset(CLIENT_CONN_KEY, client_id, conn_info)
-        await redis_client.sadd(f'{USER_CLIENTS_PREFIX}:{user_hasn_id}', client_id)
+        await redis_client.hset(NODE_CONN_KEY, node_id, conn_info)
+        await redis_client.sadd(f'{USER_NODES_PREFIX}:{user_hasn_id}', node_id)
 
         # 存储 WebSocket 引用（进程内，用于直接推送）
-        _ws_connections[client_id] = ws
+        _ws_connections[node_id] = ws
 
-    async def unregister_client(
+    # 兼容别名
+    async def register_client(self, client_id, user_hasn_id, client_type, ws):
+        await self.register_node(client_id, user_hasn_id, client_type, ws)
+
+    async def unregister_node(
         self,
-        client_id: str,
+        node_id: str,
         user_hasn_id: str,
     ) -> None:
-        """注销客户端，清理 Agent 绑定"""
-        # 清理该客户端上报的所有 Agent
-        all_agents = await redis_client.hgetall(AGENT_CLIENT_KEY)
-        for agent_id, cid in all_agents.items():
-            if cid == client_id:
-                await redis_client.hdel(AGENT_CLIENT_KEY, agent_id)
+        """注销节点，清理 Agent 绑定"""
+        # 清理该节点上报的所有 Agent
+        all_agents = await redis_client.hgetall(AGENT_NODE_KEY)
+        for agent_id, nid in all_agents.items():
+            if nid == node_id:
+                await redis_client.hdel(AGENT_NODE_KEY, agent_id)
 
-        await redis_client.hdel(CLIENT_CONN_KEY, client_id)
-        await redis_client.srem(f'{USER_CLIENTS_PREFIX}:{user_hasn_id}', client_id)
+        await redis_client.hdel(NODE_CONN_KEY, node_id)
+        await redis_client.srem(f'{USER_NODES_PREFIX}:{user_hasn_id}', node_id)
 
         # 移除 WebSocket 引用
-        _ws_connections.pop(client_id, None)
+        _ws_connections.pop(node_id, None)
+
+    # 兼容别名
+    async def unregister_client(self, client_id, user_hasn_id):
+        await self.unregister_node(client_id, user_hasn_id)
 
     # ─── Agent 上报管理 ───
 
     async def report_agents(
         self,
-        client_id: str,
+        node_id: str,
         user_hasn_id: str,
         agents: list[dict],
         db: AsyncSession,
     ) -> dict[str, Any]:
         """
-        处理 REPORT_AGENTS 命令
+        处理 REPORT_AGENTS 命令（统一节点模型）
 
-        校验规则（对齐 29 文档 §4.5）：
+        校验规则：
         1. Agent 存在且 status=active
         2. Agent 归属当前用户（owner_id 匹配）
-        3. 未被其他客户端上报（先到先得）
+        3. 未被其他节点上报（先到先得）
         """
         accepted = []
         failed = []
@@ -122,48 +130,48 @@ class WsRouterService:
                 failed.append({'hasn_id': hasn_id, 'reason': 'Agent 已停用'})
                 continue
 
-            # 检查是否已被其他客户端上报
-            existing_client = await redis_client.hget(AGENT_CLIENT_KEY, hasn_id)
-            if existing_client and existing_client != client_id:
+            # 检查是否已被其他节点上报
+            existing_node = await redis_client.hget(AGENT_NODE_KEY, hasn_id)
+            if existing_node and existing_node != node_id:
                 failed.append({
                     'hasn_id': hasn_id,
-                    'reason': f'已在客户端 {existing_client} 上运行',
+                    'reason': f'已在节点 {existing_node} 上运行',
                 })
                 continue
 
-            # 注册
-            await redis_client.hset(AGENT_CLIENT_KEY, hasn_id, client_id)
+            # 注册到统一路由表
+            await redis_client.hset(AGENT_NODE_KEY, hasn_id, node_id)
             accepted.append(hasn_id)
 
         return {'accepted': accepted, 'failed': failed}
 
     async def add_agent(
         self,
-        client_id: str,
+        node_id: str,
         user_hasn_id: str,
         hasn_id: str,
         db: AsyncSession,
     ) -> dict[str, Any]:
         """动态新增 Agent"""
         result = await self.report_agents(
-            client_id, user_hasn_id, [{'hasn_id': hasn_id}], db
+            node_id, user_hasn_id, [{'hasn_id': hasn_id}], db
         )
         if result['accepted']:
             return {'hasn_id': hasn_id, 'accepted': True}
         reason = result['failed'][0]['reason'] if result['failed'] else '未知错误'
         return {'hasn_id': hasn_id, 'accepted': False, 'reason': reason}
 
-    async def remove_agent(self, client_id: str, hasn_id: str) -> None:
+    async def remove_agent(self, node_id: str, hasn_id: str) -> None:
         """动态移除 Agent"""
-        existing = await redis_client.hget(AGENT_CLIENT_KEY, hasn_id)
-        if existing == client_id:
-            await redis_client.hdel(AGENT_CLIENT_KEY, hasn_id)
+        existing = await redis_client.hget(AGENT_NODE_KEY, hasn_id)
+        if existing == node_id:
+            await redis_client.hdel(AGENT_NODE_KEY, hasn_id)
 
     # ─── 消息推送 ───
 
     async def push_message_to(self, target_hasn_id: str, payload: dict) -> bool:
         """
-        统一消息推送入口（对齐 29 文档 §5.1）
+        统一消息推送入口（统一节点模型）
 
         返回 True 表示在线推送成功，False 表示进入离线队列
         """
@@ -176,15 +184,15 @@ class WsRouterService:
             return await self._push_to_agent(target_hasn_id, payload_json)
 
     async def _push_to_human(self, hasn_id: str, payload_json: str) -> bool:
-        """人类消息 → 广播所有在线客户端"""
-        client_ids = await redis_client.smembers(f'{USER_CLIENTS_PREFIX}:{hasn_id}')
+        """人类消息 → 广播所有在线节点"""
+        node_ids = await redis_client.smembers(f'{USER_NODES_PREFIX}:{hasn_id}')
         pushed = False
 
-        for cid in client_ids:
-            conn = await redis_client.hget(CLIENT_CONN_KEY, cid)
+        for nid in node_ids:
+            conn = await redis_client.hget(NODE_CONN_KEY, nid)
             if conn:
                 # 尝试直接 WebSocket 推送
-                ws = _ws_connections.get(cid)
+                ws = _ws_connections.get(nid)
                 if ws:
                     try:
                         await ws.send_text(payload_json)
@@ -193,7 +201,7 @@ class WsRouterService:
                     except Exception:
                         pass
                 # 回退到 Redis 队列
-                await redis_client.rpush(f'{PUSH_PREFIX}:{cid}', payload_json)
+                await redis_client.rpush(f'{PUSH_PREFIX}:{nid}', payload_json)
                 pushed = True
 
         if not pushed:
@@ -202,32 +210,27 @@ class WsRouterService:
         return pushed
 
     async def _push_to_agent(self, hasn_id: str, payload_json: str) -> bool:
-        """Agent 消息 → 先查 Gateway（云端），再查客户端（本地）"""
+        """Agent 消息 → 查统一路由表 hasn:agent_node（不区分桌面端/云端）"""
         # 注入 to_id 字段
         payload = json.loads(payload_json)
         payload['to_id'] = hasn_id
         payload_json = json.dumps(payload, ensure_ascii=False)
 
-        # 1. 查 Gateway（云端 Agent）
-        gw_conn = await redis_client.hget(GW_AGENTS_KEY, hasn_id)
-        if gw_conn:
-            await redis_client.rpush(f'{PUSH_PREFIX}:{gw_conn}', payload_json)
-            return True
-
-        # 2. 查客户端（本地 Agent）
-        client_id = await redis_client.hget(AGENT_CLIENT_KEY, hasn_id)
-        if client_id:
-            ws = _ws_connections.get(client_id)
+        # 查统一路由表（不再区分 Gateway/Client）
+        node_id = await redis_client.hget(AGENT_NODE_KEY, hasn_id)
+        if node_id:
+            ws = _ws_connections.get(node_id)
             if ws:
                 try:
                     await ws.send_text(payload_json)
                     return True
                 except Exception:
                     pass
-            await redis_client.rpush(f'{PUSH_PREFIX}:{client_id}', payload_json)
+            # WS 不可用 → Redis 队列
+            await redis_client.rpush(f'{PUSH_PREFIX}:{node_id}', payload_json)
             return True
 
-        # 3. 离线
+        # 离线
         await self._enqueue_offline(hasn_id, payload_json)
         return False
 
@@ -278,16 +281,13 @@ class WsRouterService:
 
     async def is_human_online(self, hasn_id: str) -> bool:
         """查询 Human 是否在线"""
-        clients = await redis_client.smembers(f'{USER_CLIENTS_PREFIX}:{hasn_id}')
-        return len(clients) > 0
+        nodes = await redis_client.smembers(f'{USER_NODES_PREFIX}:{hasn_id}')
+        return len(nodes) > 0
 
     async def is_agent_online(self, hasn_id: str) -> bool:
-        """查询 Agent 是否在线（云端或本地）"""
-        gw = await redis_client.hget(GW_AGENTS_KEY, hasn_id)
-        if gw:
-            return True
-        client = await redis_client.hget(AGENT_CLIENT_KEY, hasn_id)
-        return client is not None
+        """查询 Agent 是否在线（统一查路由表）"""
+        node = await redis_client.hget(AGENT_NODE_KEY, hasn_id)
+        return node is not None
 
     async def get_entity_status(self, hasn_id: str) -> str:
         """获取实体在线状态"""
@@ -297,7 +297,7 @@ class WsRouterService:
             return 'online' if await self.is_agent_online(hasn_id) else 'offline'
 
 
-# 进程内 WebSocket 连接引用（client_id → WebSocket）
+# 进程内 WebSocket 连接引用（node_id → WebSocket）
 _ws_connections: dict[str, WebSocket] = {}
 
 # 全局单例

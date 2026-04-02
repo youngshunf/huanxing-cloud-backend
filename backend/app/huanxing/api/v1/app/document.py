@@ -9,6 +9,7 @@ from backend.app.huanxing.schema.huanxing_document import (
     GetHuanxingDocumentDetail,
     UpdateHuanxingDocumentParam,
     AutosaveParam,
+    SaveShareLinkParam,
 )
 from backend.app.huanxing.schema.huanxing_document_folder import MoveDocumentParam
 from backend.app.huanxing.service.huanxing_document_service import huanxing_document_service
@@ -71,9 +72,30 @@ async def get_my_document(
     pk: Annotated[int, Path(description='文档 ID')],
 ) -> ResponseSchemaModel[GetHuanxingDocumentDetail]:
     document = await huanxing_document_service.get(db=db, pk=pk)
-    # 校验文档归属
+    # 校验文档归属或协作权限
     if document.user_id != request.user.id:
-        raise errors.ForbiddenError(msg='无权访问该文档')
+        from backend.app.huanxing.model.huanxing_document_collaborator import HuanxingDocumentCollaborator
+        from sqlalchemy import select
+        collab = (await db.execute(
+            select(HuanxingDocumentCollaborator).where(
+                HuanxingDocumentCollaborator.document_id == pk,
+                HuanxingDocumentCollaborator.user_id == request.user.id
+            )
+        )).scalars().first()
+        if not collab:
+            raise errors.ForbiddenError(msg='无权访问该文档')
+        # 如果是分享文档，还需要校验是否过期
+        if document.share_token:
+            from backend.utils.timezone import timezone as tz
+            if document.share_expires_at and document.share_expires_at <= tz.now():
+                raise errors.ForbiddenError(msg='该分享文档链接已过期或失效')
+        else:
+            raise errors.ForbiddenError(msg='该分享已被原作者关闭')
+            
+        # 覆写给前端看
+        document.folder_id = collab.folder_id
+        document.share_permission = collab.permission
+
     return response_base.success(data=document)
 
 
@@ -92,8 +114,25 @@ async def update_my_document(
     # 先校验归属
     document = await huanxing_document_service.get(db=db, pk=pk)
     if document.user_id != user_id:
-        raise errors.ForbiddenError(msg='无权修改该文档')
-    count = await huanxing_document_service.update(db=db, pk=pk, obj=obj, user_id=user_id)
+        from backend.app.huanxing.model.huanxing_document_collaborator import HuanxingDocumentCollaborator
+        from sqlalchemy import select
+        collab = (await db.execute(
+            select(HuanxingDocumentCollaborator).where(
+                HuanxingDocumentCollaborator.document_id == pk,
+                HuanxingDocumentCollaborator.user_id == user_id
+            )
+        )).scalars().first()
+        if not collab or collab.permission != 'edit':
+            raise errors.ForbiddenError(msg='无权修改该文档 (您只有只读权限或无权访问)')
+            
+        if document.share_token:
+            from backend.utils.timezone import timezone as tz
+            if document.share_expires_at and document.share_expires_at <= tz.now():
+                raise errors.ForbiddenError(msg='分享已过期，禁止修改')
+        else:
+            raise errors.ForbiddenError(msg='分享已关闭，禁止修改')
+            
+    count = await huanxing_document_service.update(db=db, pk=pk, obj=obj, user_id=document.user_id) # 修改依然算作 owner 更新
     if count > 0:
         return response_base.success()
     return response_base.fail()
@@ -326,6 +365,26 @@ async def move_document(
     user_id = request.user.id
     count = await huanxing_document_folder_service.move_document(
         db=db, document_id=pk, target_folder_id=obj.target_folder_id, user_id=user_id
+    )
+    if count > 0:
+        return response_base.success()
+    return response_base.fail()
+
+
+@router.post(
+    '/share/save',
+    summary='接收并保存分享文档',
+    dependencies=[DependsJwtAuth],
+)
+async def save_shared_document(
+    request: Request,
+    db: CurrentSessionTransaction,
+    obj: SaveShareLinkParam,
+) -> ResponseModel:
+    user_id = request.user.id
+    # Call service to map the share token to current user
+    count = await huanxing_document_service.save_shared_document(
+        db=db, user_id=user_id, share_token=obj.share_token, folder_id=obj.folder_id
     )
     if count > 0:
         return response_base.success()

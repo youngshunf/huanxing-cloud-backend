@@ -44,6 +44,12 @@ class ShareSettingsParam(SchemaBase):
     password: Optional[str] = Field(None, description='密码(可选)')
 
 
+class SaveShareLinkParam(SchemaBase):
+    """保存分享链接参数"""
+    share_token: str = Field(description='分享链接Token')
+    folder_id: Optional[int] = Field(None, description='保存目录ID（空=默认建立/存入分享文档库）')
+
+
 class HuanxingDocumentSchemaBase(SchemaBase):
     """唤星文档基础模型"""
     uuid: str = Field(description='文档UUID')
