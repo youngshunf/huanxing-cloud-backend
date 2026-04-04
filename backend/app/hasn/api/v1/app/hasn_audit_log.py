@@ -32,7 +32,7 @@ async def get_my_hasn_audit_logs(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnAuditLogDetail]]:
     user_id = request.user.id
-    page_data = await hasn_audit_log_service.get_list(db=db, user_id=user_id)
+    page_data = await hasn_audit_log_service.get_list(db=db)
     return response_base.success(data=page_data)
 
 
@@ -47,7 +47,7 @@ async def create_my_hasn_audit_log(
     obj: CreateHasnAuditLogParam,
 ) -> ResponseModel:
     user_id = request.user.id
-    result = await hasn_audit_log_service.create(db=db, obj=obj, user_id=user_id)
+    result = await hasn_audit_log_service.create(db=db, obj=obj)
     return response_base.success(data=result)
 
 
@@ -82,7 +82,7 @@ async def update_my_hasn_audit_log(
     hasn_audit_log = await hasn_audit_log_service.get(db=db, pk=pk)
     if hasn_audit_log.user_id != user_id:
         raise errors.ForbiddenError(msg='无权修改该HASN 审计日志')
-    count = await hasn_audit_log_service.update(db=db, pk=pk, obj=obj, user_id=user_id)
+    count = await hasn_audit_log_service.update(db=db, pk=pk, obj=obj)
     if count > 0:
         return response_base.success()
     return response_base.fail()

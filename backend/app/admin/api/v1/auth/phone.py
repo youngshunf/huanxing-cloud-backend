@@ -31,6 +31,12 @@ from backend.database.redis import redis_client
 from backend.utils.limiter import RateLimiter
 from backend.utils.timezone import timezone
 
+# HASN 自动注册（登录时签发 node_key）
+try:
+    from backend.app.hasn.service.hasn_auth import ensure_hasn_node_key as _ensure_hasn_node_key
+except ImportError:
+    _ensure_hasn_node_key = None
+
 router = APIRouter()
 
 # 验证码 Redis 前缀
@@ -228,6 +234,17 @@ async def phone_login(
         is_new_user=is_new_user,
     )
 
+    # 自动注册 HASN 身份 + 签发 Node Key（不阻塞登录）
+    hasn_node_key = None
+    if _ensure_hasn_node_key is not None:
+        hasn_node_key = await _ensure_hasn_node_key(
+            db=db,
+            user_id=user.id,
+            nickname=user.nickname or '唤星用户',
+            client_type='desktop',
+            device_name=None,
+        )
+
     return response_base.success(
         data=PhoneLoginResponse(
             access_token=access_token_data.access_token,
@@ -238,6 +255,7 @@ async def phone_login(
             llm_base_url=settings.LLM_API_BASE_URL,
             agent_key=settings.AGENT_SECRET_KEY.split(',')[0].strip(),
             gateway_token=gateway_token,
+            hasn_node_key=hasn_node_key,
             is_new_user=is_new_user,
             user=user_info,
         )

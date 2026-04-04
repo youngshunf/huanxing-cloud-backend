@@ -32,7 +32,7 @@ async def get_my_hasn_humanss(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnHumansDetail]]:
     user_id = request.user.id
-    page_data = await hasn_humans_service.get_list(db=db, user_id=user_id)
+    page_data = await hasn_humans_service.get_list(db=db)
     return response_base.success(data=page_data)
 
 
@@ -47,7 +47,7 @@ async def create_my_hasn_humans(
     obj: CreateHasnHumansParam,
 ) -> ResponseModel:
     user_id = request.user.id
-    result = await hasn_humans_service.create(db=db, obj=obj, user_id=user_id)
+    result = await hasn_humans_service.create(db=db, obj=obj)
     return response_base.success(data=result)
 
 
@@ -82,7 +82,7 @@ async def update_my_hasn_humans(
     hasn_humans = await hasn_humans_service.get(db=db, pk=pk)
     if hasn_humans.user_id != user_id:
         raise errors.ForbiddenError(msg='无权修改该HASN 人类用户身份')
-    count = await hasn_humans_service.update(db=db, pk=pk, obj=obj, user_id=user_id)
+    count = await hasn_humans_service.update(db=db, pk=pk, obj=obj)
     if count > 0:
         return response_base.success()
     return response_base.fail()

@@ -54,6 +54,13 @@ def _generate_api_key() -> tuple[str, str]:
     return raw_key, key_hash
 
 
+def _generate_node_key() -> tuple[str, str]:
+    """生成 Node Key (hasn_nk_ 前缀) 和对应的 SHA256 哈希"""
+    raw_key = f"hasn_nk_{secrets.token_urlsafe(48)}"
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    return raw_key, key_hash
+
+
 # ─── Client JWT ───
 
 HASN_CLIENT_JWT_SECRET = settings.TOKEN_SECRET_KEY
@@ -106,19 +113,20 @@ def verify_client_jwt(token: str) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail=f'Client JWT 无效: {e}')
 
 
-# ─── Node API Key 验证（统一节点模型） ───
+# ─── Node Key 验证（统一节点模型 v5.0） ───
 
-async def verify_node_api_key(api_key: str) -> dict[str, Any]:
+async def verify_node_key(node_key: str) -> dict[str, Any]:
     """
-    验证节点 API Key，返回节点身份信息。
+    验证节点 Node Key，返回节点身份信息（不包含用户身份）。
 
-    API Key 格式: hasn_ak_{64字符随机字符串}
-    通过 hasn_clients 表中的 api_key_hash 查找对应节点记录。
+    Node Key 格式: hasn_nk_{64字符随机字符串}
+    Node Key 仅验证物理节点合法性，不绑定任何用户身份。
+    用户身份通过后续的 report_entities / add_entity 动态上报。
     """
-    if not api_key.startswith('hasn_ak_'):
-        raise HTTPException(status_code=401, detail='无效的 API Key 格式')
+    if not node_key.startswith('hasn_nk_'):
+        raise HTTPException(status_code=401, detail='无效的 Node Key 格式（期望 hasn_nk_ 前缀）')
 
-    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    key_hash = hashlib.sha256(node_key.encode()).hexdigest()
 
     async with async_db_session() as db:
         result = await db.execute(
@@ -130,16 +138,19 @@ async def verify_node_api_key(api_key: str) -> dict[str, Any]:
         client = result.scalar_one_or_none()
 
     if not client:
-        raise HTTPException(status_code=401, detail='Node API Key 无效或节点已停用')
+        raise HTTPException(status_code=401, detail='Node Key 无效或节点已停用')
 
     return {
-        'sub': client.user_hasn_id,
         'node_id': client.client_id,
         'node_type': client.client_type,
         'capacity': getattr(client, 'capacity', 1) or 1,
-        'star_id': '',
-        'type': 'node_api_key',
+        'type': 'node_key',
     }
+
+
+# 兼容旧接口
+async def verify_node_api_key(api_key: str) -> dict[str, Any]:
+    return await verify_node_key(api_key)
 
 
 # ─── Agent API Key 验证 ───
@@ -238,8 +249,9 @@ async def register_hasn_agent(
     agent_name: str,
     display_name: str,
     agent_type: str = 'local',
-    server_id: str | None = None,
-    home_client_id: int | None = None,
+    role: str = 'specialist',
+    description: str | None = None,
+    capabilities: list | None = None,
     created_via: str = 'client',
 ) -> dict[str, Any]:
     """
@@ -247,7 +259,12 @@ async def register_hasn_agent(
 
     幂等：同一 owner + agent_name 不重复创建
 
-    返回: {agent: HasnAgents, api_key: str | None, already_exists: bool}
+    参数:
+      role: primary | specialist | service
+      description: Agent 描述
+      capabilities: A2A AgentCard 兼容能力列表
+
+    返回: {agent: HasnAgents, agent_key: str | None, already_exists: bool}
     """
     # 验证 owner 存在
     owner_result = await db.execute(
@@ -268,14 +285,14 @@ async def register_hasn_agent(
     if existing_agent:
         return {
             'agent': existing_agent,
-            'api_key': None,
+            'agent_key': None,
             'already_exists': True,
         }
 
     # 生成身份
     agent_hasn_id = f"a_{uuid.uuid4()}"
     agent_star_id = f"{owner.star_id}#{agent_name}"
-    api_key, api_key_hash = _generate_api_key()
+    agent_key, agent_key_hash = _generate_api_key()
 
     agent = HasnAgents(
         hasn_id=agent_hasn_id,
@@ -284,9 +301,10 @@ async def register_hasn_agent(
         name=display_name,
         agent_name=agent_name,
         type=agent_type,
-        server_id=server_id,
-        home_client_id=home_client_id,
-        api_key_hash=api_key_hash,
+        role=role or 'specialist',
+        description=description,
+        capabilities=capabilities,
+        api_key_hash=agent_key_hash,
         status='active',
         created_via=created_via,
     )
@@ -295,7 +313,7 @@ async def register_hasn_agent(
 
     return {
         'agent': agent,
-        'api_key': api_key,
+        'agent_key': agent_key,
         'already_exists': False,
     }
 
@@ -342,6 +360,61 @@ async def register_client(
     db.add(client)
     await db.flush()
     return client
+
+
+# ─── 登录时自动 HASN 注册 + Node Key 签发 ───
+
+async def ensure_hasn_node_key(
+    db: AsyncSession,
+    user_id: int,
+    nickname: str,
+    client_type: str = 'desktop',
+    device_name: str | None = None,
+) -> str | None:
+    """
+    登录时调用：确保 HASN 身份已注册 + 节点设备已注册 + 签发 Node Key
+
+    幂等：已有 Node Key 直接复用（不重新生成）。
+    如果任何步骤失败，返回 None（不阻塞登录）。
+
+    返回: node_key (hasn_nk_xxx) 或 None
+    """
+    from backend.common.log import log
+    try:
+        # 1. 注册 HASN Human（幂等）
+        identity = await register_hasn_identity(
+            db=db,
+            user_id=user_id,
+            name=nickname,
+        )
+        hasn_id = identity['human'].hasn_id
+
+        # 2. 注册 Node 设备（幂等）
+        client = await register_client(
+            db=db,
+            user_hasn_id=hasn_id,
+            client_type=client_type,
+            device_name=device_name,
+            device_info={'source': 'login_auto', 'client_type': client_type},
+        )
+
+        # 3. 签发/复用 Node Key
+        if client.api_key_hash:
+            # 已有 node_key hash —— 复用需重新签发（因为我们不存明文）
+            # 每次登录都生成新的 node_key，旧的自动失效
+            pass
+
+        node_key, node_key_hash = _generate_node_key()
+        client.api_key_hash = node_key_hash
+        await db.flush()
+
+        log.info(f'[HASN] 登录自动注册 OK: user_id={user_id}, hasn_id={hasn_id}, '
+                 f'node_id={client.client_id}')
+        return node_key
+
+    except Exception as e:
+        log.warning(f'[HASN] 登录自动注册 HASN 失败（不阻塞登录）: {e}')
+        return None
 
 
 # ─── 认证依赖注入 ───

@@ -28,6 +28,7 @@ from backend.app.hasn.service.hasn_auth import (
     register_client,
     issue_client_jwt,
     hasn_auth_from_jwt,
+    ensure_hasn_node_key,
 )
 from backend.app.hasn.service.ws_router import ws_router
 
@@ -69,7 +70,20 @@ async def api_register_hasn(
         avatar_url=obj_in.avatar_url,
         bio=obj_in.bio,
     )
-    if not result.get('already_exists'):
+
+    # 同步签发 Node Key（每次注册/恢复都签发，确保桌面端能拿到有效凭据）
+    node_key = None
+    try:
+        node_key = await ensure_hasn_node_key(
+            db=db,
+            user_id=user_info.id,
+            nickname=obj_in.name,
+            client_type='desktop',
+        )
+    except Exception:
+        pass  # 非致命
+
+    if not result.get('already_exists') or node_key:
         await db.commit()
 
     response_data = {
@@ -80,14 +94,16 @@ async def api_register_hasn(
         },
         'already_exists': result.get('already_exists', False),
     }
+    if node_key:
+        response_data['node_key'] = node_key
     if result.get('agent'):
         response_data['agent'] = {
             'hasn_id': result['agent'].hasn_id,
             'star_id': result['agent'].star_id,
             'name': result['agent'].name,
         }
-    if result.get('api_key'):
-        response_data['agent']['api_key'] = result['api_key']
+    if result.get('agent_key'):
+        response_data['agent']['agent_key'] = result['agent_key']
 
     return response_base.success(data=response_data)
 
@@ -95,11 +111,12 @@ async def api_register_hasn(
 # ─── 注册 Agent HASN 身份 ───
 
 class RegisterAgentReq(BaseModel):
-    agent_name: str = Field(description='Agent 标识名（目录名，唯一）')
+    agent_name: str = Field(description='Agent 标识名（目录名，同一 Owner 下唯一）')
     display_name: str = Field(description='Agent 显示名称')
-    agent_type: str = Field(default='local', description='Agent 类型: local/cloud')
-    server_id: str | None = Field(None, description='云端 Agent 服务器标识')
-    client_id: str | None = Field(None, description='本地 Agent 归属客户端 ID')
+    agent_type: str = Field(default='local', description='Agent 类型: local | cloud')
+    role: str = Field(default='specialist', description='Agent 角色: primary | specialist | service')
+    description: str | None = Field(None, description='Agent 描述')
+    capabilities: list | None = Field(None, description='能力列表（A2A AgentCard 兼容）')
 
 
 @router.post('/auth/register-agent', summary='注册 Agent HASN 身份')
@@ -109,29 +126,15 @@ async def api_register_agent(
     auth: dict = Depends(hasn_auth_from_jwt),
 ) -> ResponseModel:
     """为当前用户的 Agent 注册 HASN 身份，幂等（同一 owner + agent_name 不重复创建）"""
-    # 如果传入了 client_id，需要查找对应的数据库 ID
-    home_client_db_id = None
-    if obj_in.client_id and obj_in.agent_type == 'local':
-        from backend.app.hasn.model.hasn_clients import HasnClients
-        client_result = await db.execute(
-            select(HasnClients).where(
-                HasnClients.client_id == obj_in.client_id,
-                HasnClients.user_hasn_id == auth['hasn_id'],
-            )
-        )
-        client_record = client_result.scalar_one_or_none()
-        if client_record:
-            home_client_db_id = client_record.id
-
     result = await register_hasn_agent(
         db=db,
         owner_hasn_id=auth['hasn_id'],
         agent_name=obj_in.agent_name,
         display_name=obj_in.display_name,
         agent_type=obj_in.agent_type,
-        server_id=obj_in.server_id,
-        home_client_id=home_client_db_id,
-        created_via='client',
+        role=obj_in.role,
+        description=obj_in.description,
+        capabilities=obj_in.capabilities,
     )
     if not result.get('already_exists'):
         await db.commit()
@@ -143,10 +146,14 @@ async def api_register_agent(
         'agent_name': result['agent'].agent_name,
         'already_exists': result.get('already_exists', False),
     }
-    if result.get('api_key'):
-        response_data['api_key'] = result['api_key']
+    if result.get('agent_key'):
+        response_data['agent_key'] = result['agent_key']
 
     return response_base.success(data=response_data)
+
+
+
+
 
 
 # ─── 注册客户端 ───

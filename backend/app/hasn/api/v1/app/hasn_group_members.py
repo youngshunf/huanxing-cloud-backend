@@ -32,7 +32,7 @@ async def get_my_hasn_group_memberss(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnGroupMembersDetail]]:
     user_id = request.user.id
-    page_data = await hasn_group_members_service.get_list(db=db, user_id=user_id)
+    page_data = await hasn_group_members_service.get_list(db=db)
     return response_base.success(data=page_data)
 
 
@@ -47,7 +47,7 @@ async def create_my_hasn_group_members(
     obj: CreateHasnGroupMembersParam,
 ) -> ResponseModel:
     user_id = request.user.id
-    result = await hasn_group_members_service.create(db=db, obj=obj, user_id=user_id)
+    result = await hasn_group_members_service.create(db=db, obj=obj)
     return response_base.success(data=result)
 
 
@@ -82,7 +82,7 @@ async def update_my_hasn_group_members(
     hasn_group_members = await hasn_group_members_service.get(db=db, pk=pk)
     if hasn_group_members.user_id != user_id:
         raise errors.ForbiddenError(msg='无权修改该HASN 群成员')
-    count = await hasn_group_members_service.update(db=db, pk=pk, obj=obj, user_id=user_id)
+    count = await hasn_group_members_service.update(db=db, pk=pk, obj=obj)
     if count > 0:
         return response_base.success()
     return response_base.fail()
