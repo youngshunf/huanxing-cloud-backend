@@ -44,7 +44,7 @@ class GetLoginToken(AccessTokenBase):
     password_expire_days_remaining: int | None = Field(None, description='密码过期剩余天数')
     llm_token: str = Field(description='LLM API Key')
     llm_base_url: str | None = Field(default=None, description='LLM API Base URL')
-    hasn_api_key: str | None = Field(default=None, description='HASN API Key')
+    hasn_node_key: str | None = Field(default=None, description='HASN Node Key（hasn_nk_ 前缀）')
     user: GetUserInfoDetail = Field(description='用户信息')
 
 

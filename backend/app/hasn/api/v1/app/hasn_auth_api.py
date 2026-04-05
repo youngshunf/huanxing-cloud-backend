@@ -1,11 +1,11 @@
-"""HASN 认证与客户端注册 REST API
+"""HASN 认证与 Node 注册 REST API
 
 端点：
 - POST /hasn/auth/register          注册 HASN 身份（Human + 默认 Agent）
-- POST /hasn/auth/register-client   注册客户端设备
-- POST /hasn/auth/client-token      签发 Client JWT
+- POST /hasn/auth/register-node     注册节点
+- POST /hasn/auth/node-token        签发 Node JWT（如需）
 - GET  /hasn/me                     获取当前用户 HASN 身份
-- GET  /hasn/me/clients             我的客户端列表
+- GET  /hasn/me/nodes               我的节点列表
 - GET  /hasn/me/agents              我的 Agent 列表（含在线状态）
 """
 
@@ -21,14 +21,15 @@ from backend.common.security.jwt import DependsJwtAuth, jwt_authentication
 from backend.database.db import CurrentSession, async_db_session
 from backend.app.hasn.model import HasnHumans
 from backend.app.hasn.model.hasn_agents import HasnAgents
-from backend.app.hasn.model.hasn_clients import HasnClients
+from backend.app.hasn.model.hasn_nodes import HasnNodes
 from backend.app.hasn.service.hasn_auth import (
     register_hasn_identity,
     register_hasn_agent,
-    register_client,
-    issue_client_jwt,
+    register_node,
+    issue_node_jwt,
     hasn_auth_from_jwt,
     ensure_hasn_node_key,
+    reissue_hasn_node_key,
 )
 from backend.app.hasn.service.ws_router import ws_router
 
@@ -44,7 +45,7 @@ class RegisterHasnReq(BaseModel):
 
 
 class RegisterClientReq(BaseModel):
-    client_type: str = Field(default='desktop', description='客户端类型: desktop/mobile/web')
+    client_type: str = Field(default='desktop', description='节点类型: desktop/mobile/web/cloud/sdk')
     device_name: str | None = Field(None, description='设备名称')
     device_info: dict | None = Field(None, description='设备信息')
 
@@ -156,67 +157,67 @@ async def api_register_agent(
 
 
 
-# ─── 注册客户端 ───
+# ─── 注册节点 ───
 
-@router.post('/auth/register-client', summary='注册客户端设备')
-async def api_register_client(
+@router.post('/auth/register-node', summary='注册节点')
+async def api_register_node(
     obj_in: RegisterClientReq,
     db: CurrentSession,
     auth: dict = Depends(hasn_auth_from_jwt),
 ) -> ResponseModel:
-    """注册客户端设备，返回 client_id"""
-    client = await register_client(
+    """注册节点，返回 node_id"""
+    node = await register_node(
         db=db,
-        user_hasn_id=auth['hasn_id'],
-        client_type=obj_in.client_type,
-        device_name=obj_in.device_name,
-        device_info=obj_in.device_info,
+        owner_hasn_id=auth['hasn_id'],
+        node_type=obj_in.client_type,
+        node_name=obj_in.device_name,
+        node_info=obj_in.device_info,
     )
     await db.commit()
 
     return response_base.success(data={
-        'client_id': client.client_id,
-        'client_type': client.client_type,
-        'device_name': client.device_name,
+        'node_id': node.node_id,
+        'node_type': node.node_type,
+        'node_name': node.node_name,
     })
 
 
 class ClientTokenReq(BaseModel):
-    client_id: str = Field(description='客户端 ID')
+    node_id: str = Field(description='节点 ID')
 
 
-# ─── 签发 Client JWT ───
+# ─── 签发 Node JWT（保留为可选能力） ───
 
-@router.post('/auth/client-token', summary='签发 Client JWT')
-async def api_client_token(
+@router.post('/auth/node-token', summary='签发 Node JWT')
+async def api_node_token(
     obj_in: ClientTokenReq,
     auth: dict = Depends(hasn_auth_from_jwt),
 ) -> ResponseModel:
-    """签发 Client JWT（用于 WebSocket 连接认证）"""
-    client_id = obj_in.client_id
+    """签发 Node JWT（仅保留为可选能力，主路径使用 NodeKey）"""
+    node_id = obj_in.node_id
     async with async_db_session() as db:
         result = await db.execute(
-            select(HasnClients).where(
-                HasnClients.client_id == client_id,
-                HasnClients.user_hasn_id == auth['hasn_id'],
-                HasnClients.status == 'active',
+            select(HasnNodes).where(
+                HasnNodes.node_id == node_id,
+                HasnNodes.created_by_owner_id == auth['hasn_id'],
+                HasnNodes.status == 'active',
             )
         )
-        client = result.scalar_one_or_none()
+        node = result.scalar_one_or_none()
 
-    if not client:
-        return response_base.fail(msg='客户端不存在或不属于当前用户')
+    if not node:
+        return response_base.fail(msg='节点不存在或不属于当前用户')
 
-    token = issue_client_jwt(
+    token = issue_node_jwt(
         user_hasn_id=auth['hasn_id'],
-        client_id=client_id,
-        client_type=client.client_type,
+        node_id=node_id,
+        node_type=node.node_type,
         star_id=auth['star_id'],
     )
 
     return response_base.success(data={
-        'client_jwt': token,
-        'client_id': client_id,
+        'node_jwt': token,
+        'node_id': node_id,
     })
 
 
@@ -249,32 +250,56 @@ async def api_get_me(
     })
 
 
-# ─── 我的客户端列表 ───
+# ─── 我的节点列表 ───
 
-@router.get('/me/clients', summary='我的客户端列表')
-async def api_list_clients(
+@router.get('/me/nodes', summary='我的节点列表')
+async def api_list_nodes(
     auth: dict = Depends(hasn_auth_from_jwt),
 ) -> ResponseModel:
     async with async_db_session() as db:
         result = await db.execute(
-            select(HasnClients).where(
-                HasnClients.user_hasn_id == auth['hasn_id'],
-                HasnClients.status == 'active',
-            ).order_by(HasnClients.created_time.desc())
+            select(HasnNodes).where(
+                HasnNodes.created_by_owner_id == auth['hasn_id'],
+                HasnNodes.status == 'active',
+            ).order_by(HasnNodes.created_time.desc())
         )
-        clients = result.scalars().all()
+        nodes = result.scalars().all()
 
     return response_base.success(data=[
         {
-            'client_id': c.client_id,
-            'client_type': c.client_type,
-            'device_name': c.device_name,
-            'device_info': c.device_info,
-            'last_seen_at': c.last_seen_at.isoformat() if c.last_seen_at else None,
-            'created_time': c.created_time.isoformat() if c.created_time else None,
+            'node_id': n.node_id,
+            'user_id': n.user_id,
+            'allowed_owner_hasn_ids': n.allowed_owner_hasn_ids,
+            'node_type': n.node_type,
+            'node_name': n.node_name,
+            'device_fingerprint': n.device_fingerprint,
+            'device_platform': n.device_platform,
+            'app_version': n.app_version,
+            'node_info': n.node_info,
+            'capacity': n.capacity,
+            'last_seen_at': n.last_seen_at.isoformat() if n.last_seen_at else None,
+            'created_time': n.created_time.isoformat() if n.created_time else None,
         }
-        for c in clients
+        for n in nodes
     ])
+
+
+@router.post('/me/nodes/{node_id}/reissue-key', summary='重新签发 Node Key')
+async def api_reissue_node_key(
+    node_id: str,
+    db: CurrentSession,
+    auth: dict = Depends(hasn_auth_from_jwt),
+) -> ResponseModel:
+    node_key = await reissue_hasn_node_key(
+        db=db,
+        node_id=node_id,
+        owner_hasn_id=auth['hasn_id'],
+    )
+    await db.commit()
+    return response_base.success(data={
+        'node_id': node_id,
+        'node_key': node_key,
+    })
 
 
 # ─── 我的 Agent 列表 ───

@@ -1,12 +1,15 @@
 """HASN WebSocket 连接管理服务
 
-统一实体架构 (v5.0)：Human 和 Agent 都是一等公民，统一路由。
+现行模型：
+- Node 先建立物理连接
+- Owner 通过 add_owner 建立在线路由资格
+- Agent 通过 add_agent 建立 Presence
 
 Redis 数据结构：
   hasn:node_conn                HASH  node_id → JSON{node_type, capacity, connected_at}
-  hasn:entity_node              HASH  hasn_id → node_id  (统一路由表：h_xxx/a_xxx → 宿主节点)
-  hasn:node_entities:{node_id}  SET   {hasn_id, ...}  (一个 Node 上的所有实体)
-  hasn:user_nodes:{hasn_id}     SET   {node_id, ...}  (一个 Human 的所有在线节点，用于广播)
+  hasn:entity_node              HASH  a_xxx → node_id  (Agent 定向路由)
+  hasn:node_entities:{node_id}  SET   {hasn_id, ...}   (Node 上的在线实体；active owner + online agent)
+  hasn:user_nodes:{hasn_id}     SET   {node_id, ...}   (Owner 的所有在线节点，用于广播)
   hasn:push:{node_id}           LIST  待推消息队列
   hasn:offline:{hasn_id}        LIST  (7天 TTL)
 """
@@ -22,6 +25,8 @@ from backend.database.redis import redis_client
 from backend.utils.timezone import timezone
 
 from backend.app.hasn.model.hasn_agents import HasnAgents
+from backend.app.hasn.service.hasn_auth import verify_owner_proof
+from backend.app.hasn.service.hasn_node_bindings_service import hasn_node_bindings_service
 
 # Redis 键
 NODE_CONN_KEY = 'hasn:node_conn'
@@ -84,129 +89,112 @@ class WsRouterService:
         # 移除 WebSocket 引用
         _ws_connections.pop(node_id, None)
 
-    # ─── 统一实体上报（全量同步） ───
+    # ─── 现行控制平面：Owner Binding / Agent Presence ───
 
-    async def report_entities(
+    async def add_owner(
         self,
         node_id: str,
-        entities: list[dict],
+        owner_id: str,
+        owner_proof: dict,
         db: AsyncSession,
     ) -> dict[str, Any]:
-        """
-        处理 hasn.node.report_entities（全量同步）
+        proof = await verify_owner_proof(owner_id, owner_proof, node_id, db)
+        binding = await hasn_node_bindings_service.add_owner_binding(
+            db=db,
+            node_id=node_id,
+            owner_id=owner_id,
+            auth_profile=proof['auth_profile'],
+            scopes=proof['scopes'],
+            expires_at=proof['expires_at'],
+        )
+        await self._register_entity(node_id, owner_id, is_human=True)
+        return {
+            'binding_id': binding.binding_id,
+            'owner_id': owner_id,
+            'accepted': True,
+            'scopes': binding.scopes,
+            'expires_at': binding.expires_at.isoformat() if binding.expires_at else None,
+        }
 
-        entities 格式:
-        - Human: { hasn_id, entity_type: "human", auth_token }
-        - Agent: { hasn_id, entity_type: "agent", owner_id }
+    async def renew_owner(
+        self,
+        node_id: str,
+        owner_id: str,
+        owner_proof: dict,
+        db: AsyncSession,
+    ) -> dict[str, Any]:
+        proof = await verify_owner_proof(owner_id, owner_proof, node_id, db)
+        binding = await hasn_node_bindings_service.renew_owner_binding(
+            db=db,
+            node_id=node_id,
+            owner_id=owner_id,
+            expires_at=proof['expires_at'],
+        )
+        return {
+            'binding_id': binding.binding_id,
+            'owner_id': owner_id,
+            'accepted': True,
+            'expires_at': binding.expires_at.isoformat() if binding.expires_at else None,
+        }
 
-        全量同步语义：以此列表为准，先前的旧列表整体替换。
-        """
-        accepted = []
-        failed = []
+    async def remove_owner(
+        self,
+        node_id: str,
+        owner_id: str,
+        db: AsyncSession,
+    ) -> dict[str, Any]:
+        removed = await hasn_node_bindings_service.remove_owner_binding(
+            db=db,
+            node_id=node_id,
+            owner_id=owner_id,
+        )
+        # 移除 human 路由
+        await self.unregister_entity_route(node_id, owner_id)
+        # 下线该 owner 在本节点上的 agent
+        entity_ids = await redis_client.smembers(f'{NODE_ENTITIES_PREFIX}:{node_id}')
+        for hasn_id in entity_ids:
+            if not str(hasn_id).startswith('a_'):
+                continue
+            result = await db.execute(select(HasnAgents).where(HasnAgents.hasn_id == hasn_id))
+            agent = result.scalar_one_or_none()
+            if agent and agent.owner_id == owner_id:
+                await self.unregister_entity_route(node_id, hasn_id)
+        return {'owner_id': owner_id, 'accepted': bool(removed)}
 
-        # 先清理该 Node 上的旧实体
-        old_entities = await redis_client.smembers(f'{NODE_ENTITIES_PREFIX}:{node_id}')
-        for old_id in old_entities:
-            existing = await redis_client.hget(ENTITY_NODE_KEY, old_id)
-            if existing == node_id:
-                await redis_client.hdel(ENTITY_NODE_KEY, old_id)
-            if old_id.startswith('h_'):
-                await redis_client.srem(f'{USER_NODES_PREFIX}:{old_id}', node_id)
-        await redis_client.delete(f'{NODE_ENTITIES_PREFIX}:{node_id}')
+    async def list_owners(self, node_id: str, db: AsyncSession) -> dict[str, Any]:
+        bindings = await hasn_node_bindings_service.list_active_bindings(db=db, node_id=node_id)
+        return {
+            'owners': [
+                {
+                    'binding_id': b.binding_id,
+                    'owner_id': b.owner_id,
+                    'status': b.status,
+                    'expires_at': b.expires_at.isoformat() if b.expires_at else None,
+                }
+                for b in bindings
+            ]
+        }
 
-        # 收集本次上报的所有 Human，用于 Agent owner 自动添加
-        reported_humans = set()
+    async def add_agent_presence(
+        self,
+        node_id: str,
+        agent_id: str,
+        owner_id: str,
+        db: AsyncSession,
+    ) -> dict[str, Any]:
+        binding = await hasn_node_bindings_service.get_active_binding(db=db, node_id=node_id, owner_id=owner_id)
+        if not binding:
+            return {'agent_id': agent_id, 'accepted': False, 'reason': 'owner 未绑定到当前 node'}
 
-        for entity in entities:
-            hasn_id = entity.get('hasn_id', '')
-            entity_type = entity.get('entity_type', '')
+        err = await self._validate_agent(node_id, agent_id, {'owner_id': owner_id}, db)
+        if err:
+            return {'agent_id': agent_id, 'accepted': False, 'reason': err['reason']}
+        await self._register_entity(node_id, agent_id, is_human=False)
+        return {'agent_id': agent_id, 'accepted': True}
 
-            if entity_type == 'human':
-                result = await self._validate_human(hasn_id, entity)
-                if result:
-                    failed.append(result)
-                    continue
-                # Human 校验通过
-                await self._register_entity(node_id, hasn_id, is_human=True)
-                accepted.append(hasn_id)
-                reported_humans.add(hasn_id)
-
-            elif entity_type == 'agent':
-                result = await self._validate_agent(node_id, hasn_id, entity, db)
-                if result:
-                    failed.append(result)
-                    continue
-                # Agent 校验通过
-                await self._register_entity(node_id, hasn_id, is_human=False)
-                accepted.append(hasn_id)
-
-                # 如果 owner 不在已上报列表中，自动添加
-                owner_id = entity.get('owner_id', '')
-                if owner_id and owner_id not in reported_humans:
-                    await self._register_entity(node_id, owner_id, is_human=True)
-                    reported_humans.add(owner_id)
-                    # 不加入 accepted（隐式添加）
-
-            else:
-                failed.append({'hasn_id': hasn_id, 'reason': f'未知 entity_type: {entity_type}'})
-
-        return {'accepted': accepted, 'failed': failed}
-
-    async def _validate_human(self, hasn_id: str, entity: dict) -> dict | None:
-        """校验 Human 实体。返回 None 表示通过，返回 dict 表示失败原因。
-
-        auth_token 支持两种格式:
-        - JWT Bearer Token: 平台用户的 access_token（通过 jwt_authentication 验证）
-        - Owner Token: hasn_ot_ 前缀的持有者令牌（预留，当前等价于 JWT）
-        """
-        auth_token = entity.get('auth_token', '')
-        if not auth_token:
-            return {'hasn_id': hasn_id, 'reason': '缺少 auth_token'}
-
-        if not hasn_id.startswith('h_'):
-            return {'hasn_id': hasn_id, 'reason': 'Human hasn_id 必须以 h_ 开头'}
-
-        # 验证 auth_token
-        try:
-            if auth_token.startswith('hasn_ot_'):
-                # Owner Token 验证（v5.0 预留）
-                # 当前阶段：查询 DB 确认 hasn_id 存在 + 活跃
-                from backend.app.hasn.model import HasnHumans
-                from backend.database.db import async_db_session
-
-                async with async_db_session() as db:
-                    result = await db.execute(
-                        select(HasnHumans).where(
-                            HasnHumans.hasn_id == hasn_id,
-                            HasnHumans.status == 'active',
-                        )
-                    )
-                    human = result.scalar_one_or_none()
-                    if not human:
-                        return {'hasn_id': hasn_id, 'reason': 'Human 不存在或已停用'}
-            else:
-                # JWT Bearer Token 验证
-                from backend.common.security.jwt import jwt_authentication
-                user_info = await jwt_authentication(auth_token)
-
-                # 校验 JWT 用户与 hasn_id 的对应关系
-                from backend.app.hasn.model import HasnHumans
-                from backend.database.db import async_db_session
-
-                async with async_db_session() as db:
-                    result = await db.execute(
-                        select(HasnHumans).where(
-                            HasnHumans.hasn_id == hasn_id,
-                            HasnHumans.user_id == user_info.id,
-                        )
-                    )
-                    human = result.scalar_one_or_none()
-                    if not human:
-                        return {'hasn_id': hasn_id, 'reason': 'auth_token 与 hasn_id 不匹配'}
-        except Exception as e:
-            return {'hasn_id': hasn_id, 'reason': f'auth_token 验证失败: {e}'}
-
-        return None
+    async def remove_agent_presence(self, node_id: str, agent_id: str) -> dict[str, Any]:
+        await self.unregister_entity_route(node_id, agent_id)
+        return {'agent_id': agent_id, 'accepted': True}
 
     async def _validate_agent(
         self, node_id: str, hasn_id: str, entity: dict, db: AsyncSession,
@@ -244,62 +232,14 @@ class WsRouterService:
         if is_human:
             await redis_client.sadd(f'{USER_NODES_PREFIX}:{hasn_id}', node_id)
 
-    # ─── 动态实体管理（增量变更） ───
-
-    async def add_entity(
-        self,
-        node_id: str,
-        entity: dict,
-        db: AsyncSession,
-    ) -> dict[str, Any]:
-        """动态新增实体（hasn.node.add_entity）"""
-        hasn_id = entity.get('hasn_id', '')
-        entity_type = entity.get('entity_type', '')
-
-        if entity_type == 'human':
-            err = await self._validate_human(hasn_id, entity)
-            if err:
-                return {'hasn_id': hasn_id, 'accepted': False, 'reason': err['reason']}
-            await self._register_entity(node_id, hasn_id, is_human=True)
-            return {'hasn_id': hasn_id, 'accepted': True}
-
-        elif entity_type == 'agent':
-            err = await self._validate_agent(node_id, hasn_id, entity, db)
-            if err:
-                return {'hasn_id': hasn_id, 'accepted': False, 'reason': err['reason']}
-            await self._register_entity(node_id, hasn_id, is_human=False)
-            return {'hasn_id': hasn_id, 'accepted': True}
-
-        return {'hasn_id': hasn_id, 'accepted': False, 'reason': f'未知 entity_type: {entity_type}'}
-
-    async def remove_entity(self, node_id: str, hasn_id: str) -> None:
-        """动态移除实体（hasn.node.remove_entity）"""
+    async def unregister_entity_route(self, node_id: str, hasn_id: str) -> None:
+        """内部帮助函数：从路由表移除单个在线实体"""
         existing = await redis_client.hget(ENTITY_NODE_KEY, hasn_id)
         if existing == node_id:
             await redis_client.hdel(ENTITY_NODE_KEY, hasn_id)
             await redis_client.srem(f'{NODE_ENTITIES_PREFIX}:{node_id}', hasn_id)
             if hasn_id.startswith('h_'):
                 await redis_client.srem(f'{USER_NODES_PREFIX}:{hasn_id}', node_id)
-
-    # 兼容旧接口
-    async def report_agents(self, node_id, user_hasn_id, agents, db):
-        entities = []
-        entities.append({'hasn_id': user_hasn_id, 'entity_type': 'human', 'auth_token': 'legacy'})
-        for a in agents:
-            entities.append({
-                'hasn_id': a.get('hasn_id', ''),
-                'entity_type': 'agent',
-                'owner_id': a.get('owner_id', user_hasn_id),
-            })
-        return await self.report_entities(node_id, entities, db)
-
-    async def add_agent(self, node_id, user_hasn_id, hasn_id, db):
-        return await self.add_entity(node_id, {
-            'hasn_id': hasn_id, 'entity_type': 'agent', 'owner_id': user_hasn_id,
-        }, db)
-
-    async def remove_agent(self, node_id, hasn_id):
-        await self.remove_entity(node_id, hasn_id)
 
     # ─── 消息推送 ───
 

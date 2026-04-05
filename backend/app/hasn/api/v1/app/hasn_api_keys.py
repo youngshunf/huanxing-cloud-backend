@@ -22,10 +22,15 @@ async def list_hasn_api_keys(
     )
     return response_base.success(data=[
         ApiKeyOut(
-            client_id=c.client_id,
-            device_name=c.device_name,
+            key_id=c.key_id,
+            key_name=c.key_name,
+            owner_id=c.owner_id,
+            status=c.status,
+            scopes=c.scopes,
+            bound_node_id=c.bound_node_id,
+            expires_at=c.expires_at,
             created_time=c.created_time,
-            last_seen_at=c.last_seen_at,
+            last_seen_at=c.last_used_at,
         ).model_dump()
         for c in clients
     ])
@@ -38,22 +43,26 @@ async def create_hasn_api_key(
 ) -> ResponseModel:
     result = await hasn_api_key_service.create_api_key(
         db=db,
+        user_id=auth['user_id'],
         user_hasn_id=auth['hasn_id'],
         name=obj_in.name,
+        scopes=obj_in.scopes,
+        bound_node_id=obj_in.bound_node_id,
+        expires_at=obj_in.expires_at,
     )
     await db.commit()
     return response_base.success(data=result.model_dump())
 
-@router.delete('/api-keys/{client_id}', summary='删除(吊销) API Key')
+@router.delete('/api-keys/{key_id}', summary='删除(吊销) API Key')
 async def delete_hasn_api_key(
-    client_id: str,
+    key_id: str,
     db: CurrentSession,
     auth: dict = Depends(hasn_auth_from_jwt),
 ) -> ResponseModel:
     await hasn_api_key_service.delete_api_key(
         db=db,
         user_hasn_id=auth['hasn_id'],
-        client_id=client_id,
+        key_id=key_id,
     )
     await db.commit()
     return response_base.success()

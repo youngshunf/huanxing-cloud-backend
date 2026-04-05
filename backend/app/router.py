@@ -1,4 +1,4 @@
-from backend.app.hasn.api.router import v1 as hasn_v1, app as hasn_app, agent as hasn_agent, open_api as hasn_open, ws as hasn_ws
+from backend.app.hasn.api.router import v1 as hasn_v1, app as hasn_app, agent as hasn_agent, open_api as hasn_open, ws as hasn_ws, app as hasn_app, agent as hasn_agent, open_api as hasn_open, app as hasn_app, agent as hasn_agent, open_api as hasn_open, app as hasn_app, agent as hasn_agent, open_api as hasn_open, app as hasn_app, agent as hasn_agent, open_api as hasn_open
 from fastapi import APIRouter
 from backend.app.admin.api.router import v1 as admin_v1, client as admin_client
 from backend.app.llm.api.router import v1 as llm_v1, app as llm_app

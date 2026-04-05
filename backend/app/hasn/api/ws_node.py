@@ -1,43 +1,18 @@
-"""HASN 统一节点 WebSocket 端点
+"""HASN 统一节点 WebSocket 端点.
 
-统一实体架构 (v5.0)：
-- 端点: /api/v1/hasn/ws/node?node_key=<hasn_nk_xxx>
-- 所有节点类型（desktop/mobile/web/cloud）共用同一端点
-- Node Key 仅验证物理节点，不绑定用户身份
-- Human 和 Agent 通过 report_entities / add_entity 动态上报
-- 帧格式: { "hasn": "hasn/2.0", "method": "hasn.xxx.yyy", "params": {...} }
-
-上行命令:
-  hasn.node.report_entities  — 全量上报实体（连接后）
-  hasn.node.add_entity       — 增量新增实体
-  hasn.node.remove_entity    — 增量移除实体
-  hasn.agent.register        — 注册新 Agent（创建 DB 记录）
-  hasn.agent.deregister      — 注销 Agent（标记删除）
-  hasn.message.send          — 发送消息
-  hasn.message.read          — 标记已读
-  hasn.typing                — 正在输入
-  hasn.ping                  — 心跳
-
-下行事件:
-  hasn.connected             — 连接成功
-  hasn.node.report_entities_ack — 实体上报结果
-  hasn.node.add_entity_ack   — 新增实体结果
-  hasn.agent.register_ack    — Agent 注册结果
-  hasn.message.received      — 收到消息
-  hasn.node.offline_messages — 离线消息补推
-  hasn.message.ack           — 发送回执
-  hasn.typing                — 对方正在输入
-  hasn.pong                  — 心跳回包
-  hasn.error                 — 错误
+现行控制平面：
+- add_owner / remove_owner / renew_owner / list_owners
+- add_agent / remove_agent
 """
 
 import json
 import logging
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi.security.utils import get_authorization_scheme_param
 
 from backend.database.db import async_db_session
-from backend.app.hasn.service.hasn_auth import verify_node_key, verify_client_jwt
+from backend.app.hasn.service.hasn_auth import verify_node_key
 from backend.app.hasn.service.ws_router import ws_router, _ws_connections
 from backend.app.hasn.service import message_router
 from backend.utils.timezone import timezone
@@ -72,23 +47,20 @@ def _response(req_id: str, result: dict = None, error: dict = None) -> dict:
 @router.websocket('/ws/node')
 async def hasn_node_websocket(
     websocket: WebSocket,
-    node_key: str = Query(None),
-    token: str = Query(None),
-    # 兼容旧参数名
-    api_key: str = Query(None),
 ):
     """HASN 统一节点 WebSocket 端点（所有节点类型共用）"""
 
-    # 1. 认证：Node Key 仅验证物理节点，不绑定用户
+    # 1. 认证：只接受 Authorization: NodeKey <hasn_nk_xxx>
     try:
-        key = node_key or api_key
-        if key:
-            auth = await verify_node_key(key)
-        elif token:
-            auth = verify_client_jwt(token)
-        else:
-            await websocket.close(code=4001, reason='缺少认证凭据 (node_key)')
+        authorization = websocket.headers.get('Authorization')
+        if not authorization:
+            await websocket.close(code=4001, reason='缺少认证头 Authorization')
             return
+        scheme, credentials = get_authorization_scheme_param(authorization)
+        if scheme != 'NodeKey':
+            await websocket.close(code=4001, reason='仅支持 NodeKey 认证')
+            return
+        auth = await verify_node_key(credentials)
     except Exception as e:
         await websocket.close(code=4001, reason=str(e))
         return
@@ -129,25 +101,13 @@ async def hasn_node_websocket(
         # 5. 清理：注销节点 + 清理所有实体
         await ws_router.unregister_node(node_id)
 
-
-# ─── 兼容旧 /ws/client 端点 ───
-
-@router.websocket('/ws/client')
-async def hasn_client_websocket_compat(
-    websocket: WebSocket,
-    token: str = Query(...),
-):
-    """兼容旧 /ws/client 端点 → 内部转发到统一节点逻辑"""
-    await hasn_node_websocket(websocket, token=token, node_key=None)
-
-
 async def _recv_loop(
     websocket: WebSocket,
     node_id: str,
 ) -> None:
     """处理节点上行消息"""
-    # 记录已上报的实体（用于 from_id 校验）
-    reported_entities: set[str] = set()
+    # 记录当前 node 的活跃主体（bound owners + online agents），用于 from_id 校验
+    active_entities: set[str] = set()
 
     while True:
         raw = await websocket.receive_text()
@@ -162,42 +122,44 @@ async def _recv_loop(
         req_id = msg.get('id')
 
         try:
-            if method == 'hasn.node.report_entities':
-                await _handle_report_entities(
-                    websocket, node_id,
-                    params.get('entities', []), reported_entities,
-                )
+            if method == 'hasn.node.add_owner':
+                await _handle_add_owner(websocket, node_id, params, active_entities)
 
-            elif method == 'hasn.node.add_entity':
-                await _handle_add_entity(
-                    websocket, node_id, params, reported_entities,
-                )
+            elif method == 'hasn.node.remove_owner':
+                await _handle_remove_owner(websocket, node_id, params, active_entities)
 
-            elif method == 'hasn.node.remove_entity':
-                hasn_id = params.get('hasn_id', '')
-                await ws_router.remove_entity(node_id, hasn_id)
-                reported_entities.discard(hasn_id)
+            elif method == 'hasn.node.renew_owner':
+                await _handle_renew_owner(websocket, node_id, params, active_entities)
+
+            elif method == 'hasn.node.list_owners':
+                await _handle_list_owners(websocket, node_id)
+
+            elif method == 'hasn.node.add_agent':
+                await _handle_add_agent(websocket, node_id, params, active_entities)
+
+            elif method == 'hasn.node.remove_agent':
+                await _handle_remove_agent(websocket, node_id, params, active_entities)
 
             elif method == 'hasn.agent.register':
                 await _handle_agent_register(
-                    websocket, node_id, params, reported_entities, req_id,
+                    websocket, node_id, params, active_entities, req_id,
                 )
 
             elif method == 'hasn.agent.deregister':
                 await _handle_agent_deregister(
-                    websocket, node_id, params, reported_entities, req_id,
+                    websocket, node_id, params, active_entities, req_id,
                 )
 
             elif method == 'hasn.message.send':
                 await _handle_send(
-                    websocket, node_id, params, reported_entities,
+                    websocket, node_id, params, active_entities,
                 )
 
             elif method == 'hasn.message.read':
-                await _handle_read(params, reported_entities)
+                await _handle_read(params, active_entities)
 
             elif method == 'hasn.typing':
-                await _handle_typing(params, reported_entities)
+                await _handle_typing(params, active_entities)
 
             elif method == 'hasn.ping':
                 await websocket.send_json(_frame('hasn.pong', {
@@ -214,61 +176,107 @@ async def _recv_loop(
 
 # ─── 命令处理器 ───
 
-async def _handle_report_entities(
-    websocket: WebSocket,
-    node_id: str,
-    entities: list[dict],
-    reported_entities: set[str],
-) -> None:
-    """处理 hasn.node.report_entities"""
-    async with async_db_session() as db:
-        result = await ws_router.report_entities(node_id, entities, db)
 
-    # 更新本地记录（全量替换）
-    reported_entities.clear()
-    for eid in result['accepted']:
-        reported_entities.add(eid)
-
-    await websocket.send_json(_frame('hasn.node.report_entities_ack', result))
-
-    # 补推离线消息
-    if reported_entities:
-        offline_msgs = await ws_router.get_offline_messages(list(reported_entities))
-        if offline_msgs:
-            await websocket.send_json(_frame('hasn.node.offline_messages', {
-                'messages': offline_msgs,
-            }))
-
-
-async def _handle_add_entity(
+async def _handle_add_owner(
     websocket: WebSocket,
     node_id: str,
     params: dict,
-    reported_entities: set[str],
+    active_entities: set[str],
 ) -> None:
-    """处理 hasn.node.add_entity"""
     async with async_db_session() as db:
-        result = await ws_router.add_entity(node_id, params, db)
-
-    hasn_id = params.get('hasn_id', '')
-    if result.get('accepted'):
-        reported_entities.add(hasn_id)
-
-        # 补推该实体的离线消息
-        offline_msgs = await ws_router.get_offline_messages([hasn_id])
+        result = await ws_router.add_owner(
+            node_id=node_id,
+            owner_id=params.get('owner_id', ''),
+            owner_proof=params.get('owner_proof', {}),
+            db=db,
+        )
+        await db.commit()
+    owner_id = result.get('owner_id', '')
+    if result.get('accepted') and owner_id:
+        active_entities.add(owner_id)
+        offline_msgs = await ws_router.get_offline_messages([owner_id])
         if offline_msgs:
-            await websocket.send_json(_frame('hasn.node.offline_messages', {
-                'messages': offline_msgs,
-            }))
+            await websocket.send_json(_frame('hasn.node.offline_messages', {'messages': offline_msgs}))
+    await websocket.send_json(_frame('hasn.node.add_owner_ack', result))
 
-    await websocket.send_json(_frame('hasn.node.add_entity_ack', result))
+
+async def _handle_remove_owner(
+    websocket: WebSocket,
+    node_id: str,
+    params: dict,
+    active_entities: set[str],
+) -> None:
+    owner_id = params.get('owner_id', '')
+    async with async_db_session() as db:
+        result = await ws_router.remove_owner(node_id=node_id, owner_id=owner_id, db=db)
+        await db.commit()
+    active_entities.discard(owner_id)
+    await websocket.send_json(_frame('hasn.node.remove_owner_ack', result))
+
+
+async def _handle_renew_owner(
+    websocket: WebSocket,
+    node_id: str,
+    params: dict,
+    active_entities: set[str],
+) -> None:
+    async with async_db_session() as db:
+        result = await ws_router.renew_owner(
+            node_id=node_id,
+            owner_id=params.get('owner_id', ''),
+            owner_proof=params.get('owner_proof', {}),
+            db=db,
+        )
+        await db.commit()
+    await websocket.send_json(_frame('hasn.node.renew_owner_ack', result))
+
+
+async def _handle_list_owners(websocket: WebSocket, node_id: str) -> None:
+    async with async_db_session() as db:
+        result = await ws_router.list_owners(node_id=node_id, db=db)
+    await websocket.send_json(_frame('hasn.node.list_owners_ack', result))
+
+
+async def _handle_add_agent(
+    websocket: WebSocket,
+    node_id: str,
+    params: dict,
+    active_entities: set[str],
+) -> None:
+    async with async_db_session() as db:
+        result = await ws_router.add_agent_presence(
+            node_id=node_id,
+            agent_id=params.get('agent_id', ''),
+            owner_id=params.get('owner_id', ''),
+            db=db,
+        )
+        await db.commit()
+    agent_id = params.get('agent_id', '')
+    if result.get('accepted') and agent_id:
+        active_entities.add(agent_id)
+        offline_msgs = await ws_router.get_offline_messages([agent_id])
+        if offline_msgs:
+            await websocket.send_json(_frame('hasn.node.offline_messages', {'messages': offline_msgs}))
+    await websocket.send_json(_frame('hasn.node.add_agent_ack', result))
+
+
+async def _handle_remove_agent(
+    websocket: WebSocket,
+    node_id: str,
+    params: dict,
+    active_entities: set[str],
+) -> None:
+    agent_id = params.get('agent_id', '')
+    result = await ws_router.remove_agent_presence(node_id=node_id, agent_id=agent_id)
+    active_entities.discard(agent_id)
+    await websocket.send_json(_frame('hasn.node.remove_agent_ack', result))
 
 
 async def _handle_agent_register(
     websocket: WebSocket,
     node_id: str,
     params: dict,
-    reported_entities: set[str],
+    active_entities: set[str],
     req_id: str | None,
 ) -> None:
     """处理 hasn.agent.register（通过 WS 创建新 Agent）"""
@@ -277,7 +285,7 @@ async def _handle_agent_register(
     # 确定 owner_id：显式指定 or 从已上报的 Human 推断
     owner_id = params.get('owner_id', '')
     if not owner_id:
-        humans = [eid for eid in reported_entities if eid.startswith('h_')]
+        humans = [eid for eid in active_entities if eid.startswith('h_')]
         if len(humans) == 1:
             owner_id = humans[0]
         elif len(humans) == 0:
@@ -326,7 +334,7 @@ async def _handle_agent_deregister(
     websocket: WebSocket,
     node_id: str,
     params: dict,
-    reported_entities: set[str],
+    active_entities: set[str],
     req_id: str | None,
 ) -> None:
     """处理 hasn.agent.deregister（永久删除 Agent）"""
@@ -336,8 +344,8 @@ async def _handle_agent_deregister(
         return
 
     # 先下线
-    await ws_router.remove_entity(node_id, hasn_id)
-    reported_entities.discard(hasn_id)
+    await ws_router.unregister_entity_route(node_id, hasn_id)
+    active_entities.discard(hasn_id)
 
     # DB 标记删除
     from backend.app.hasn.model.hasn_agents import HasnAgents
@@ -361,7 +369,7 @@ async def _handle_send(
     websocket: WebSocket,
     node_id: str,
     params: dict,
-    reported_entities: set[str],
+    active_entities: set[str],
 ) -> None:
     """处理 hasn.message.send"""
     from_id = params.get('from_id', '')
@@ -372,7 +380,7 @@ async def _handle_send(
     reply_to_id = params.get('context', {}).get('reply_to')
 
     # 校验 from_id 合法性：必须是已上报的实体
-    if from_id not in reported_entities:
+    if from_id not in active_entities:
         await _send_error(websocket, 8006, f'未授权的 from_id: {from_id}（不在已上报实体中）')
         return
 
@@ -428,7 +436,7 @@ async def _handle_send(
     sync_target = from_id if from_id.startswith('h_') else None
     if not sync_target:
         # Agent 发送，找 owner 的节点
-        for eid in reported_entities:
+        for eid in active_entities:
             if eid.startswith('h_'):
                 sync_target = eid
                 break
@@ -460,7 +468,7 @@ async def _handle_send(
                         pass
 
 
-async def _handle_read(params: dict, reported_entities: set[str]) -> None:
+async def _handle_read(params: dict, active_entities: set[str]) -> None:
     """处理 hasn.message.read"""
     conversation_id = params.get('conversation_id', '')
     last_msg_id = params.get('last_msg_id', 0)
@@ -469,7 +477,7 @@ async def _handle_read(params: dict, reported_entities: set[str]) -> None:
         return
 
     # 用已上报实体中的第一个 Human 作为 reader
-    reader = next((eid for eid in reported_entities if eid.startswith('h_')), '')
+    reader = next((eid for eid in active_entities if eid.startswith('h_')), '')
     if not reader:
         return
 
@@ -477,7 +485,7 @@ async def _handle_read(params: dict, reported_entities: set[str]) -> None:
         await message_router.mark_read(db, reader, conversation_id, last_msg_id)
 
 
-async def _handle_typing(params: dict, reported_entities: set[str]) -> None:
+async def _handle_typing(params: dict, active_entities: set[str]) -> None:
     """处理 hasn.typing"""
     to_id = params.get('to_id', '')
     conversation_id = params.get('conversation_id', '')
@@ -488,7 +496,7 @@ async def _handle_typing(params: dict, reported_entities: set[str]) -> None:
     # 用已上报的第一个 Human 作为 from_id
     from_id = params.get('from_id', '')
     if not from_id:
-        from_id = next((eid for eid in reported_entities if eid.startswith('h_')), '')
+        from_id = next((eid for eid in active_entities if eid.startswith('h_')), '')
 
     typing_payload = _frame('hasn.typing', {
         'from_id': from_id,

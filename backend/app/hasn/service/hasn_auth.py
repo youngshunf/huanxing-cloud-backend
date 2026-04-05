@@ -1,10 +1,12 @@
-"""HASN 认证服务
+"""HASN 认证服务.
 
 提供 HASN 网络的认证能力：
 - Human JWT 认证（复用平台 JWT）
-- Client JWT 签发/验证（含 client_id）
+- Node JWT 签发/验证（可选能力）
+- Node Key 认证
+- Owner API Key 认证
 - Agent API Key 认证
-- HASN 身份注册（Human + 默认 Agent）
+- HASN 身份注册
 - Star ID 生成
 """
 
@@ -26,9 +28,8 @@ from backend.database.db import async_db_session
 from backend.database.redis import redis_client
 from backend.utils.timezone import timezone
 
-from backend.app.hasn.model import HasnHumans
+from backend.app.hasn.model import HasnHumans, HasnNodes, HasnOwnerApiKeys
 from backend.app.hasn.model.hasn_agents import HasnAgents
-from backend.app.hasn.model.hasn_clients import HasnClients
 
 
 # ─── Star ID 生成 ───
@@ -47,8 +48,8 @@ async def _next_star_id(db: AsyncSession) -> str:
     return '100001'
 
 
-def _generate_api_key() -> tuple[str, str]:
-    """生成 Agent API Key 和对应的 SHA256 哈希"""
+def _generate_agent_key() -> tuple[str, str]:
+    """生成 Agent Key (hasn_ak_) 和对应的 SHA256 哈希"""
     raw_key = f"hasn_ak_{secrets.token_urlsafe(48)}"
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
     return raw_key, key_hash
@@ -61,28 +62,35 @@ def _generate_node_key() -> tuple[str, str]:
     return raw_key, key_hash
 
 
-# ─── Client JWT ───
+def _generate_owner_key() -> tuple[str, str]:
+    """生成 Owner API Key (hasn_ok_) 和对应的 SHA256 哈希"""
+    raw_key = f"hasn_ok_{secrets.token_urlsafe(48)}"
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    return raw_key, key_hash
+
+
+# ─── Node JWT ───
 
 HASN_CLIENT_JWT_SECRET = settings.TOKEN_SECRET_KEY
 HASN_CLIENT_JWT_ALGORITHM = 'HS256'
 HASN_CLIENT_JWT_EXPIRE_SECONDS = 60 * 60 * 24  # 24 小时
 
 
-def issue_client_jwt(
+def issue_node_jwt(
     user_hasn_id: str,
-    client_id: str,
-    client_type: str,
+    node_id: str,
+    node_type: str,
     star_id: str,
 ) -> str:
-    """签发 Client JWT（用于 WebSocket 连接认证）"""
+    """签发 Node JWT（可选能力）"""
     now = timezone.now()
     expire = now + timedelta(seconds=HASN_CLIENT_JWT_EXPIRE_SECONDS)
     payload = {
         'sub': user_hasn_id,
-        'client_id': client_id,
-        'client_type': client_type,
+        'node_id': node_id,
+        'node_type': node_type,
         'star_id': star_id,
-        'type': 'client',
+        'type': 'node',
         'iss': 'hasn',
         'iat': int(now.timestamp()),
         'exp': int(expire.timestamp()),
@@ -90,8 +98,8 @@ def issue_client_jwt(
     return jwt.encode(payload, HASN_CLIENT_JWT_SECRET, algorithm=HASN_CLIENT_JWT_ALGORITHM)
 
 
-def verify_client_jwt(token: str) -> dict[str, Any]:
-    """验证 Client JWT，返回 payload"""
+def verify_node_jwt(token: str) -> dict[str, Any]:
+    """验证 Node JWT，返回 payload"""
     try:
         payload = jwt.decode(
             token,
@@ -99,18 +107,17 @@ def verify_client_jwt(token: str) -> dict[str, Any]:
             algorithms=[HASN_CLIENT_JWT_ALGORITHM],
             options={'verify_exp': True},
         )
-        if payload.get('type') != 'client':
-            raise HTTPException(status_code=401, detail='非 Client JWT')
-        # 补充统一节点字段（兼容旧 JWT）
+        if payload.get('type') != 'node':
+            raise HTTPException(status_code=401, detail='非 Node JWT')
         if 'node_id' not in payload:
-            payload['node_id'] = payload.get('client_id', '')
+            raise HTTPException(status_code=401, detail='Node JWT 缺少 node_id')
         if 'node_type' not in payload:
-            payload['node_type'] = payload.get('client_type', 'desktop')
+            payload['node_type'] = 'desktop'
         return payload
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail='Client JWT 已过期')
+        raise HTTPException(status_code=401, detail='Node JWT 已过期')
     except jwt.InvalidTokenError as e:
-        raise HTTPException(status_code=401, detail=f'Client JWT 无效: {e}')
+        raise HTTPException(status_code=401, detail=f'Node JWT 无效: {e}')
 
 
 # ─── Node Key 验证（统一节点模型 v5.0） ───
@@ -121,7 +128,7 @@ async def verify_node_key(node_key: str) -> dict[str, Any]:
 
     Node Key 格式: hasn_nk_{64字符随机字符串}
     Node Key 仅验证物理节点合法性，不绑定任何用户身份。
-    用户身份通过后续的 report_entities / add_entity 动态上报。
+    用户身份通过后续的 Owner Binding / Agent Presence 建立。
     """
     if not node_key.startswith('hasn_nk_'):
         raise HTTPException(status_code=401, detail='无效的 Node Key 格式（期望 hasn_nk_ 前缀）')
@@ -130,28 +137,22 @@ async def verify_node_key(node_key: str) -> dict[str, Any]:
 
     async with async_db_session() as db:
         result = await db.execute(
-            select(HasnClients).where(
-                HasnClients.api_key_hash == key_hash,
-                HasnClients.status == 'active',
+            select(HasnNodes).where(
+                HasnNodes.node_key_hash == key_hash,
+                HasnNodes.status == 'active',
             )
         )
-        client = result.scalar_one_or_none()
+        node = result.scalar_one_or_none()
 
-    if not client:
+    if not node:
         raise HTTPException(status_code=401, detail='Node Key 无效或节点已停用')
 
     return {
-        'node_id': client.client_id,
-        'node_type': client.client_type,
-        'capacity': getattr(client, 'capacity', 1) or 1,
+        'node_id': node.node_id,
+        'node_type': node.node_type,
+        'capacity': getattr(node, 'capacity', 1) or 1,
         'type': 'node_key',
     }
-
-
-# 兼容旧接口
-async def verify_node_api_key(api_key: str) -> dict[str, Any]:
-    return await verify_node_key(api_key)
-
 
 # ─── Agent API Key 验证 ───
 
@@ -168,6 +169,89 @@ async def verify_agent_api_key(api_key: str, db: AsyncSession) -> HasnAgents:
     if not agent:
         raise HTTPException(status_code=401, detail='Agent API Key 无效或 Agent 已停用')
     return agent
+
+
+async def verify_owner_api_key(owner_hasn_id: str, owner_api_key: str, db: AsyncSession) -> HasnOwnerApiKeys:
+    """验证 Owner API Key，返回 Key 记录"""
+    key_hash = hashlib.sha256(owner_api_key.encode()).hexdigest()
+    result = await db.execute(
+        select(HasnOwnerApiKeys).where(
+            HasnOwnerApiKeys.owner_id == owner_hasn_id,
+            HasnOwnerApiKeys.key_hash == key_hash,
+            HasnOwnerApiKeys.status == 'active',
+        )
+    )
+    key = result.scalar_one_or_none()
+    if not key:
+        raise HTTPException(status_code=401, detail='Owner API Key 无效或已停用')
+    return key
+
+
+async def verify_owner_proof(
+    owner_id: str,
+    owner_proof: dict[str, Any],
+    node_id: str | None,
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """验证 Owner Proof，返回标准化结果。"""
+    proof_type = owner_proof.get('type', '')
+    credential = owner_proof.get('credential', '')
+    if not proof_type or not credential:
+        raise HTTPException(status_code=401, detail='缺少 owner_proof')
+
+    now = timezone.now()
+
+    if node_id:
+        node_result = await db.execute(
+            select(HasnNodes).where(
+                HasnNodes.node_id == node_id,
+                HasnNodes.status == 'active',
+            )
+        )
+        node = node_result.scalar_one_or_none()
+        if not node:
+            raise HTTPException(status_code=401, detail='Node 不存在或已停用')
+        allowed_owner_hasn_ids = node.allowed_owner_hasn_ids or []
+        if allowed_owner_hasn_ids and owner_id not in allowed_owner_hasn_ids:
+            raise HTTPException(status_code=403, detail='当前 Node 不允许绑定该 Owner')
+
+    if proof_type == 'owner_api_key':
+        key = await verify_owner_api_key(owner_id, credential, db)
+        if key.bound_node_id and node_id and key.bound_node_id != node_id:
+            raise HTTPException(status_code=401, detail='Owner API Key 与当前 Node 不匹配')
+        if key.expires_at and key.expires_at <= now:
+            raise HTTPException(status_code=401, detail='Owner API Key 已过期')
+        key.last_used_at = now
+        await db.flush()
+        return {
+            'auth_profile': 'owner_api_key',
+            'scopes': key.scopes or {'bind_owner': True, 'register_agent': True},
+            'expires_at': key.expires_at,
+            'key_id': key.key_id,
+        }
+
+    if proof_type == 'bearer_token':
+        user_info = await jwt_authentication(credential)
+        result = await db.execute(
+            select(HasnHumans).where(
+                HasnHumans.hasn_id == owner_id,
+                HasnHumans.user_id == user_info.id,
+            )
+        )
+        human = result.scalar_one_or_none()
+        if not human:
+            raise HTTPException(status_code=401, detail='Bearer Token 与 owner_id 不匹配')
+        payload = jwt_decode(credential)
+        exp_ts = payload.get('exp')
+        expires_at = datetime.fromtimestamp(exp_ts, tz=timezone.now().tzinfo) if exp_ts else None
+        return {
+            'auth_profile': 'bearer_token',
+            'scopes': {'bind_owner': True, 'register_agent': True},
+            'expires_at': expires_at,
+            'key_id': None,
+        }
+
+    raise HTTPException(status_code=401, detail=f'不支持的 owner_proof.type: {proof_type}')
 
 
 # ─── HASN 身份注册 ───
@@ -292,7 +376,7 @@ async def register_hasn_agent(
     # 生成身份
     agent_hasn_id = f"a_{uuid.uuid4()}"
     agent_star_id = f"{owner.star_id}#{agent_name}"
-    agent_key, agent_key_hash = _generate_api_key()
+    agent_key, agent_key_hash = _generate_agent_key()
 
     agent = HasnAgents(
         hasn_id=agent_hasn_id,
@@ -318,48 +402,69 @@ async def register_hasn_agent(
     }
 
 
-# ─── 客户端注册 ───
+# ─── 节点注册 ───
 
-async def register_client(
+async def register_node(
     db: AsyncSession,
-    user_hasn_id: str,
-    client_type: str,
-    device_name: str | None = None,
-    device_info: dict | None = None,
-) -> HasnClients:
-    """注册客户端设备（幂等：相同 user + device_fingerprint 不重复创建）"""
-    # 幂等检查：如果 device_info 中有 device_fingerprint，查找已有客户端
-    fingerprint = (device_info or {}).get('device_fingerprint')
+    user_id: int | None,
+    owner_hasn_id: str,
+    node_type: str,
+    node_name: str | None = None,
+    node_info: dict | None = None,
+    allowed_owner_hasn_ids: list[str] | None = None,
+) -> HasnNodes:
+    """注册 Node（幂等：相同 owner + device_fingerprint 不重复创建）"""
+    # 幂等检查：如果 node_info 中有 device_fingerprint，查找已有 Node
+    node_info = node_info or {}
+    fingerprint = node_info.get('device_fingerprint')
+    device_platform = node_info.get('device_platform') or node_info.get('platform')
+    app_version = node_info.get('app_version')
+    capacity = int(node_info.get('capacity') or (3 if node_type == 'desktop' else 1))
+    created_by_owner_id = owner_hasn_id
+
     if fingerprint:
         result = await db.execute(
-            select(HasnClients).where(
-                HasnClients.user_hasn_id == user_hasn_id,
-                HasnClients.status == 'active',
-                HasnClients.device_info['device_fingerprint'].astext == fingerprint,
+            select(HasnNodes).where(
+                HasnNodes.user_id == user_id,
+                HasnNodes.status == 'active',
+                HasnNodes.device_fingerprint == fingerprint,
             )
         )
         existing = result.scalar_one_or_none()
         if existing:
-            # 更新最后活跃时间
             existing.last_seen_at = timezone.now()
-            if device_name and existing.device_name != device_name:
-                existing.device_name = device_name
+            if node_name and existing.node_name != node_name:
+                existing.node_name = node_name
+            existing.node_type = node_type or existing.node_type
+            existing.capacity = capacity or existing.capacity
+            existing.user_id = user_id or existing.user_id
+            if allowed_owner_hasn_ids is not None:
+                existing.allowed_owner_hasn_ids = allowed_owner_hasn_ids
+            existing.device_platform = device_platform or existing.device_platform
+            existing.app_version = app_version or existing.app_version
+            existing.node_info = node_info or existing.node_info
             await db.flush()
             return existing
 
-    client_id = f"c_{uuid.uuid4().hex[:12]}"
+    node_id = f"n_{uuid.uuid4().hex[:12]}"
 
-    client = HasnClients(
-        client_id=client_id,
-        user_hasn_id=user_hasn_id,
-        client_type=client_type,
-        device_name=device_name,
-        device_info=device_info or {},
+    node = HasnNodes(
+        node_id=node_id,
+        user_id=user_id,
+        allowed_owner_hasn_ids=allowed_owner_hasn_ids,
+        node_type=node_type,
+        node_name=node_name,
+        device_fingerprint=fingerprint,
+        device_platform=device_platform,
+        app_version=app_version,
+        node_info=node_info,
+        created_by_owner_id=created_by_owner_id,
+        capacity=capacity,
         status='active',
     )
-    db.add(client)
+    db.add(node)
     await db.flush()
-    return client
+    return node
 
 
 # ─── 登录时自动 HASN 注册 + Node Key 签发 ───
@@ -390,31 +495,61 @@ async def ensure_hasn_node_key(
         hasn_id = identity['human'].hasn_id
 
         # 2. 注册 Node 设备（幂等）
-        client = await register_client(
+        node = await register_node(
             db=db,
-            user_hasn_id=hasn_id,
-            client_type=client_type,
-            device_name=device_name,
-            device_info={'source': 'login_auto', 'client_type': client_type},
+            user_id=user_id,
+            owner_hasn_id=hasn_id,
+            node_type=client_type,
+            node_name=device_name,
+            node_info={'source': 'login_auto', 'client_type': client_type, 'device_platform': client_type},
+            allowed_owner_hasn_ids=None,
         )
 
         # 3. 签发/复用 Node Key
-        if client.api_key_hash:
+        if node.node_key_hash:
             # 已有 node_key hash —— 复用需重新签发（因为我们不存明文）
             # 每次登录都生成新的 node_key，旧的自动失效
             pass
 
         node_key, node_key_hash = _generate_node_key()
-        client.api_key_hash = node_key_hash
+        node.node_key_hash = node_key_hash
+        node.last_seen_at = timezone.now()
         await db.flush()
 
         log.info(f'[HASN] 登录自动注册 OK: user_id={user_id}, hasn_id={hasn_id}, '
-                 f'node_id={client.client_id}')
+                 f'node_id={node.node_id}')
         return node_key
 
     except Exception as e:
         log.warning(f'[HASN] 登录自动注册 HASN 失败（不阻塞登录）: {e}')
         return None
+
+
+async def reissue_hasn_node_key(
+    db: AsyncSession,
+    node_id: str,
+    owner_hasn_id: str,
+) -> str:
+    """重新签发 Node Key，覆盖旧 hash，返回新明文。"""
+    result = await db.execute(
+        select(HasnNodes).where(
+            HasnNodes.node_id == node_id,
+            HasnNodes.status == 'active',
+        )
+    )
+    node = result.scalar_one_or_none()
+    if not node:
+        raise HTTPException(status_code=404, detail='Node 不存在或已停用')
+
+    allowed = node.allowed_owner_hasn_ids or []
+    if node.created_by_owner_id != owner_hasn_id and owner_hasn_id not in allowed:
+        raise HTTPException(status_code=403, detail='无权为该 Node 重新签发 Node Key')
+
+    node_key, node_key_hash = _generate_node_key()
+    node.node_key_hash = node_key_hash
+    node.last_seen_at = timezone.now()
+    await db.flush()
+    return node_key
 
 
 # ─── 认证依赖注入 ───
@@ -462,6 +597,18 @@ async def hasn_auth_from_jwt(request: Request) -> dict[str, Any]:
     }
 
 
+async def hasn_auth_from_node_credential(request: Request) -> dict[str, Any]:
+    """从 Authorization 中提取 Node 认证信息。"""
+    authorization = request.headers.get('Authorization')
+    if not authorization:
+        raise HTTPException(status_code=401, detail='缺少认证信息')
+
+    scheme, credentials = get_authorization_scheme_param(authorization)
+    if scheme == 'NodeKey':
+        return await verify_node_key(credentials)
+    raise HTTPException(status_code=401, detail='仅支持 NodeKey 认证')
+
+
 async def hasn_auth_dual(request: Request) -> dict[str, Any]:
     """
     HASN 双模式认证：Bearer JWT 或 ApiKey
@@ -501,6 +648,7 @@ async def hasn_auth_dual(request: Request) -> dict[str, Any]:
 # 依赖注入快捷方式
 DependsHasnAuth = Depends(hasn_auth_from_jwt)
 DependsHasnDualAuth = Depends(hasn_auth_dual)
+DependsHasnNodeAuth = Depends(hasn_auth_from_node_credential)
 
 # 兼容别名（contacts.py 使用此名称）
 hasn_auth = hasn_auth_from_jwt

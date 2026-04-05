@@ -151,3 +151,76 @@
 2026-04-04 15:46:57.667 | INFO     | - | [pay] 注册支付回调: order_type=credit_pack, handler=handle_credit_pack_paid
 2026-04-04 15:46:57.667 | INFO     | - | [PayCallback] 已注册订阅支付回调 (subscribe, credit_pack)
 2026-04-04 15:46:57.670 | INFO     | - | Started worker-1
+[INFO] Changes detected, reloading workers..
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/v1/app/hasn_nodes.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/service/hasn_nodes_service.py
+[INFO] Modified: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/router.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/model/hasn_nodes.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/v1/open/hasn_nodes.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/crud/crud_hasn_nodes.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/v1/agent/hasn_nodes.py
+[INFO] Modified: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/router.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/v1/admin/hasn_nodes.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/schema/hasn_nodes.py
+2026-04-04 19:51:26.317 | INFO     | - | Stopping worker-1
+[INFO] Spawning worker-1 with PID: 97028
+[INFO] Changes detected, reloading workers..
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/v1/agent/hasn_owner_api_keys.py
+[INFO] Modified: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/router.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/model/hasn_owner_api_keys.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/v1/app/hasn_owner_api_keys.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/v1/admin/hasn_owner_api_keys.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/v1/open/hasn_owner_api_keys.py
+[INFO] Modified: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/router.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/service/hasn_owner_api_keys_service.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/schema/hasn_owner_api_keys.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/crud/crud_hasn_owner_api_keys.py
+[INFO] Spawning worker-1 with PID: 97062
+2026-04-04 19:51:32.510 | INFO     | - | 检测插件依赖...
+2026-04-04 19:51:32.510 | INFO     | - | 插件准备就绪 - 7/7 0:00:00
+2026-04-04 19:51:32.510 | INFO     | - | 启动服务...
+[INFO] Changes detected, reloading workers..
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/model/hasn_node_bindings.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/service/hasn_node_bindings_service.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/v1/open/hasn_node_bindings.py
+[INFO] Modified: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/router.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/v1/app/hasn_node_bindings.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/crud/crud_hasn_node_bindings.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/v1/agent/hasn_node_bindings.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/api/v1/admin/hasn_node_bindings.py
+[INFO] Modified: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/router.py
+[INFO] Added: /Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/app/hasn/schema/hasn_node_bindings.py
+[INFO] Spawning worker-1 with PID: 97291
+2026-04-04 19:51:36.510 | INFO     | - | 检测插件依赖...
+2026-04-04 19:51:36.510 | INFO     | - | 插件准备就绪 - 7/7 0:00:00
+2026-04-04 19:51:36.510 | INFO     | - | 启动服务...
+Process granian-worker:
+Traceback (most recent call last):
+  File "/Users/mac/.local/share/uv/python/cpython-3.13-macos-x86_64-none/lib/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/Users/mac/.local/share/uv/python/cpython-3.13-macos-x86_64-none/lib/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/.venv/lib/python3.13/site-packages/granian/server/mp.py", line 90, in wrapped
+    callback = callback_loader()
+  File "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/.venv/lib/python3.13/site-packages/granian/_internal.py", line 65, in load_target
+    module = load_module(path)
+  File "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/.venv/lib/python3.13/site-packages/granian/_internal.py", line 47, in load_module
+    __import__(module_name)
+    ~~~~~~~~~~^^^^^^^^^^^^^
+  File "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/main.py", line 31, in <module>
+    app = register_app()
+  File "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/core/registrar.py", line 100, in register_app
+    register_router(app)
+    ~~~~~~~~~~~~~~~^^^^^
+  File "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/core/registrar.py", line 201, in register_router
+    ensure_unique_route_names(app)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/Users/mac/openclaw-workspace/huanxing/huanxing-project/huanxing-cloud-backend/backend/utils/openapi.py", line 28, in ensure_unique_route_names
+    raise ValueError(f'Non-unique route name: {route.name}')
+ValueError: Non-unique route name: get_hasn_nodes
+[ERROR] Unexpected exit from worker-1
+[INFO] Shutting down granian
+/Users/mac/.local/share/uv/python/cpython-3.13-macos-x86_64-none/lib/python3.13/multiprocessing/resource_tracker.py:301: UserWarning: resource_tracker: There appear to be 16 leaked semaphore objects to clean up at shutdown: {'/mp-lee_kup9', '/mp-edwbe5bo', '/mp-2qfxule8', '/mp-_5ag9dam', '/mp-bcy4xljn', '/mp-djplo18g', '/mp-8fircam6', '/mp-i0mgam3a', '/mp-c_mq7976', '/mp-41a7xsp0', '/mp-xs11e8db', '/mp-4qugxkt2', '/mp-4xro75ds', '/mp-fz5khb43', '/mp-e9cv47_w', '/mp-y6_1ss3_'}
+  warnings.warn(

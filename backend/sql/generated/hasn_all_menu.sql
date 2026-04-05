@@ -57,23 +57,7 @@ BEGIN
     INSERT INTO sys_menu (title, name, path, sort, icon, type, perms, status, display, cache, link, parent_id, created_time) SELECT '查看', 'ViewHasnAgents', NULL, 4, NULL, 2, 'hasn:agents:get', 1, 0, 1, '', v_menu_id, NOW() WHERE NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'hasn:agents:get' AND parent_id = v_menu_id);
 
     -- ========================================
-    -- 4. 客户端设备
-    -- ========================================
-    SELECT id INTO v_menu_id FROM sys_menu WHERE path = '/hasn/hasn_clients' AND type = 1 ORDER BY id LIMIT 1;
-    IF v_menu_id IS NULL THEN
-        INSERT INTO sys_menu (title, name, path, sort, icon, type, component, perms, status, display, cache, link, remark, parent_id, created_time)
-        VALUES ('客户端设备', 'HasnClients', '/hasn/hasn_clients', 3, 'lucide:monitor-smartphone', 1, '/hasn/hasn_clients/index', NULL, 1, 1, 1, '', '客户端设备管理', v_parent_id, NOW())
-        RETURNING id INTO v_menu_id;
-    ELSE
-        UPDATE sys_menu SET title = '客户端设备', icon = 'lucide:monitor-smartphone', sort = 3, parent_id = v_parent_id WHERE id = v_menu_id;
-    END IF;
-    INSERT INTO sys_menu (title, name, path, sort, icon, type, perms, status, display, cache, link, parent_id, created_time) SELECT '新增', 'AddHasnClients', NULL, 1, NULL, 2, 'hasn:clients:add', 1, 0, 1, '', v_menu_id, NOW() WHERE NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'hasn:clients:add' AND parent_id = v_menu_id);
-    INSERT INTO sys_menu (title, name, path, sort, icon, type, perms, status, display, cache, link, parent_id, created_time) SELECT '编辑', 'EditHasnClients', NULL, 2, NULL, 2, 'hasn:clients:edit', 1, 0, 1, '', v_menu_id, NOW() WHERE NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'hasn:clients:edit' AND parent_id = v_menu_id);
-    INSERT INTO sys_menu (title, name, path, sort, icon, type, perms, status, display, cache, link, parent_id, created_time) SELECT '删除', 'DeleteHasnClients', NULL, 3, NULL, 2, 'hasn:clients:del', 1, 0, 1, '', v_menu_id, NOW() WHERE NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'hasn:clients:del' AND parent_id = v_menu_id);
-    INSERT INTO sys_menu (title, name, path, sort, icon, type, perms, status, display, cache, link, parent_id, created_time) SELECT '查看', 'ViewHasnClients', NULL, 4, NULL, 2, 'hasn:clients:get', 1, 0, 1, '', v_menu_id, NOW() WHERE NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'hasn:clients:get' AND parent_id = v_menu_id);
-
-    -- ========================================
-    -- 5. 联系人关系
+    -- 4. 联系人关系
     -- ========================================
     SELECT id INTO v_menu_id FROM sys_menu WHERE path = '/hasn/hasn_contacts' AND type = 1 ORDER BY id LIMIT 1;
     IF v_menu_id IS NULL THEN

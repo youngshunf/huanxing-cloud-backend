@@ -182,26 +182,19 @@ class AuthService:
                 log.error(f'new-api 用户创建失败: {e}')
                 raise errors.ServerError(msg='LLM 服务初始化失败，请稍后重试')
             
-            # 获取 HASN 自动登录 Key
-            hasn_api_key = None
+            # 获取 HASN Node Key
+            hasn_node_key = None
             try:
-                from backend.app.hasn.model.hasn_humans import HasnHumans
-                from backend.app.hasn.service.hasn_api_key_service import hasn_api_key_service
-                from sqlalchemy import select
-                human_result = await db.execute(select(HasnHumans).where(HasnHumans.user_id == user.id))
-                human = human_result.scalar_one_or_none()
-                if human:
-                    device_str = ctx.os if ctx.os else 'Desktop'
-                    api_key_res = await hasn_api_key_service.create_api_key(
-                        db=db,
-                        user_hasn_id=human.hasn_id,
-                        name=f"Auto Login Node ({device_str})",
-                        client_type="desktop"
-                    )
-                    hasn_api_key = api_key_res.api_key
-                    # 不能在这里 commit，因为这里是在事务中，外层控制
+                from backend.app.hasn.service.hasn_auth import ensure_hasn_node_key
+                hasn_node_key = await ensure_hasn_node_key(
+                    db=db,
+                    user_id=user.id,
+                    nickname=user.nickname or user.username,
+                    client_type='desktop',
+                    device_name=ctx.os if ctx.os else 'Desktop',
+                )
             except Exception as e:
-                log.error(f'HASN API Key 自动生成失败: {e}')
+                log.error(f'HASN Node Key 自动生成失败: {e}')
 
             data = GetLoginToken(
                 access_token=access_token_data.access_token,
@@ -212,7 +205,7 @@ class AuthService:
                 password_expire_days_remaining=days_remaining,
                 llm_token=llm_token,
                 llm_base_url=settings.LLM_API_BASE_URL,
-                hasn_api_key=hasn_api_key,
+                hasn_node_key=hasn_node_key,
                 user=user,  # type: ignore
             )
             return data

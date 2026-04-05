@@ -1,5 +1,4 @@
 from backend.app.hasn.model.hasn_humans import HasnHumans as HasnHumans
-from backend.app.hasn.model.hasn_clients import HasnClients as HasnClients
 from backend.app.hasn.model.hasn_agents import HasnAgents as HasnAgents
 from backend.app.hasn.model.hasn_contacts import HasnContacts as HasnContacts
 from backend.app.hasn.model.hasn_conversations import HasnConversations as HasnConversations
@@ -10,3 +9,6 @@ from backend.app.hasn.model.hasn_agent_capabilities import HasnAgentCapabilities
 from backend.app.hasn.model.hasn_trade_sessions import HasnTradeSessions as HasnTradeSessions
 from backend.app.hasn.model.hasn_notifications import HasnNotifications as HasnNotifications
 from backend.app.hasn.model.hasn_audit_log import HasnAuditLog as HasnAuditLog
+from backend.app.hasn.model.hasn_nodes import HasnNodes as HasnNodes
+from backend.app.hasn.model.hasn_owner_api_keys import HasnOwnerApiKeys as HasnOwnerApiKeys
+from backend.app.hasn.model.hasn_node_bindings import HasnNodeBindings as HasnNodeBindings
