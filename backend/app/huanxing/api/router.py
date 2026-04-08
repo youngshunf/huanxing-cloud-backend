@@ -19,7 +19,7 @@ from backend.app.huanxing.api.v1.app.folder import router as app_folder_router
 # --- open/ 公开（无需认证）---
 from backend.app.huanxing.api.v1.open.share import router as open_share_router
 
-# --- agent/ Agent ---
+# --- agent/ Agent端（X-Agent-Key）---
 from backend.app.huanxing.api.v1.agent.document import router as agent_document_router
 from backend.app.huanxing.api.v1.agent.user_sync import router as agent_user_sync_router
 from backend.app.huanxing.api.v1.agent.user_check import router as agent_user_check_router
@@ -27,6 +27,9 @@ from backend.app.huanxing.api.v1.agent.server import router as agent_server_rout
 from backend.app.huanxing.api.v1.agent.dashboard import router as agent_dashboard_router
 from backend.app.huanxing.api.v1.agent.file import router as agent_file_router
 from backend.app.huanxing.api.v1.agent.website import router as agent_website_router
+
+# --- user/ 用户级（Owner Key 认证）---
+from backend.app.huanxing.api.v1.user.document import router as user_document_router
 
 
 # ========================================
@@ -62,7 +65,7 @@ open_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/huanxing/open', tag
 open_api.include_router(open_share_router, tags=['唤星公开-分享'])
 
 # ========================================
-# Agent API
+# Agent API（X-Agent-Key 认证，兼容期保留）
 # 路径前缀: /api/v1/huanxing/agent/
 # ========================================
 agent = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/huanxing/agent', tags=['唤星Agent'])
@@ -74,3 +77,11 @@ agent.include_router(agent_server_router, prefix='/servers', tags=['唤星Agent-
 agent.include_router(agent_dashboard_router, prefix='/dashboard', tags=['唤星Agent-数据看板'])
 agent.include_router(agent_file_router, prefix='/files', tags=['唤星Agent-文件'])
 agent.include_router(agent_website_router, prefix='/website', tags=['唤星Agent-网站部署'])
+
+# ========================================
+# 用户级 API（Owner Key 认证，SDK / 桌面端 / Agent 统一入口）
+# 路径前缀: /api/v1/huanxing/user/
+# ========================================
+user_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/huanxing/user', tags=['唤星用户级API'])
+
+user_api.include_router(user_document_router, prefix='/docs', tags=['唤星用户级-文档'])

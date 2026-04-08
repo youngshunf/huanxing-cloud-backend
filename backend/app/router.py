@@ -8,7 +8,7 @@ from backend.app.projects.api.router import v1 as projects_v1
 from backend.app.user_tier.api.router import v1 as user_tier_v1, app as user_tier_app, open_api as user_tier_open, agent as user_tier_agent
 from backend.app.marketplace.api.router import v1 as marketplace_v1, client as marketplace_client, publish as marketplace_publish
 from backend.app.pay.api.router import v1 as pay_v1, app as pay_app, open_api as pay_open
-from backend.app.huanxing.api.router import v1 as huanxing_v1, app as huanxing_app, open_api as huanxing_open, agent as huanxing_agent
+from backend.app.huanxing.api.router import v1 as huanxing_v1, app as huanxing_app, open_api as huanxing_open, agent as huanxing_agent, user_api as huanxing_user
 
 router = APIRouter()
 
@@ -38,6 +38,7 @@ router.include_router(huanxing_v1)
 router.include_router(huanxing_app)       # 唤星用户端 API
 router.include_router(huanxing_open)      # 唤星公开 API（支付回调等）
 router.include_router(huanxing_agent)     # 唤星Agent API
+router.include_router(huanxing_user)      # 唤星用户级API（Owner Key 认证）
 
 # HASN（统一模块，合并原 hasn / hasn_core / hasn_social）
 router.include_router(hasn_v1)            # HASN 管理端 API

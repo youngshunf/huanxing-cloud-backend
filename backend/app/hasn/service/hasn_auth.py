@@ -216,13 +216,14 @@ async def verify_owner_proof(
             raise HTTPException(status_code=403, detail='当前 Node 不允许绑定该 Owner')
 
     if proof_type == 'owner_api_key':
-        key = await verify_owner_api_key(owner_id, credential, db)
+        # 复用公共 owner key 验证（已含过期检查 + last_used 更新）
+        from backend.common.security.owner_key_auth import verify_owner_key_standalone
+        key = await verify_owner_key_standalone(credential, db)
+        # 额外校验：owner_id 必须匹配
+        if key.owner_id != owner_id:
+            raise HTTPException(status_code=401, detail='Owner API Key 与 owner_id 不匹配')
         if key.bound_node_id and node_id and key.bound_node_id != node_id:
             raise HTTPException(status_code=401, detail='Owner API Key 与当前 Node 不匹配')
-        if key.expires_at and key.expires_at <= now:
-            raise HTTPException(status_code=401, detail='Owner API Key 已过期')
-        key.last_used_at = now
-        await db.flush()
         return {
             'auth_profile': 'owner_api_key',
             'scopes': key.scopes or {'bind_owner': True, 'register_agent': True},

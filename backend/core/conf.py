@@ -130,6 +130,7 @@ class Settings(BaseSettings):
         rf'^{FASTAPI_API_V1_PATH}/hasn/open/.*$',  # HASN 公开 API
         rf'^{FASTAPI_API_V1_PATH}/hasn/ws/.*$',  # HASN WebSocket
         rf'^{FASTAPI_API_V1_PATH}/huanxing/agent/.*$',  # 唤星 Agent API（使用 X-Agent-Key 认证，不走 JWT）
+        rf'^{FASTAPI_API_V1_PATH}/huanxing/user/.*$',  # 唤星用户级 API（使用 Owner Key 认证，不走 JWT）
         rf'^{FASTAPI_API_V1_PATH}/user_tier/agent/.*$',  # 订阅积分 Agent API（使用 X-Agent-Key 认证，不走 JWT）
     ]
 

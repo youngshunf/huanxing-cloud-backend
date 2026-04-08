@@ -30,13 +30,27 @@ async def agent_sync_user(
     """Guardian Agent 注册新用户时调用，同步用户信息到后端。
 
     如果 agent_id 已存在则更新，否则创建新记录。
+    同时自动签发 HASN Owner API Key（hasn_ok_xxx），用于文档等用户级 API 认证。
     """
     user = await huanxing_user_service.agent_sync(db=db, obj=obj)
-    return response_base.success(data={
+
+    # 注册时自动签发 Owner API Key
+    owner_api_key = None
+    try:
+        owner_api_key = await huanxing_user_service.ensure_owner_key(db=db, user=user)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f'签发 Owner Key 失败（不阻塞注册）: {e}')
+
+    response_data = {
         'id': user.id if user else None,
         'agent_id': obj.agent_id,
         'synced': True,
-    })
+    }
+    if owner_api_key:
+        response_data['owner_api_key'] = owner_api_key
+
+    return response_base.success(data=response_data)
 
 
 @router.put(
