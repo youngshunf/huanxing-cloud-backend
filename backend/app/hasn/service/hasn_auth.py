@@ -526,6 +526,57 @@ async def ensure_hasn_node_key(
         return None
 
 
+async def ensure_hasn_owner_key(
+    db: AsyncSession,
+    user_id: int,
+    nickname: str,
+) -> str | None:
+    """
+    登录时调用：确保 Owner API Key 已签发（幂等）。
+
+    - 已有 active key → 直接返回 None（明文只在首次创建时返回）
+    - 没有 active key → 签发新 key，返回明文 hasn_ok_xxx
+    - 失败 → 返回 None（不阻塞登录）
+
+    返回: owner_key (hasn_ok_xxx) 或 None
+    """
+    from backend.common.log import log
+    try:
+        # 1. 确保 HASN Human 身份已注册
+        identity = await register_hasn_identity(
+            db=db,
+            user_id=user_id,
+            name=nickname,
+        )
+        hasn_id = identity['human'].hasn_id
+
+        # 2. 检查是否已有 active 的 Owner Key
+        existing = await db.execute(
+            select(HasnOwnerApiKeys).where(
+                HasnOwnerApiKeys.user_id == user_id,
+                HasnOwnerApiKeys.status == 'active',
+            ).limit(1)
+        )
+        if existing.scalar_one_or_none():
+            log.debug(f'[HASN] Owner Key 已存在: user_id={user_id}')
+            return None  # 已有 key，明文不可恢复
+
+        # 3. 签发新 Owner Key
+        from backend.app.hasn.service.hasn_api_key_service import hasn_api_key_service
+        result = await hasn_api_key_service.create_api_key(
+            db=db,
+            user_id=user_id,
+            user_hasn_id=hasn_id,
+            name='Auto (login)',
+            scopes={'bind_owner': True, 'register_agent': True},
+        )
+        log.info(f'[HASN] Owner Key 签发 OK: user_id={user_id}, key_id={result.key_id}')
+        return result.owner_api_key
+
+    except Exception as e:
+        log.warning(f'[HASN] Owner Key 签发失败（不阻塞登录）: {e}')
+        return None
+
 async def reissue_hasn_node_key(
     db: AsyncSession,
     node_id: str,

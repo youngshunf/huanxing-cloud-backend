@@ -31,11 +31,16 @@ from backend.database.redis import redis_client
 from backend.utils.limiter import RateLimiter
 from backend.utils.timezone import timezone
 
-# HASN 自动注册（登录时签发 node_key）
+# HASN 自动注册（登录时签发 node_key + owner_key）
 try:
     from backend.app.hasn.service.hasn_auth import ensure_hasn_node_key as _ensure_hasn_node_key
 except ImportError:
     _ensure_hasn_node_key = None
+
+try:
+    from backend.app.hasn.service.hasn_auth import ensure_hasn_owner_key as _ensure_hasn_owner_key
+except ImportError:
+    _ensure_hasn_owner_key = None
 
 router = APIRouter()
 
@@ -245,6 +250,15 @@ async def phone_login(
             device_name=None,
         )
 
+    # 自动签发 Owner API Key（hasn_ok_xxx）用于文档/云函数等用户级认证
+    owner_key = None
+    if _ensure_hasn_owner_key is not None:
+        owner_key = await _ensure_hasn_owner_key(
+            db=db,
+            user_id=user.id,
+            nickname=user.nickname or '唤星用户',
+        )
+
     return response_base.success(
         data=PhoneLoginResponse(
             access_token=access_token_data.access_token,
@@ -256,6 +270,7 @@ async def phone_login(
             agent_key=settings.AGENT_SECRET_KEY.split(',')[0].strip(),
             gateway_token=gateway_token,
             hasn_node_key=hasn_node_key,
+            owner_key=owner_key,
             is_new_user=is_new_user,
             user=user_info,
         )

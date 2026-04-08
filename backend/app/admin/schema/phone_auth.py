@@ -41,6 +41,7 @@ class PhoneLoginResponse(SchemaBase):
     agent_key: str = Field(description='Agent Key（用于 X-Agent-Key 认证，桌面端调用 hx_* API）')
     gateway_token: str = Field(description='Gateway 认证 Token')
     hasn_node_key: str | None = Field(default=None, description='HASN Node Key（hasn_nk_ 前缀，用于 WebSocket 认证）')
+    owner_key: str | None = Field(default=None, description='HASN Owner API Key（hasn_ok_ 前缀，用于文档/云函数等用户级 API 认证）')
     is_new_user: bool = Field(description='是否新用户')
     user: 'PhoneLoginUserInfo' = Field(description='用户信息')
 
