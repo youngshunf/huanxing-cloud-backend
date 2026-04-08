@@ -114,7 +114,8 @@ async def api_register_hasn(
 class RegisterAgentReq(BaseModel):
     agent_name: str = Field(description='Agent 标识名（目录名，同一 Owner 下唯一）')
     display_name: str = Field(description='Agent 显示名称')
-    agent_type: str = Field(default='local', description='Agent 类型: local | cloud')
+    agent_type: str = Field(default='desktop', description='Agent 类型: desktop | mobile | cloud | web')
+    node_id: str | None = Field(None, description='Agent 驻留节点 ID（设备指纹派生）')
     role: str = Field(default='specialist', description='Agent 角色: primary | specialist | service')
     description: str | None = Field(None, description='Agent 描述')
     capabilities: list | None = Field(None, description='能力列表（A2A AgentCard 兼容）')
@@ -133,6 +134,7 @@ async def api_register_agent(
         agent_name=obj_in.agent_name,
         display_name=obj_in.display_name,
         agent_type=obj_in.agent_type,
+        node_id=obj_in.node_id,
         role=obj_in.role,
         description=obj_in.description,
         capabilities=obj_in.capabilities,
@@ -326,7 +328,7 @@ async def api_list_agents(
             'name': a.name,
             'agent_name': a.agent_name,
             'type': a.type,
-            'server_id': a.server_id,
+            'node_id': a.node_id,
             'online': online,
             'created_via': a.created_via,
             'created_time': a.created_time.isoformat() if a.created_time else None,

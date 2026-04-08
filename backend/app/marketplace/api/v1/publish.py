@@ -140,8 +140,14 @@ async def publish_skill(
             
             # 读取图标（可选）
             icon_content = None
-            if 'icon.svg' in zf.namelist():
-                icon_content = zf.read('icon.svg')
+            icon_filename = 'icon.svg'
+            icon_paths = ['icon.png', 'icon.svg', 'icon.jpg', 'assets/icon.png', 'assets/icon.svg']
+            for icon_path in icon_paths:
+                if icon_path in zf.namelist():
+                    icon_content = zf.read(icon_path)
+                    import os
+                    icon_filename = os.path.basename(icon_path)
+                    break
     except zipfile.BadZipFile:
         raise errors.RequestError(msg='无效的 ZIP 文件')
     
@@ -168,6 +174,7 @@ async def publish_skill(
             item_type='skill',
             item_id=skill_id,
             content=icon_content,
+            filename=icon_filename,
         )
     
     # 更新数据库
@@ -352,7 +359,7 @@ async def publish_app(
                 parsed = yaml.safe_load(template_content) or {}
                 manifest = {
                     'id': parsed.get('id', parsed.get('name', 'unknown-app')),
-                    'name': parsed.get('name', 'unknown-name'),
+                    'name': parsed.get('display_name') or parsed.get('name', 'unknown-name'),
                     'emoji': parsed.get('emoji'),
                     'version': parsed.get('version', '1.0.0'),
                     'description': parsed.get('description', 'Agent App'),
@@ -373,10 +380,13 @@ async def publish_app(
             
             # 读取图标（可选，支持多种路径）
             icon_content = None
-            icon_paths = ['icon.svg', 'assets/icon.svg']
+            icon_filename = 'icon.svg'
+            icon_paths = ['icon.png', 'icon.svg', 'icon.jpg', 'assets/icon.png', 'assets/icon.svg']
             for icon_path in icon_paths:
                 if icon_path in zf.namelist():
                     icon_content = zf.read(icon_path)
+                    import os
+                    icon_filename = os.path.basename(icon_path)
                     break
     except zipfile.BadZipFile:
         raise errors.RequestError(msg='无效的 ZIP 文件')
@@ -406,6 +416,7 @@ async def publish_app(
             item_type='app',
             item_id=app_id,
             content=icon_content,
+            filename=icon_filename,
         )
     
     # 更新数据库
@@ -492,8 +503,14 @@ async def publish_sop(
             
             # 读取图标
             icon_content = None
-            if 'icon.svg' in zf.namelist():
-                icon_content = zf.read('icon.svg')
+            icon_filename = 'icon.svg'
+            icon_paths = ['icon.png', 'icon.svg', 'icon.jpg', 'assets/icon.png', 'assets/icon.svg']
+            for icon_path in icon_paths:
+                if icon_path in zf.namelist():
+                    icon_content = zf.read(icon_path)
+                    import os
+                    icon_filename = os.path.basename(icon_path)
+                    break
                 
     except zipfile.BadZipFile:
         raise errors.RequestError(msg='无效的 ZIP 文件')
@@ -518,13 +535,14 @@ async def publish_sop(
             item_type='sop',
             item_id=sop_id,
             content=icon_content,
+            filename=icon_filename,
         )
     
     # 保存到数据库
     await _save_sop_to_db(
         db=db,
         sop_id=sop_id,
-        name=sop_meta.get('name', sop_id),
+        name=sop_meta.get('display_name') or sop_meta.get('name', sop_id),
         description=description,
         version=sop_version,
         changelog=changelog,

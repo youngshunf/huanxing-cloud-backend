@@ -333,7 +333,8 @@ async def register_hasn_agent(
     owner_hasn_id: str,
     agent_name: str,
     display_name: str,
-    agent_type: str = 'local',
+    agent_type: str = 'desktop',
+    node_id: str | None = None,
     role: str = 'specialist',
     description: str | None = None,
     capabilities: list | None = None,
@@ -345,6 +346,8 @@ async def register_hasn_agent(
     幂等：同一 owner + agent_name 不重复创建
 
     参数:
+      agent_type: desktop | mobile | cloud | web
+      node_id: Agent 驻留节点 ID（设备指纹派生）
       role: primary | specialist | service
       description: Agent 描述
       capabilities: A2A AgentCard 兼容能力列表
@@ -368,6 +371,19 @@ async def register_hasn_agent(
     )
     existing_agent = existing_result.scalar_one_or_none()
     if existing_agent:
+        # 幂等更新：如果 node_id 或 display_name 变了，更新记录
+        updated = False
+        if node_id and existing_agent.node_id != node_id:
+            existing_agent.node_id = node_id
+            updated = True
+        if display_name and existing_agent.name != display_name:
+            existing_agent.name = display_name
+            updated = True
+        if agent_type and existing_agent.type != agent_type:
+            existing_agent.type = agent_type
+            updated = True
+        if updated:
+            await db.flush()
         return {
             'agent': existing_agent,
             'agent_key': None,
@@ -386,6 +402,7 @@ async def register_hasn_agent(
         name=display_name,
         agent_name=agent_name,
         type=agent_type,
+        node_id=node_id,
         role=role or 'specialist',
         description=description,
         capabilities=capabilities,
@@ -414,8 +431,7 @@ async def register_node(
     node_info: dict | None = None,
     allowed_owner_hasn_ids: list[str] | None = None,
 ) -> HasnNodes:
-    """注册 Node（幂等：相同 owner + device_fingerprint 不重复创建）"""
-    # 幂等检查：如果 node_info 中有 device_fingerprint，查找已有 Node
+    """注册 Node（幂等：按 device_fingerprint 去重，同一物理设备永远只有一条记录）"""
     node_info = node_info or {}
     fingerprint = node_info.get('device_fingerprint')
     device_platform = node_info.get('device_platform') or node_info.get('platform')
@@ -423,36 +439,47 @@ async def register_node(
     capacity = int(node_info.get('capacity') or (3 if node_type == 'desktop' else 1))
     created_by_owner_id = owner_hasn_id
 
+    # 幂等检查：按 device_fingerprint 查找（不限 user_id，因为同一设备可能被不同用户登录）
     if fingerprint:
         result = await db.execute(
             select(HasnNodes).where(
-                HasnNodes.user_id == user_id,
-                HasnNodes.status == 'active',
                 HasnNodes.device_fingerprint == fingerprint,
+                HasnNodes.status == 'active',
             )
         )
         existing = result.scalar_one_or_none()
         if existing:
+            # 更新可变字段
             existing.last_seen_at = timezone.now()
+            existing.user_id = user_id or existing.user_id
             if node_name and existing.node_name != node_name:
                 existing.node_name = node_name
             existing.node_type = node_type or existing.node_type
             existing.capacity = capacity or existing.capacity
-            existing.user_id = user_id or existing.user_id
+            # 合并 allowed_owner_hasn_ids（多用户同设备）
+            if owner_hasn_id:
+                current_owners = existing.allowed_owner_hasn_ids or []
+                if owner_hasn_id not in current_owners:
+                    existing.allowed_owner_hasn_ids = current_owners + [owner_hasn_id]
             if allowed_owner_hasn_ids is not None:
                 existing.allowed_owner_hasn_ids = allowed_owner_hasn_ids
+            existing.created_by_owner_id = created_by_owner_id or existing.created_by_owner_id
             existing.device_platform = device_platform or existing.device_platform
             existing.app_version = app_version or existing.app_version
             existing.node_info = node_info or existing.node_info
             await db.flush()
             return existing
 
-    node_id = f"n_{uuid.uuid4().hex[:12]}"
+    # 新建节点：node_id 由设备指纹派生
+    if fingerprint:
+        node_id = f"n_{hashlib.sha256(fingerprint.encode()).hexdigest()[:16]}"
+    else:
+        node_id = f"n_{uuid.uuid4().hex[:12]}"
 
     node = HasnNodes(
         node_id=node_id,
         user_id=user_id,
-        allowed_owner_hasn_ids=allowed_owner_hasn_ids,
+        allowed_owner_hasn_ids=allowed_owner_hasn_ids or ([owner_hasn_id] if owner_hasn_id else None),
         node_type=node_type,
         node_name=node_name,
         device_fingerprint=fingerprint,
