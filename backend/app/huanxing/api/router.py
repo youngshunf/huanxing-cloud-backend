@@ -30,6 +30,8 @@ from backend.app.huanxing.api.v1.agent.website import router as agent_website_ro
 
 # --- user/ 用户级（Owner Key 认证）---
 from backend.app.huanxing.api.v1.user.document import router as user_document_router
+from backend.app.huanxing.api.v1.user.file import router as user_file_router
+from backend.app.huanxing.api.v1.user.website import router as user_website_router
 
 
 # ========================================
@@ -85,3 +87,5 @@ agent.include_router(agent_website_router, prefix='/website', tags=['唤星Agent
 user_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/huanxing/user', tags=['唤星用户级API'])
 
 user_api.include_router(user_document_router, prefix='/docs', tags=['唤星用户级-文档'])
+user_api.include_router(user_file_router, prefix='/files', tags=['唤星用户级-文件'])
+user_api.include_router(user_website_router, prefix='/website', tags=['唤星用户级-网站部署'])
