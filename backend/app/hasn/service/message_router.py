@@ -1,7 +1,7 @@
 """HASN 消息路由核心服务
 
 实现消息路由全流程（对齐协议 02-消息与通信.md §3.1）：
-认证 → 目标解析 → 关系查询 → 权限检查 → 铁律检查 → 持久化 → 投递
+认证 → 目标解析 → 关系查询 → 权限检查（三维矩阵）→ 铁律检查 → 持久化 → 投递
 """
 
 import uuid
@@ -17,6 +17,13 @@ from backend.app.hasn.model import HasnHumans, HasnMessages, HasnConversations, 
 from backend.app.hasn.model.hasn_agents import HasnAgents
 from backend.app.hasn.model.hasn_contacts import HasnContacts
 from backend.app.hasn.service.ws_router import ws_router
+from backend.app.hasn.constants import (
+    check_action_permission,
+    compute_effective_permissions,
+    ALLOW,
+    CONFIRM,
+    SCOPE_LTD,
+)
 
 
 # ─── 目标解析 ───
@@ -98,13 +105,14 @@ async def check_relation_permission(
     msg_type: str = 'message',
 ) -> dict[str, Any]:
     """
-    检查发送方与接收方之间的关系和权限
+    检查发送方与接收方之间的关系和权限（集成三维权限矩阵）
 
-    返回: {allowed: bool, relation_type, trust_level, reason}
+    返回: {allowed: bool, relation_type, trust_level, reason,
+           permission_state: allow/deny/confirm_required/scope_limited}
     """
-    # 自己给自己发（用户给自己的 Agent）→ 始终允许
+    # 自己给自己发 → 始终允许（Owner 控制权）
     if sender_id == receiver_id:
-        return {'allowed': True, 'relation_type': 'social', 'trust_level': 5}
+        return {'allowed': True, 'relation_type': 'social', 'trust_level': 5, 'permission_state': ALLOW}
 
     # 检查是否是 Owner 给自己的 Agent 发消息
     if sender_id.startswith('h_') and receiver_id.startswith('a_'):
@@ -115,7 +123,7 @@ async def check_relation_permission(
             )
         )
         if agent_result.scalar_one_or_none():
-            return {'allowed': True, 'relation_type': 'social', 'trust_level': 5}
+            return {'allowed': True, 'relation_type': 'social', 'trust_level': 5, 'permission_state': ALLOW}
 
     # Agent 给自己的 Owner 发消息 → 始终允许
     if sender_id.startswith('a_') and receiver_id.startswith('h_'):
@@ -126,7 +134,7 @@ async def check_relation_permission(
             )
         )
         if agent_result.scalar_one_or_none():
-            return {'allowed': True, 'relation_type': 'social', 'trust_level': 5}
+            return {'allowed': True, 'relation_type': 'social', 'trust_level': 5, 'permission_state': ALLOW}
 
     # 同一 Owner 的 Agent 之间 → 始终允许
     if sender_id.startswith('a_') and receiver_id.startswith('a_'):
@@ -139,7 +147,7 @@ async def check_relation_permission(
         s_owner = sender_agent.scalar()
         r_owner = receiver_agent.scalar()
         if s_owner and r_owner and s_owner == r_owner:
-            return {'allowed': True, 'relation_type': 'social', 'trust_level': 5}
+            return {'allowed': True, 'relation_type': 'social', 'trust_level': 5, 'permission_state': ALLOW}
 
     # 查询关系记录（双向查找，取发送方视角）
     # 对于 Agent，用其 Owner 的身份查关系
@@ -175,52 +183,82 @@ async def check_relation_permission(
     if not relation:
         # 好友请求类消息不需要已有关系
         if msg_type in ('contact_request', 'contact_accept', 'contact_reject'):
-            return {'allowed': True, 'relation_type': 'social', 'trust_level': 1}
+            return {'allowed': True, 'relation_type': 'social', 'trust_level': 1, 'permission_state': ALLOW}
         return {
             'allowed': False,
             'relation_type': None,
             'trust_level': 0,
+            'permission_state': 'deny',
             'reason': '双方无关系，请先添加好友',
         }
 
-    # 检查是否被拉黑
+    # 铁律 1: trust_level=0 → 完全屏蔽
     if relation.trust_level == 0:
         return {
             'allowed': False,
             'relation_type': relation.relation_type,
             'trust_level': 0,
+            'permission_state': 'deny',
             'reason': '已被对方拉黑',
         }
 
-    # 基本权限：trust_level >= 2 可发消息
-    if relation.trust_level >= 2:
-        return {
-            'allowed': True,
-            'relation_type': relation.relation_type,
-            'trust_level': relation.trust_level,
-        }
+    # ── 三维权限矩阵检查 ──────────────────────────────
+    # 将消息类型映射到行为类型
+    action = _msg_type_to_action(msg_type)
+    perm_state = check_action_permission(
+        relation_type=relation.relation_type,
+        trust_level=relation.trust_level,
+        action=action,
+        custom_permissions=relation.custom_permissions,
+    )
 
-    # Stranger (trust_level=1) 只能发特定类型消息
-    if relation.trust_level == 1:
-        if msg_type in ('contact_request', 'discovery_query'):
-            return {
-                'allowed': True,
-                'relation_type': relation.relation_type,
-                'trust_level': 1,
-            }
+    if perm_state == 'deny':
+        reason_map = {
+            1: '信任等级不足，仅允许好友请求',
+            2: '权限不足',
+        }
         return {
             'allowed': False,
             'relation_type': relation.relation_type,
-            'trust_level': 1,
-            'reason': '信任等级不足，仅允许好友请求',
+            'trust_level': relation.trust_level,
+            'permission_state': perm_state,
+            'reason': reason_map.get(relation.trust_level, '权限不足'),
         }
 
+    # scope_limited: 允许但标记需 scope 限制（由业务层进一步控制）
     return {
-        'allowed': False,
+        'allowed': True,
         'relation_type': relation.relation_type,
         'trust_level': relation.trust_level,
-        'reason': '权限不足',
+        'permission_state': perm_state,
+        # confirm_required: 调用方需要触发人类确认流程
+        'requires_confirm': perm_state == CONFIRM,
     }
+
+
+def _msg_type_to_action(msg_type: str) -> str:
+    """将消息类型映射到权限矩阵的行为类型"""
+    _map = {
+        'message':            'send_message',
+        'text':               'send_message',
+        'contact_request':    'send_message',
+        'contact_accept':     'send_message',
+        'contact_reject':     'send_message',
+        'discovery_query':    'view_public_info',
+        'schedule_query':     'view_schedule',
+        'preference_query':   'view_preferences',
+        'location_query':     'view_location',
+        'appointment':        'make_appointment',
+        'commitment':         'make_commitment',
+        'sensitive_query':    'view_sensitive',
+        'product_inquiry':    'product_inquiry',
+        'trade_comm':         'trade_communication',
+        'push_notification':  'send_push',
+        'order_comm':         'order_communication',
+        'decrypt_address':    'decrypt_address',
+        'professional_consult': 'professional_consult',
+    }
+    return _map.get(msg_type, 'send_message')
 
 
 # ─── 会话管理 ───
@@ -425,26 +463,36 @@ async def route_message(
 
     await db.commit()
 
-    # 6. 构建推送 payload
-    payload = {
-        'cmd': 'MESSAGE',
+    # 6. 构建推送 payload（对齐协议 01-传输层 §3.6 hasn.message.received 事件帧）
+    from_entity_type = 'human' if from_id.startswith('h_') else ('agent' if from_id.startswith('a_') else 'system')
+    to_entity_type = 'human' if to_id.startswith('h_') else ('agent' if to_id.startswith('a_') else 'system')
+
+    hasn_envelope = {
+        'id': msg.id,
+        'conversation_id': str(conv.id),
+        'from_id': from_id,
+        'from_type': msg.from_type,
         'to_id': to_id,
-        'message': {
-            'id': msg.id,
-            'conversation_id': str(conv.id),
-            'from_id': from_id,
-            'from_type': msg.from_type,
+        'to_type': msg.to_type,
+        'content_type': content_type,
+        'content': content,
+        'msg_type': msg_type,
+        'status': 1,
+        'priority': priority,
+        'reply_to_id': reply_to_id,
+        'local_id': local_id,
+        'created_time': msg.created_time.isoformat() if msg.created_time else None,
+        'from_owner_id': from_id if from_id.startswith('h_') else None,
+        'to_owner_id': target_info.get('owner_id') if to_entity_type == 'agent' else to_id,
+    }
+
+    payload = {
+        'hasn': 'hasn/2.0',
+        'method': 'hasn.message.received',
+        'params': {
             'to_id': to_id,
-            'to_type': msg.to_type,
-            'content_type': content_type,
-            'content': content,
-            'msg_type': msg_type,
-            'status': 1,
-            'priority': priority,
-            'reply_to_id': reply_to_id,
-            'local_id': local_id,
-            'created_time': msg.created_time.isoformat() if msg.created_time else None,
-        },
+            'message': hasn_envelope,
+        }
     }
 
     # 7. 投递

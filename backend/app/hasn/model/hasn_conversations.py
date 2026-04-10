@@ -1,4 +1,5 @@
 from datetime import datetime
+import uuid
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -14,7 +15,7 @@ class HasnConversations(Base):
 
     __tablename__ = 'hasn_conversations'
 
-    id: Mapped[id_key] = mapped_column(init=False)
+    id: Mapped[UUID] = mapped_column(sa.UUID(), primary_key=True, default=uuid.uuid4, init=False, comment='会话主键 ID')
     type: Mapped[str] = mapped_column(sa.String(10), default='', comment='会话类型 (direct:单聊:blue/group:群聊:green)')
     relation_type: Mapped[str | None] = mapped_column(sa.String(20), default=None, comment='关系类型 (social:社交:blue/commerce:商业:orange/service:履约:green/professional:专业:purple/platform:平台:cyan)')
     participant_a_id: Mapped[str] = mapped_column(sa.String(40), default='', comment='参与方 A hasn_id（单聊必填，群聊=创建者）')

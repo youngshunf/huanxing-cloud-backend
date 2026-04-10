@@ -92,6 +92,33 @@ class PublishResult(BaseModel):
 
 
 # ============================================================
+# 预上传 API
+# ============================================================
+
+@router.post('/upload-icon', summary='预上传图标')
+async def upload_icon_only(
+    db: CurrentSession,
+    publish_user: Annotated[PublishUser, Depends(verify_publish_api_key)],
+    file: Annotated[UploadFile, File(description='图标文件')],
+    item_type: Annotated[str, Form(description='skill/app/sop')] = 'app',
+    item_id: Annotated[str, Form(description='技能/应用 ID')] = '',
+) -> ResponseSchemaModel:
+    """
+    预上传图标文件（带 Hash 去重）。
+    CLI 会在打包前上传获取 URL。
+    """
+    content = await file.read()
+    icon_url = await marketplace_storage_service.upload_icon_dedup(
+        db=db,
+        item_type=item_type,
+        item_id=item_id,
+        content=content,
+        filename=file.filename or 'icon.svg',
+    )
+    return response_base.success(data={'icon_url': icon_url})
+
+
+# ============================================================
 # 技能发布 API
 # ============================================================
 

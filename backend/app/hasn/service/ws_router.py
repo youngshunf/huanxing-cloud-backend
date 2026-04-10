@@ -124,12 +124,24 @@ class WsRouterService:
         db: AsyncSession,
     ) -> dict[str, Any]:
         proof = await verify_owner_proof(owner_id, owner_proof, node_id, db)
-        binding = await hasn_node_bindings_service.renew_owner_binding(
-            db=db,
-            node_id=node_id,
-            owner_id=owner_id,
-            expires_at=proof['expires_at'],
-        )
+        try:
+            binding = await hasn_node_bindings_service.renew_owner_binding(
+                db=db,
+                node_id=node_id,
+                owner_id=owner_id,
+                expires_at=proof['expires_at'],
+            )
+        except Exception:
+            # Fallback to add_owner if the binding does not exist
+            binding = await hasn_node_bindings_service.add_owner_binding(
+                db=db,
+                node_id=node_id,
+                owner_id=owner_id,
+                auth_profile=proof['auth_profile'],
+                scopes=proof['scopes'],
+                expires_at=proof['expires_at'],
+            )
+            await self._register_entity(node_id, owner_id, is_human=True)
         return {
             'binding_id': binding.binding_id,
             'owner_id': owner_id,

@@ -112,7 +112,7 @@ class HasnNodeBindingsService:
             return existing
 
         if expires_at is None:
-            expires_at = timezone.now() + timedelta(days=30)
+            expires_at = timezone.now() + timedelta(days=7)
 
         binding = HasnNodeBindings(
             binding_id=f"ob_{uuid.uuid4().hex[:12]}",
@@ -140,7 +140,7 @@ class HasnNodeBindingsService:
         binding = await HasnNodeBindingsService.get_active_binding(db=db, node_id=node_id, owner_id=owner_id)
         if not binding:
             raise errors.NotFoundError(msg='Owner Binding 不存在')
-        binding.expires_at = expires_at or (timezone.now() + timedelta(days=30))
+        binding.expires_at = expires_at or (timezone.now() + timedelta(days=7))
         binding.renewed_at = timezone.now()
         binding.last_used_at = timezone.now()
         await db.flush()

@@ -27,6 +27,9 @@ class PhoneLoginParam(SchemaBase):
 
     phone: CustomPhoneNumber = Field(description='手机号')
     code: str = Field(min_length=4, max_length=6, description='验证码')
+    # 设备信息（由 ZeroClaw sidecar 在启动时生成，用于 HASN 节点幂等注册）
+    device_fingerprint: str | None = Field(default=None, description='设备指纹（32字符 hex，同一物理设备永远不变）')
+    device_name: str | None = Field(default=None, description='设备名称（如 "macOS 14.4.1"、"Windows 11"）')
 
 
 class PhoneLoginResponse(SchemaBase):
@@ -41,6 +44,7 @@ class PhoneLoginResponse(SchemaBase):
     agent_key: str = Field(description='Agent Key（用于 X-Agent-Key 认证，桌面端调用 hx_* API）')
     gateway_token: str = Field(description='Gateway 认证 Token')
     hasn_node_key: str | None = Field(default=None, description='HASN Node Key（hasn_nk_ 前缀，用于 WebSocket 认证）')
+    hasn_node_id: str | None = Field(default=None, description='HASN 节点 ID（n_ 前缀，用于展示和日志）')
     owner_key: str | None = Field(default=None, description='HASN Owner API Key（hasn_ok_ 前缀，用于文档/云函数等用户级 API 认证）')
     is_new_user: bool = Field(description='是否新用户')
     user: 'PhoneLoginUserInfo' = Field(description='用户信息')

@@ -6,6 +6,12 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+# 从 constants 导入六级标签（统一数据源）
+from backend.app.hasn.constants import TRUST_LEVEL_LABELS as _TRUST_LEVEL_LABELS
+
+# 兼容旧导入路径
+TRUST_LEVEL_LABELS = _TRUST_LEVEL_LABELS
+
 
 class HasnContactPeerOut(BaseModel):
     hasn_id: str
@@ -37,7 +43,15 @@ class HasnContactRequestOut(BaseModel):
     message: str = ''
 
 
-TRUST_LEVEL_LABELS = {0: 'blocked', 1: 'stranger', 2: 'normal', 3: 'trusted', 4: 'owner'}
+class AgentPeerOut(BaseModel):
+    """联系人名下 Agent 摘要"""
+    hasn_id: str
+    star_id: str
+    name: str
+    agent_name: str
+    avatar_url: str | None = None
+    type: str = 'desktop'
+    role: str = 'specialist'
 
 
 class HasnContactOut(BaseModel):
@@ -50,6 +64,10 @@ class HasnContactOut(BaseModel):
     tags: list[str] | None = None
     subscription: bool = False
     status: str = 'connected'
+    # 阶段二新增
+    owned_agents: list[AgentPeerOut] = []       # human 联系人名下 Agent 列表
+    custom_permissions: dict = {}               # 自定义权限覆盖
+    scope: dict | None = None                   # 当前作用域
     connected_at: str | None = None
     last_interaction_at: str | None = None
 
@@ -61,4 +79,10 @@ class HasnContactListResp(BaseModel):
 
 class HasnTrustLevelReq(BaseModel):
     relation_type: str = Field('social', description='关系类型')
-    trust_level: int = Field(..., ge=0, le=4, description='0-4')
+    # 升级为 le=5（原为 le=4），新增 friend(3) / trusted(4) / owner(5)
+    trust_level: int = Field(..., ge=0, le=5, description='0-5 (0:blocked~5:owner)')
+
+
+class HasnPermissionsReq(BaseModel):
+    """自定义权限覆盖请求"""
+    permissions: dict[str, str] = Field(..., description='action → state 映射 (allow/deny/confirm_required/scope_limited)')

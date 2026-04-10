@@ -242,9 +242,9 @@ async def verify_owner_proof(
         human = result.scalar_one_or_none()
         if not human:
             raise HTTPException(status_code=401, detail='Bearer Token 与 owner_id 不匹配')
-        payload = jwt_decode(credential)
-        exp_ts = payload.get('exp')
-        expires_at = datetime.fromtimestamp(exp_ts, tz=timezone.now().tzinfo) if exp_ts else None
+        token_payload = jwt_decode(credential)
+        # default to 7 days lease for bearer token
+        expires_at = timezone.now() + timedelta(days=7)
         return {
             'auth_profile': 'bearer_token',
             'scopes': {'bind_owner': True, 'register_agent': True},
@@ -339,6 +339,7 @@ async def register_hasn_agent(
     description: str | None = None,
     capabilities: list | None = None,
     created_via: str = 'client',
+    avatar_url: str | None = None,
 ) -> dict[str, Any]:
     """
     为已有 Human 注册新 Agent 的 HASN 身份
@@ -351,6 +352,7 @@ async def register_hasn_agent(
       role: primary | specialist | service
       description: Agent 描述
       capabilities: A2A AgentCard 兼容能力列表
+      avatar_url: CDN 头像 URL
 
     返回: {agent: HasnAgents, agent_key: str | None, already_exists: bool}
     """
@@ -371,7 +373,7 @@ async def register_hasn_agent(
     )
     existing_agent = existing_result.scalar_one_or_none()
     if existing_agent:
-        # 幂等更新：如果 node_id 或 display_name 变了，更新记录
+        # 幂等更新：如果属性变了，更新记录
         updated = False
         if node_id and existing_agent.node_id != node_id:
             existing_agent.node_id = node_id
@@ -381,6 +383,9 @@ async def register_hasn_agent(
             updated = True
         if agent_type and existing_agent.type != agent_type:
             existing_agent.type = agent_type
+            updated = True
+        if avatar_url and existing_agent.avatar_url != avatar_url:
+            existing_agent.avatar_url = avatar_url
             updated = True
         if updated:
             await db.flush()
@@ -406,6 +411,7 @@ async def register_hasn_agent(
         role=role or 'specialist',
         description=description,
         capabilities=capabilities,
+        avatar_url=avatar_url,
         api_key_hash=agent_key_hash,
         status='active',
         created_via=created_via,
@@ -503,12 +509,18 @@ async def ensure_hasn_node_key(
     nickname: str,
     client_type: str = 'desktop',
     device_name: str | None = None,
+    device_fingerprint: str | None = None,
 ) -> str | None:
     """
     登录时调用：确保 HASN 身份已注册 + 节点设备已注册 + 签发 Node Key
 
-    幂等：已有 Node Key 直接复用（不重新生成）。
+    幂等：同一设备（由 device_fingerprint 标识）永远复用同一条 hasn_nodes 记录。
     如果任何步骤失败，返回 None（不阻塞登录）。
+
+    参数:
+        device_fingerprint: 设备指纹（32字符 hex），由 ZeroClaw 进程在启动时派生。
+                            缺失时退化为按 user_id 区分（每个用户每次登录创建新记录）。
+        device_name: 节点名称，建议格式为 "macOS 14.4.1" / "Windows 11"。
 
     返回: node_key (hasn_nk_xxx) 或 None
     """
@@ -522,30 +534,33 @@ async def ensure_hasn_node_key(
         )
         hasn_id = identity['human'].hasn_id
 
-        # 2. 注册 Node 设备（幂等）
+        # 2. 注册 Node 设备（幂等：device_fingerprint 是去重 Key）
+        node_info: dict = {
+            'source': 'login_auto',
+            'client_type': client_type,
+            'device_platform': client_type,
+        }
+        if device_fingerprint:
+            node_info['device_fingerprint'] = device_fingerprint
+
         node = await register_node(
             db=db,
             user_id=user_id,
             owner_hasn_id=hasn_id,
             node_type=client_type,
             node_name=device_name,
-            node_info={'source': 'login_auto', 'client_type': client_type, 'device_platform': client_type},
+            node_info=node_info,
             allowed_owner_hasn_ids=None,
         )
 
-        # 3. 签发/复用 Node Key
-        if node.node_key_hash:
-            # 已有 node_key hash —— 复用需重新签发（因为我们不存明文）
-            # 每次登录都生成新的 node_key，旧的自动失效
-            pass
-
+        # 3. 签发新 Node Key（每次登录刷新；旧 key 自动失效，因为 hash 被覆盖）
         node_key, node_key_hash = _generate_node_key()
         node.node_key_hash = node_key_hash
         node.last_seen_at = timezone.now()
         await db.flush()
 
         log.info(f'[HASN] 登录自动注册 OK: user_id={user_id}, hasn_id={hasn_id}, '
-                 f'node_id={node.node_id}')
+                 f'node_id={node.node_id}, fingerprint={device_fingerprint or "N/A"}')
         return node_key
 
     except Exception as e:

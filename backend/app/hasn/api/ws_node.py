@@ -448,13 +448,16 @@ async def _handle_send(
                 'id': result['msg_id'],
                 'conversation_id': result['conversation_id'],
                 'from_id': from_id,
+                'from_type': 1 if from_id.startswith('h_') else 2,
                 'to_id': to_target,
+                'to_type': 1 if to_target.startswith('h_') else 2,
                 'content_type': content_type,
                 'content': content,
                 'msg_type': msg_type,
                 'status': 1,
                 'local_id': local_id,
                 'self_sent': True,
+                'created_time': timezone.now().isoformat(),
             },
         })
         other_nodes = await redis_client.smembers(f'{USER_NODES_PREFIX}:{sync_target}')

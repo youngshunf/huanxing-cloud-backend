@@ -192,9 +192,11 @@ class AuthService:
                     nickname=user.nickname or user.username,
                     client_type='desktop',
                     device_name=ctx.os if ctx.os else 'Desktop',
+                    device_fingerprint=ctx.device if ctx.device else None,
                 )
             except Exception as e:
                 log.error(f'HASN Node Key 自动生成失败: {e}')
+
 
             data = GetLoginToken(
                 access_token=access_token_data.access_token,

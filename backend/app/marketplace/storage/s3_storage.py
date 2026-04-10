@@ -187,6 +187,39 @@ class MarketplaceStorageService:
         # 构建 URL
         return self._build_url(s3_storage, path)
     
+    async def upload_icon_dedup(
+        self,
+        db: AsyncSession,
+        item_type: str,  # 'skill', 'app' or 'sop'
+        item_id: str,
+        content: bytes,
+        filename: str = 'icon.svg',
+        storage_id: int | None = None,
+    ) -> str:
+        """
+        上传图标（hash 去重：内容未变则跳过上传，返回已有 URL）
+        """
+        op, s3_storage = await self._get_operator(db, storage_id)
+        content_hash = self._calculate_hash(content)
+        
+        import os
+        name, ext = os.path.splitext(filename)
+        base_path = self.SKILLS_PATH if item_type == 'skill' else self.APPS_PATH
+        path = f'{base_path}/{item_id}/{filename}'
+        
+        # 检查是否已存在同 hash 文件（通过 .sha256 元文件）
+        hash_path = f'{path}.sha256'
+        try:
+            existing_hash = (await op.read(hash_path)).decode()
+            if existing_hash.strip() == content_hash:
+                return self._build_url(s3_storage, path)  # 跳过上传
+        except Exception:
+            pass  # 不存在，继续上传
+        
+        await op.write(path, content)
+        await op.write(hash_path, content_hash.encode())  # 保存 hash 元文件
+        return self._build_url(s3_storage, path)
+    
     async def download_package(
         self,
         db: AsyncSession,

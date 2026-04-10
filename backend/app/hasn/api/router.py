@@ -113,6 +113,10 @@ from backend.app.hasn.api.v1.node_control import router as node_control_router
 
 app.include_router(app_contacts_router, tags=['联系人管理'])
 app.include_router(app_hasn_auth_router, tags=['HASN认证'])
+
+# --- IM 业务 API ---
+from backend.app.hasn.api.v1.app.hasn_im import router as app_hasn_im_router
+app.include_router(app_hasn_im_router, prefix='/im', tags=['HASN IM 业务'])
 app.include_router(app_hasn_api_keys_router, tags=['HASN API Key'])
 app.include_router(app_hasn_nodes_router, prefix='/hasn/nodess', tags=['HASN Node 主-HASN Node 主'])
 app.include_router(app_hasn_owner_api_keys_router, prefix='/hasn/owner/api/keyss', tags=['HASN Owner API Key -HASN Owner API Key '])

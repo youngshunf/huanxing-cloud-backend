@@ -75,11 +75,16 @@ async def api_register_hasn(
     # 同步签发 Node Key（每次注册/恢复都签发，确保桌面端能拿到有效凭据）
     node_key = None
     try:
+        # 从 X-Device-Fingerprint / X-Device-Name 头读取设备信息（由 ZeroClaw sidecar 注入）
+        device_fingerprint = request.headers.get('X-Device-Fingerprint')
+        device_name = request.headers.get('X-Device-Name')
         node_key = await ensure_hasn_node_key(
             db=db,
             user_id=user_info.id,
             nickname=obj_in.name,
             client_type='desktop',
+            device_name=device_name,
+            device_fingerprint=device_fingerprint,
         )
     except Exception:
         pass  # 非致命
@@ -119,6 +124,7 @@ class RegisterAgentReq(BaseModel):
     role: str = Field(default='specialist', description='Agent 角色: primary | specialist | service')
     description: str | None = Field(None, description='Agent 描述')
     capabilities: list | None = Field(None, description='能力列表（A2A AgentCard 兼容）')
+    avatar_url: str | None = Field(None, description='CDN 头像 URL')
 
 
 @router.post('/auth/register-agent', summary='注册 Agent HASN 身份')
@@ -138,6 +144,7 @@ async def api_register_agent(
         role=obj_in.role,
         description=obj_in.description,
         capabilities=obj_in.capabilities,
+        avatar_url=obj_in.avatar_url,
     )
     if not result.get('already_exists'):
         await db.commit()
@@ -329,6 +336,10 @@ async def api_list_agents(
             'agent_name': a.agent_name,
             'type': a.type,
             'node_id': a.node_id,
+            'avatar_url': a.avatar_url,
+            'role': a.role,
+            'description': a.description,
+            'capabilities': a.capabilities,
             'online': online,
             'created_via': a.created_via,
             'created_time': a.created_time.isoformat() if a.created_time else None,
