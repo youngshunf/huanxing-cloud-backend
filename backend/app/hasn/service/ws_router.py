@@ -15,7 +15,11 @@ Redis 数据结构：
 """
 
 import json
+import logging
+from datetime import timedelta
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from fastapi import WebSocket
 from sqlalchemy import select
@@ -97,8 +101,17 @@ class WsRouterService:
         owner_id: str,
         owner_proof: dict,
         db: AsyncSession,
+        skip_proof_verify: bool = False,
     ) -> dict[str, Any]:
-        proof = await verify_owner_proof(owner_id, owner_proof, node_id, db)
+        if skip_proof_verify:
+            # 已在 WS 握手的 authenticate_ws_connection 中验证通过
+            proof = {
+                'auth_profile': owner_proof.get('type', 'bearer_token'),
+                'scopes': {'bind_owner': True, 'register_agent': True},
+                'expires_at': timezone.now() + timedelta(days=7),
+            }
+        else:
+            proof = await verify_owner_proof(owner_id, owner_proof, node_id, db)
         binding = await hasn_node_bindings_service.add_owner_binding(
             db=db,
             node_id=node_id,
@@ -202,6 +215,15 @@ class WsRouterService:
         if err:
             return {'agent_id': agent_id, 'accepted': False, 'reason': err['reason']}
         await self._register_entity(node_id, agent_id, is_human=False)
+
+        # 更新 hasn_agents 表的 node_id 字段
+        result = await db.execute(
+            select(HasnAgents).where(HasnAgents.hasn_id == agent_id)
+        )
+        agent = result.scalar_one_or_none()
+        if agent:
+            agent.node_id = node_id
+
         return {'agent_id': agent_id, 'accepted': True}
 
     async def remove_agent_presence(self, node_id: str, agent_id: str) -> dict[str, Any]:
@@ -230,7 +252,17 @@ class WsRouterService:
         # 检查是否已被其他节点上报
         existing_node = await redis_client.hget(ENTITY_NODE_KEY, hasn_id)
         if existing_node and existing_node != node_id:
-            return {'hasn_id': hasn_id, 'reason': f'已在节点 {existing_node} 上运行'}
+            # 检查旧节点是否还在线（WS 连接是否存活）
+            old_ws = _ws_connections.get(existing_node)
+            if old_ws is None:
+                # 旧节点已断开（非优雅关闭导致 Redis 残留），自动接管
+                logger.warning(
+                    f'Agent {hasn_id} 的旧节点 {existing_node} 已离线，'
+                    f'允许新节点 {node_id} 接管'
+                )
+                await self.unregister_entity_route(existing_node, hasn_id)
+            else:
+                return {'hasn_id': hasn_id, 'reason': f'已在节点 {existing_node} 上运行'}
 
         return None
 

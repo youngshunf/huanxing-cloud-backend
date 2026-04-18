@@ -181,23 +181,8 @@ class AuthService:
             except Exception as e:
                 log.error(f'new-api 用户创建失败: {e}')
                 raise errors.ServerError(msg='LLM 服务初始化失败，请稍后重试')
-            
-            # 获取 HASN Node Key
+            # HASN Node Key 已与登录解耦，由客户端在网络初始化时调用专用接口获取
             hasn_node_key = None
-            try:
-                from backend.app.hasn.service.hasn_auth import ensure_hasn_node_key
-                hasn_node_key = await ensure_hasn_node_key(
-                    db=db,
-                    user_id=user.id,
-                    nickname=user.nickname or user.username,
-                    client_type='desktop',
-                    device_name=ctx.os if ctx.os else 'Desktop',
-                    device_fingerprint=ctx.device if ctx.device else None,
-                )
-            except Exception as e:
-                log.error(f'HASN Node Key 自动生成失败: {e}')
-
-
             data = GetLoginToken(
                 access_token=access_token_data.access_token,
                 access_token_expire_time=access_token_data.access_token_expire_time,

@@ -31,12 +31,6 @@ from backend.database.redis import redis_client
 from backend.utils.limiter import RateLimiter
 from backend.utils.timezone import timezone
 
-# HASN 自动注册（登录时签发 node_key + owner_key）
-try:
-    from backend.app.hasn.service.hasn_auth import ensure_hasn_node_key as _ensure_hasn_node_key
-except ImportError:
-    _ensure_hasn_node_key = None
-
 try:
     from backend.app.hasn.service.hasn_auth import ensure_hasn_owner_key as _ensure_hasn_owner_key
 except ImportError:
@@ -239,23 +233,9 @@ async def phone_login(
         is_new_user=is_new_user,
     )
 
-    # 自动注册 HASN 身份 + 签发 Node Key（不阻塞登录）
+    # 历史遗留字段，现在 NodeKey 由客户端主动获取
     hasn_node_key = None
     hasn_node_id = None
-    if _ensure_hasn_node_key is not None:
-        hasn_node_key = await _ensure_hasn_node_key(
-            db=db,
-            user_id=user.id,
-            nickname=user.nickname or '唤星用户',
-            client_type='desktop',
-            device_name=obj.device_name,
-            device_fingerprint=obj.device_fingerprint,
-        )
-        # 读取当前 done 的 node_id（根据指纹派生）
-        if obj.device_fingerprint:
-            import hashlib as _hl
-            _raw_fp = obj.device_fingerprint
-            hasn_node_id = 'n_' + _hl.sha256(_raw_fp.encode()).hexdigest()[:16]
 
     # 自动签发 Owner API Key（hasn_ok_xxx）用于文档/云函数等用户级认证
     owner_key = None

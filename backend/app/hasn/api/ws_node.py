@@ -1,5 +1,9 @@
 """HASN 统一节点 WebSocket 端点.
 
+v2.1 简化认证：Bearer Token / OwnerKey + X-Node-Id
+- 连接时自动 upsert hasn_nodes + 自动绑定第一个 Owner
+- JWT 只在握手时验证一次，连接生命周期由 Owner Binding 租约管理
+
 现行控制平面：
 - add_owner / remove_owner / renew_owner / list_owners
 - add_agent / remove_agent
@@ -12,7 +16,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.security.utils import get_authorization_scheme_param
 
 from backend.database.db import async_db_session
-from backend.app.hasn.service.hasn_auth import verify_node_key
+from backend.app.hasn.service.hasn_auth import authenticate_ws_connection
 from backend.app.hasn.service.ws_router import ws_router, _ws_connections
 from backend.app.hasn.service import message_router
 from backend.utils.timezone import timezone
@@ -48,37 +52,76 @@ def _response(req_id: str, result: dict = None, error: dict = None) -> dict:
 async def hasn_node_websocket(
     websocket: WebSocket,
 ):
-    """HASN 统一节点 WebSocket 端点（所有节点类型共用）"""
+    """HASN 统一节点 WebSocket 端点（所有节点类型共用）
 
-    # 1. 认证：只接受 Authorization: NodeKey <hasn_nk_xxx>
+    认证方式（v2.1）：
+      - Authorization: Bearer <jwt_access_token>  — 桌面端/Web端
+      - Authorization: OwnerKey hasn_ok_xxx        — SDK/第三方接入
+    节点标识：
+      - X-Node-Id: n_xxx                           — 客户端设备指纹派生
+      - X-Node-Name: macOS 15.3 (aarch64)          — 可选，设备描述
+    """
+
+    # 1. 认证：接受 Bearer / OwnerKey + X-Node-Id
     try:
         authorization = websocket.headers.get('Authorization')
         if not authorization:
             await websocket.close(code=4001, reason='缺少认证头 Authorization')
             return
         scheme, credentials = get_authorization_scheme_param(authorization)
-        if scheme != 'NodeKey':
-            await websocket.close(code=4001, reason='仅支持 NodeKey 认证')
+        if scheme.lower() not in ('bearer', 'ownerkey'):
+            await websocket.close(code=4001, reason=f'不支持的认证方式: {scheme}，请使用 Bearer 或 OwnerKey')
             return
-        auth = await verify_node_key(credentials)
+
+        # 读取 node_id（客户端设备指纹派生）
+        node_id = (
+            websocket.headers.get('X-Node-Id')
+            or websocket.query_params.get('node_id')
+            or f'n_tmp_{id(websocket)}'  # Web 端兜底
+        )
+        node_name = websocket.headers.get('X-Node-Name')
+
+        auth = await authenticate_ws_connection(scheme, credentials, node_id, node_name)
     except Exception as e:
+        log.warning(f'[HASN] WS 认证失败: {e}')
         await websocket.close(code=4001, reason=str(e))
         return
 
-    node_id = auth.get('node_id') or auth.get('client_id', '')
-    node_type = auth.get('node_type') or auth.get('client_type', 'desktop')
+    node_id = auth['node_id']
+    node_type = auth.get('node_type', 'desktop')
     capacity = auth.get('capacity', 1)
+    owner_hasn_id = auth.get('owner_hasn_id')
 
     await websocket.accept()
 
-    # 2. 注册节点在线（不绑定用户）
+    # 2. 注册节点在线
     await ws_router.register_node(
         node_id, node_type, websocket, capacity
     )
 
+    # 3. 自动绑定第一个 Owner（建连时一步完成）
+    auto_bound_owner = False
+    if owner_hasn_id:
+        try:
+            async with async_db_session() as db:
+                bind_result = await ws_router.add_owner(
+                    node_id=node_id,
+                    owner_id=owner_hasn_id,
+                    owner_proof={
+                        'type': auth['auth_profile'],
+                        'credential': '__ws_auto_bind__',  # 内部哨兵值，已过认证
+                    },
+                    db=db,
+                    skip_proof_verify=True,  # 已在 authenticate_ws_connection 中验证
+                )
+                await db.commit()
+            auto_bound_owner = bind_result.get('accepted', False)
+        except Exception as e:
+            log.warning(f'[HASN] 自动绑定 Owner 失败 (非致命): {e}')
+
     try:
-        # 3. 发送 hasn.connected
-        await websocket.send_json(_frame('hasn.connected', {
+        # 4. 发送 hasn.connected（新增 owner_id 字段）
+        connected_params = {
             'node_id': node_id,
             'node_type': node_type,
             'capacity': capacity,
@@ -88,26 +131,39 @@ async def hasn_node_websocket(
                 'capability', 'discovery', 'trade',
                 'screening', 'health', 'constellation', 'bridge',
             ],
-        }))
+        }
+        if owner_hasn_id and auto_bound_owner:
+            connected_params['owner_id'] = owner_hasn_id
+            connected_params['owner_count'] = 1
 
-        # 4. 双向收发循环
-        await _recv_loop(websocket, node_id)
+        await websocket.send_json(_frame('hasn.connected', connected_params))
+
+        # 5. 自动推送离线消息（Owner 已绑定）
+        if owner_hasn_id and auto_bound_owner:
+            offline_msgs = await ws_router.get_offline_messages([owner_hasn_id])
+            if offline_msgs:
+                await websocket.send_json(_frame('hasn.node.offline_messages', {'messages': offline_msgs}))
+
+        # 6. 双向收发循环（传入已绑定的 owner）
+        initial_entities = {owner_hasn_id} if (owner_hasn_id and auto_bound_owner) else set()
+        await _recv_loop(websocket, node_id, initial_entities)
 
     except WebSocketDisconnect:
         log.info(f'节点断开: {node_id} (type={node_type})')
     except Exception as e:
         log.error(f'WebSocket 异常: {node_id} - {e}')
     finally:
-        # 5. 清理：注销节点 + 清理所有实体
+        # 7. 清理：注销节点 + 清理所有实体
         await ws_router.unregister_node(node_id)
 
 async def _recv_loop(
     websocket: WebSocket,
     node_id: str,
+    initial_entities: set[str] | None = None,
 ) -> None:
     """处理节点上行消息"""
     # 记录当前 node 的活跃主体（bound owners + online agents），用于 from_id 校验
-    active_entities: set[str] = set()
+    active_entities: set[str] = set(initial_entities or ())
 
     while True:
         raw = await websocket.receive_text()

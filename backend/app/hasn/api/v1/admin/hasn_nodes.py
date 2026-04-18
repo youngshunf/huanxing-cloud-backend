@@ -20,7 +20,7 @@ router = APIRouter()
 
 
 @router.get('/{pk}', summary='获取HASN Node 主详情', dependencies=[DependsJwtAuth])
-async def get_hasn_nodes(
+async def admin_get_hasn_nodes(
     db: CurrentSession, pk: Annotated[int, Path(description='HASN Node 主 ID')]
 ) -> ResponseSchemaModel[GetHasnNodesDetail]:
     hasn_nodes = await hasn_nodes_service.get(db=db, pk=pk)

@@ -28,7 +28,6 @@ from backend.app.hasn.service.hasn_auth import (
     register_node,
     issue_node_jwt,
     hasn_auth_from_jwt,
-    ensure_hasn_node_key,
     reissue_hasn_node_key,
 )
 from backend.app.hasn.service.ws_router import ws_router
@@ -45,6 +44,7 @@ class RegisterHasnReq(BaseModel):
 
 
 class RegisterClientReq(BaseModel):
+    node_id: str = Field(description='节点唯一ID (设备指纹派生)')
     client_type: str = Field(default='desktop', description='节点类型: desktop/mobile/web/cloud/sdk')
     device_name: str | None = Field(None, description='设备名称')
     device_info: dict | None = Field(None, description='设备信息')
@@ -72,24 +72,7 @@ async def api_register_hasn(
         bio=obj_in.bio,
     )
 
-    # 同步签发 Node Key（每次注册/恢复都签发，确保桌面端能拿到有效凭据）
-    node_key = None
-    try:
-        # 从 X-Device-Fingerprint / X-Device-Name 头读取设备信息（由 ZeroClaw sidecar 注入）
-        device_fingerprint = request.headers.get('X-Device-Fingerprint')
-        device_name = request.headers.get('X-Device-Name')
-        node_key = await ensure_hasn_node_key(
-            db=db,
-            user_id=user_info.id,
-            nickname=obj_in.name,
-            client_type='desktop',
-            device_name=device_name,
-            device_fingerprint=device_fingerprint,
-        )
-    except Exception:
-        pass  # 非致命
-
-    if not result.get('already_exists') or node_key:
+    if not result.get('already_exists'):
         await db.commit()
 
     response_data = {
@@ -100,8 +83,6 @@ async def api_register_hasn(
         },
         'already_exists': result.get('already_exists', False),
     }
-    if node_key:
-        response_data['node_key'] = node_key
     if result.get('agent'):
         response_data['agent'] = {
             'hasn_id': result['agent'].hasn_id,
@@ -177,6 +158,7 @@ async def api_register_node(
     """注册节点，返回 node_id"""
     node = await register_node(
         db=db,
+        node_id=obj_in.node_id,
         owner_hasn_id=auth['hasn_id'],
         node_type=obj_in.client_type,
         node_name=obj_in.device_name,

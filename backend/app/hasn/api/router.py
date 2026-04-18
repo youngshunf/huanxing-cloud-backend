@@ -95,6 +95,7 @@ from backend.app.hasn.api.v1.open.hasn_agent_capabilities import router as open_
 open_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn/open', tags=['HASN 公开接口'])
 
 open_api.include_router(open_hasn_agent_capabilities_router, prefix='/agent/capabilities', tags=['Agent能力发现'])
+# open_hasn_nodes_router 已移除（v2.1: 节点注册在 WS 建连时自动完成）
 
 # --- WebSocket 端点（统一节点） ---
 from backend.app.hasn.api.ws_node import router as ws_node_router

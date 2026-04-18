@@ -1,6 +1,7 @@
 .idea/
 .vscode/
 .cursor/
+.tmp/
 .DS_Store
 venv/
 .venv/

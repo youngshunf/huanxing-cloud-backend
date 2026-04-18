@@ -26,6 +26,14 @@ class CreateHasnNodesParam(HasnNodesSchemaBase):
     """创建HASN Node 主参数"""
 
 
+class HasnNodesRegisterParam(SchemaBase):
+    """开放API注册Node参数"""
+    node_id: str = Field(description='节点设备指纹生成的唯一标识')
+    node_type: str | None = Field('desktop', description='节点类型')
+    node_name: str | None = Field(None, description='节点名称')
+    node_info: dict | None = Field(None, description='节点信息')
+
+
 class UpdateHasnNodesParam(HasnNodesSchemaBase):
     """更新HASN Node 主参数"""
 
