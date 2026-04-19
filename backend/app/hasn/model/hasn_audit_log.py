@@ -20,3 +20,26 @@ class HasnAuditLog(Base):
     target_id: Mapped[str | None] = mapped_column(sa.String(36), default=None, comment='目标 ID')
     details: Mapped[dict] = mapped_column(postgresql.JSONB(), default_factory=dict, comment='操作详情 (JSONB)')
     ip_address: Mapped[str | None] = mapped_column(sa.String(45), default=None, comment='IP 地址')
+
+    # ── Phase 7: 审计因果链 (设计 05 §3.2) ──
+    prev_log_id: Mapped[int | None] = mapped_column(
+        sa.BigInteger,
+        sa.ForeignKey('hasn_audit_log.id'),
+        default=None,
+        comment='前驱 log id (同 actor_id 链作用域)',
+    )
+    hash_chain: Mapped[str] = mapped_column(
+        sa.String(64),
+        default='',
+        comment='SHA-256(prev_hash || canonical_json(details))',
+    )
+    findings: Mapped[list] = mapped_column(
+        postgresql.JSONB(),
+        default_factory=list,
+        comment='脱敏发现列表 (本 phase 空占位)',
+    )
+    severity: Mapped[str | None] = mapped_column(
+        sa.String(16),
+        default=None,
+        comment='info/warning/error',
+    )
