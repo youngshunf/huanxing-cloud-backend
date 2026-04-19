@@ -22,8 +22,11 @@ from backend.app.hasn.constants import (
     compute_effective_permissions,
     ALLOW,
     CONFIRM,
+    DENY,
     SCOPE_LTD,
 )
+# Phase 7 (07-02): A 路线中央判决器；替换 check_relation_permission 在 route_message 中的调用
+from backend.app.hasn.service.permission_engine import permission_engine
 
 
 # ─── 目标解析 ───
@@ -429,18 +432,62 @@ async def route_message(
     if from_id == to_id:
         return {'error': True, 'code': 2006, 'message': '不能给自己发消息'}
 
-    # 3. 关系与权限检查
-    perm = await check_relation_permission(db, from_id, to_id, msg_type)
-    if not perm['allowed']:
+    # 3. Phase 7 (07-02): A 路线 —— 中央统一判决（替换 Phase 3 的 check_relation_permission 调用；
+    # 旧 fn 定义保留供回滚/灰度，不再从 route_message 调用）
+    _ctx_meta = (context or {}) if context else {}
+    _ctx_relation_type = _ctx_meta.get('relation_type') or (
+        'social' if to_id.startswith('h_') or to_id.startswith('a_') else 'social'
+    )
+    _ctx_from_entity_type = (
+        'human' if from_id.startswith('h_') else ('agent' if from_id.startswith('a_') else 'system')
+    )
+    _ctx_to_entity_type = target_info.get('entity_type', 'agent')
+    perm_result = await permission_engine.evaluate(
+        db,
+        sender={
+            'hasn_id': from_id,
+            'entity_type': _ctx_from_entity_type,
+        },
+        receiver={
+            'hasn_id': to_id,
+            'owner_id': target_info.get('owner_id'),
+            'entity_type': _ctx_to_entity_type,
+        },
+        envelope={
+            'msg_type': msg_type,
+            'content': content,
+            'relation_type': _ctx_relation_type,
+            'metadata': _ctx_meta,
+            'from_entity_type': _ctx_from_entity_type,
+        },
+    )
+
+    if perm_result.decision == DENY:
         return {
             'error': True,
-            'code': 2002,
-            'message': perm.get('reason', '权限不足'),
+            'code': perm_result.error_code or 2002,
+            'message': perm_result.reason,
         }
+    if perm_result.decision == CONFIRM:
+        await _stash_pending_commitment(
+            db,
+            sender_id=from_id,
+            receiver_id=to_id,
+            payload={'msg_type': msg_type, 'content': content},
+            reason=perm_result.reason,
+        )
+        return {
+            'error': False,
+            'status': 'pending_confirmation',
+            'reason': perm_result.reason,
+        }
+    if perm_result.decision == SCOPE_LTD and perm_result.allowed_fields is not None:
+        allowed = set(perm_result.allowed_fields)
+        content = {k: v for k, v in (content or {}).items() if k in allowed}
 
     # 4. 获取/创建会话
     from_type = 'human' if from_id.startswith('h_') else 'agent'
-    relation_type = perm.get('relation_type', 'social') or 'social'
+    relation_type = _ctx_relation_type or 'social'
 
     conv = await get_or_create_conversation(
         db, from_id, from_type, to_id, to_type, relation_type
@@ -484,6 +531,12 @@ async def route_message(
         'created_time': msg.created_time.isoformat() if msg.created_time else None,
         'from_owner_id': from_id if from_id.startswith('h_') else None,
         'to_owner_id': target_info.get('owner_id') if to_entity_type == 'agent' else to_id,
+        # Phase 7 (07-02): A 路线 envelope.permission 子对象 (与 07-01 Rust PermissionEnvelope 字节对齐)
+        'permission': {
+            'decision': perm_result.decision,
+            'reason': perm_result.reason,
+            'allowed_fields': perm_result.allowed_fields,
+        },
     }
 
     payload = {
@@ -591,3 +644,48 @@ async def recall_message(
     await ws_router.push_message_to(msg.to_id, recall_payload)
 
     return {'error': False, 'msg_id': msg_id}
+
+
+# ─── Phase 7 (07-02): A 路线 confirm_required 暂存 helper ───
+
+async def _stash_pending_commitment(
+    db: AsyncSession,
+    *,
+    sender_id: str,
+    receiver_id: str,
+    payload: dict,
+    reason: str,
+    ttl_seconds: int = 86400,
+) -> None:
+    """confirm_required 判决下的中央暂存 (写 hasn_pending_commitments 表)。
+
+    桌面端通过 /hasn-events SSE 通道领取此条记录后由用户人工确认/拒绝。
+    SQLAlchemy text() 参数化，避免 SQL 注入 (T-07-02-02)。
+    """
+    import json
+    import uuid
+    from datetime import datetime, timedelta, timezone as dt_tz
+
+    from sqlalchemy import text
+
+    commitment_id = uuid.uuid4().hex
+    expires_at = datetime.now(dt_tz.utc) + timedelta(seconds=ttl_seconds)
+    await db.execute(
+        text(
+            """
+            INSERT INTO hasn_pending_commitments
+            (id, action_type, sender_id, receiver_id, payload_json, reason, expires_at)
+            VALUES (:id, :atype, :sender, :receiver, CAST(:payload AS JSONB), :reason, :expires)
+            """
+        ),
+        {
+            'id': commitment_id,
+            'atype': 'message_deliver',
+            'sender': sender_id,
+            'receiver': receiver_id,
+            'payload': json.dumps(payload, sort_keys=True, ensure_ascii=False),
+            'reason': reason,
+            'expires': expires_at,
+        },
+    )
+    await db.flush()
