@@ -1,0 +1,167 @@
+"""Phase 7: permission_engine.evaluate 中央四态判决单元测试 (RESEARCH §B2)。
+
+被测目标：PermissionEngine.evaluate(db, sender, receiver, envelope) →
+- 命中 iron_laws 则返回该 DecisionResult
+- iron_laws None → 灰度 route_guard.check_permission diff log → 矩阵默认 ALLOW
+- 内部异常 → Fail-closed DENY (D-03)
+- 所有路径都尝试 _audit_safe (失败仅 log.warning 不阻断)
+
+依赖隔离：iron_laws.check_iron_laws / route_guard.check_permission /
+hasn_audit_log_service.append 均通过 monkeypatch 替换为 AsyncMock。
+"""
+from __future__ import annotations
+
+from unittest.mock import AsyncMock
+
+import pytest
+
+from backend.app.hasn.constants import ALLOW, CONFIRM, DENY, SCOPE_LTD
+
+
+pytestmark = pytest.mark.asyncio
+
+
+def _patch_engine_deps(monkeypatch, *, iron_result=None, legacy_ok=True, audit_raises=False):
+    """统一打桩 evaluate 依赖。"""
+    from backend.app.hasn.service import permission_engine as eng_mod
+
+    iron_mock = AsyncMock(return_value=iron_result)
+    monkeypatch.setattr(eng_mod, 'check_iron_laws', iron_mock)
+
+    monkeypatch.setattr(
+        eng_mod.route_guard, 'check_permission',
+        AsyncMock(return_value=legacy_ok),
+        raising=False,
+    )
+
+    if audit_raises:
+        audit_mock = AsyncMock(side_effect=RuntimeError('audit DB down'))
+    else:
+        audit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        eng_mod.hasn_audit_log_service, 'append', audit_mock, raising=False,
+    )
+
+    return {'iron': iron_mock, 'audit': audit_mock}
+
+
+def _entities():
+    sender = {'hasn_id': 'h_sender', 'entity_type': 'human'}
+    receiver = {'hasn_id': 'h_receiver', 'entity_type': 'human'}
+    envelope = {
+        'msg_type': 'message', 'content': {'body': 'x'},
+        'relation_type': 'social', 'metadata': {}, 'from_entity_type': 'human',
+    }
+    return sender, receiver, envelope
+
+
+# ── Test 1: Fail-closed on internal exception ──
+async def test_evaluate_fail_closed_on_exception(monkeypatch):
+    from backend.app.hasn.service import permission_engine as eng_mod
+
+    # check_iron_laws 抛异常 → evaluate 必须 Fail-closed DENY
+    monkeypatch.setattr(
+        eng_mod, 'check_iron_laws', AsyncMock(side_effect=RuntimeError('boom')),
+    )
+    audit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        eng_mod.hasn_audit_log_service, 'append', audit_mock, raising=False,
+    )
+
+    sender, receiver, envelope = _entities()
+    result = await eng_mod.permission_engine.evaluate(
+        None, sender=sender, receiver=receiver, envelope=envelope,
+    )
+    assert result.decision == DENY
+    assert result.matched_rule == 'exception'
+    assert result.error_code == 2099
+    audit_mock.assert_called()  # _audit_safe 被尝试调用
+
+
+# ── Test 2: iron_laws 返回 DENY 直接透传 + audit warning ──
+async def test_evaluate_passes_through_iron_law_deny(monkeypatch):
+    from backend.app.hasn.service.iron_laws import DecisionResult
+
+    iron_deny = DecisionResult(
+        decision=DENY, reason='iron law violation',
+        matched_rule='iron_law_5', error_code=2014,
+    )
+    mocks = _patch_engine_deps(monkeypatch, iron_result=iron_deny)
+
+    from backend.app.hasn.service.permission_engine import permission_engine
+
+    sender, receiver, envelope = _entities()
+    result = await permission_engine.evaluate(
+        None, sender=sender, receiver=receiver, envelope=envelope,
+    )
+
+    assert result is iron_deny
+    assert result.decision == DENY
+    mocks['audit'].assert_called_once()
+    audit_kwargs = mocks['audit'].call_args.kwargs
+    assert audit_kwargs['action'] == 'permission_decision'
+    assert audit_kwargs['severity'] == 'warning'  # DENY 默认 severity=warning
+
+
+# ── Test 3: iron_laws None + 灰度 route_guard 允许 → matrix ALLOW ──
+async def test_evaluate_matrix_allow_when_legacy_agrees(monkeypatch):
+    mocks = _patch_engine_deps(monkeypatch, iron_result=None, legacy_ok=True)
+
+    from backend.app.hasn.service.permission_engine import permission_engine
+
+    sender, receiver, envelope = _entities()
+    result = await permission_engine.evaluate(
+        None, sender=sender, receiver=receiver, envelope=envelope,
+    )
+    assert result.decision == ALLOW
+    assert result.matched_rule == 'matrix'
+    mocks['audit'].assert_called_once()
+
+
+# ── Test 4: iron_laws None + 灰度 route_guard 拒绝 → 灰度仅 diff log，不阻断 ──
+async def test_evaluate_grayscale_does_not_block(monkeypatch):
+    _patch_engine_deps(monkeypatch, iron_result=None, legacy_ok=False)
+
+    from backend.app.hasn.service.permission_engine import permission_engine
+
+    sender, receiver, envelope = _entities()
+    result = await permission_engine.evaluate(
+        None, sender=sender, receiver=receiver, envelope=envelope,
+    )
+    # 即使 route_guard 返回 False，灰度期 evaluate 仍返回 ALLOW
+    assert result.decision == ALLOW
+    assert result.matched_rule == 'matrix'
+
+
+# ── Test 5: snake_case decision 字面量与 Rust PermissionDecision 字节对齐 ──
+async def test_decision_literals_byte_aligned_with_rust():
+    """断言 constants 字面量与 07-01 Rust 侧 serde rename_all='snake_case' 输出对齐。"""
+    assert ALLOW == 'allow'
+    assert DENY == 'deny'
+    assert CONFIRM == 'confirm_required'
+    assert SCOPE_LTD == 'scope_limited'
+
+    from backend.app.hasn.service.iron_laws import DecisionResult
+
+    # 构造四态各一个，确认 .decision 字段就是上述四个 snake_case 字面量
+    for lit in (ALLOW, DENY, CONFIRM, SCOPE_LTD):
+        d = DecisionResult(decision=lit, reason='t', matched_rule='t')
+        assert d.decision == lit
+        assert d.decision in {'allow', 'deny', 'confirm_required', 'scope_limited'}
+
+
+# ── Test 6: audit 失败不阻断主流程 (Rule 2 / D-03 partial) ──
+async def test_audit_failure_does_not_break_flow(monkeypatch):
+    _patch_engine_deps(
+        monkeypatch, iron_result=None, legacy_ok=True, audit_raises=True,
+    )
+
+    from backend.app.hasn.service.permission_engine import permission_engine
+
+    sender, receiver, envelope = _entities()
+    # audit append 抛异常，但 evaluate 仍应返回正常 ALLOW
+    result = await permission_engine.evaluate(
+        None, sender=sender, receiver=receiver, envelope=envelope,
+    )
+    assert result.decision == ALLOW
+    assert result.matched_rule == 'matrix'
