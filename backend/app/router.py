@@ -9,6 +9,7 @@ from backend.app.user_tier.api.router import v1 as user_tier_v1, app as user_tie
 from backend.app.marketplace.api.router import v1 as marketplace_v1, client as marketplace_client, publish as marketplace_publish
 from backend.app.pay.api.router import v1 as pay_v1, app as pay_app, open_api as pay_open
 from backend.app.huanxing.api.router import v1 as huanxing_v1, app as huanxing_app, open_api as huanxing_open, agent as huanxing_agent, user_api as huanxing_user
+from backend.app.api.v1.app import app_router as mobile_app_v1_router
 
 router = APIRouter()
 
@@ -46,3 +47,6 @@ router.include_router(hasn_app)           # HASN 用户端 API
 router.include_router(hasn_agent)         # HASN Agent API
 router.include_router(hasn_open)          # HASN 公开 API
 router.include_router(hasn_ws)            # HASN WebSocket 端点
+
+# 移动端 App API (M1: /api/v1/app/...)
+router.include_router(mobile_app_v1_router)  # 移动端用户端 API (owner_api_keys/current 等)
