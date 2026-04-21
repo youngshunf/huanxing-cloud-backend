@@ -407,6 +407,13 @@ class Settings(BaseSettings):
     UMENG_PUSH_BACKOFF_BASE_SECONDS: float = 0.5
     UMENG_PUSH_PRODUCTION_MODE: bool = False
 
+    ##################################################
+    # [ Mobile M1 ] push_tokens PII static encryption (B10)
+    ##################################################
+    # push_tokens.token 静态加密主密钥 (Fernet base64 key; 真实值走 Vault).
+    # 空值 → 进程内临时随机密钥 (仅 dev). 生产环境 ENVIRONMENT='prod' 必须注入.
+    PUSH_TOKEN_ENCRYPTION_KEY: str = ''
+
     @model_validator(mode='before')
     @classmethod
     def check_env(cls, values: Any) -> Any:

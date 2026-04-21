@@ -27,6 +27,8 @@ import sqlalchemy as sa
 
 from sqlalchemy.orm import Mapped, mapped_column
 
+from backend.app.models._encryption import EncryptedToken
+from backend.app.models.push_token_audit import PushTokenAudit, register_audit_listeners
 from backend.common.model import Base, TimeZone, id_key
 from backend.utils.timezone import timezone
 
@@ -74,7 +76,10 @@ class PushToken(Base):
         comment="推送通道 (M1 固定 'umeng_push')",
     )
     token: Mapped[str] = mapped_column(
-        sa.String(512), nullable=False, default='', comment='通道 push token'
+        EncryptedToken(),
+        nullable=False,
+        default='',
+        comment='通道 push token (B10 Fernet 静态加密; 物理类型 BYTEA)',
     )
     registered_at: Mapped[datetime] = mapped_column(
         TimeZone,
@@ -88,3 +93,8 @@ class PushToken(Base):
         default_factory=timezone.now,
         comment='最后一次注册/心跳时间',
     )
+
+
+# B10 — attach after_insert/after_update/after_delete audit listeners.
+# PushTokenAudit.__table__ receives one row per row-level mutation, same txn.
+register_audit_listeners(PushToken, PushTokenAudit.__table__)
