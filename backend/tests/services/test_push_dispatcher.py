@@ -29,6 +29,10 @@ import httpx
 import pytest
 
 from backend.app.services import push_dispatcher
+from backend.common.observability.prometheus import (
+    PUSH_DISPATCHED_TOTAL,
+    PUSH_LATENCY_SECONDS,
+)
 
 FAKE_HASN_ID = 'h_100001'
 FAKE_SECRET = 'test_app_master_secret_42'
@@ -301,3 +305,134 @@ def test_dispatch_app_level_fail_retries_until_max(
             )
         )
     assert mock_post.await_count == 3
+
+
+# ---------------------------------------------------------------------------
+# B9: Prometheus 指标 (push_dispatched_total / push_latency_seconds)
+# ---------------------------------------------------------------------------
+
+
+def _counter_value(status: str, channel: str = 'umeng_push') -> float:
+    """读取 push_dispatched_total{channel, status} 的当前累计值."""
+    return PUSH_DISPATCHED_TOTAL.labels(channel=channel, status=status)._value.get()
+
+
+def _histogram_observations(channel: str = 'umeng_push') -> int:
+    """读取 push_latency_seconds{channel} 的 _count sample (观测次数).
+
+    prometheus_client Histogram 的观测次数通过 .collect() 样本暴露为
+    `{metric}_count`. 这里遍历所有 children 样本找到匹配 labels 的 _count.
+    """
+    for metric in PUSH_LATENCY_SECONDS.collect():
+        for sample in metric.samples:
+            if (
+                sample.name.endswith('_count')
+                and sample.labels.get('channel') == channel
+            ):
+                return int(sample.value)
+    return 0
+
+
+def test_dispatch_success_increments_prometheus_counter(
+    monkeypatch: pytest.MonkeyPatch, patched_settings: None,
+) -> None:
+    """B9 核心契约: 成功 dispatch → push_dispatched_total{status=success} += 1.
+
+    并验证 push_latency_seconds{channel=umeng_push} 观测次数 += 1 (Histogram).
+    """
+    _patch_tokens(monkeypatch, ['tokOnly'])
+    mock_post = AsyncMock(
+        return_value=_make_response(
+            200, {'ret': 'SUCCESS', 'data': {'task_id': 'tsk_ok'}},
+        ),
+    )
+    _patch_http_post(monkeypatch, mock_post)
+
+    before_success = _counter_value('success')
+    before_hist = _histogram_observations()
+
+    result = asyncio.run(
+        push_dispatcher.dispatch(
+            SimpleNamespace(),
+            hasn_id=FAKE_HASN_ID,
+            payload={'title': 'x', 'body': 'y', 'trace_id': 't'},
+        )
+    )
+    assert result.sent == 1
+
+    after_success = _counter_value('success')
+    after_hist = _histogram_observations()
+
+    assert after_success == before_success + 1, (
+        f'push_dispatched_total{{status=success}} 未自增: '
+        f'{before_success} -> {after_success}'
+    )
+    assert after_hist == before_hist + 1, (
+        f'push_latency_seconds 观测次数未自增: {before_hist} -> {after_hist}'
+    )
+
+
+def test_dispatch_skip_when_no_tokens_records_skip_status(
+    monkeypatch: pytest.MonkeyPatch, patched_settings: None,
+) -> None:
+    """无 token → push_dispatched_total{status=skip} += 1, http 不被调用."""
+    _patch_tokens(monkeypatch, [])
+    mock_post = AsyncMock()
+    _patch_http_post(monkeypatch, mock_post)
+
+    before_skip = _counter_value('skip')
+
+    result = asyncio.run(
+        push_dispatcher.dispatch(
+            SimpleNamespace(),
+            hasn_id=FAKE_HASN_ID,
+            payload={'title': 'x', 'body': 'y', 'trace_id': 't'},
+        )
+    )
+    assert result.sent == 0
+    mock_post.assert_not_awaited()
+
+    after_skip = _counter_value('skip')
+    assert after_skip == before_skip + 1
+
+
+def test_dispatch_failure_records_fail_status(
+    monkeypatch: pytest.MonkeyPatch, patched_settings: None,
+) -> None:
+    """重试到 MAX 仍失败 → push_dispatched_total{status=fail} += 1."""
+    _patch_tokens(monkeypatch, ['tokA'])
+    _patch_sleep(monkeypatch)
+
+    mock_post = AsyncMock(
+        side_effect=httpx.ConnectError(
+            'boom', request=httpx.Request('POST', FAKE_URL),
+        ),
+    )
+    _patch_http_post(monkeypatch, mock_post)
+
+    before_fail = _counter_value('fail')
+
+    with pytest.raises(push_dispatcher.PushDispatchError):
+        asyncio.run(
+            push_dispatcher.dispatch(
+                SimpleNamespace(),
+                hasn_id=FAKE_HASN_ID,
+                payload={'title': 'x', 'body': 'y', 'trace_id': 't'},
+            )
+        )
+
+    after_fail = _counter_value('fail')
+    assert after_fail == before_fail + 1
+
+
+def test_refresh_active_token_gauge_swallows_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DB 查询异常 → 只记 log, 返回 0, 不 raise (可观测性降级 / L8)."""
+
+    class _BoomDb:
+        async def execute(self, *_args: Any, **_kw: Any) -> None:
+            raise RuntimeError('db offline')
+
+    got = asyncio.run(push_dispatcher.refresh_active_token_gauge(_BoomDb()))
+    assert got == 0

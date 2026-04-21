@@ -27,9 +27,14 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from backend.app.models.push_token import PushChannel, PushToken
+from backend.common.observability.prometheus import (
+    PUSH_DISPATCHED_TOTAL,
+    PUSH_LATENCY_SECONDS,
+    PUSH_TOKEN_ACTIVE_TOTAL,
+)
 from backend.core.conf import settings
 
 if TYPE_CHECKING:
@@ -152,6 +157,28 @@ def _parse_umeng_success(
     return True, task_id, None
 
 
+async def refresh_active_token_gauge(
+    db: AsyncSession, channel: str = PushChannel.UMENG_PUSH.value,
+) -> int:
+    """刷新 push_token_active_total Gauge (B9).
+
+    由 push_tokens 端点 (POST / DELETE) 在 upsert / 删除后调用. 也可用于
+    启动探活或定期巡检. 失败仅 log, 不 raise (可观测性降级不影响业务).
+    """
+    try:
+        result = await db.execute(
+            select(func.count())
+            .select_from(PushToken)
+            .where(PushToken.channel == channel)
+        )
+        count = int(result.scalar() or 0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning('[push] refresh_active_token_gauge failed: %s', exc)
+        return 0
+    PUSH_TOKEN_ACTIVE_TOTAL.labels(channel=channel).set(count)
+    return count
+
+
 async def dispatch(
     db: AsyncSession,
     *,
@@ -163,10 +190,23 @@ async def dispatch(
     - 无 token → 直接返回 sent=0 (不算失败, 不触发重试)
     - 有 token → 构造 listcast/unicast body, 签名, POST 到 U-Push
     - 连续 UMENG_PUSH_MAX_RETRIES 次失败 → PushDispatchError
+
+    可观测性 (B9):
+    - push_dispatched_total{channel,status} 每次 dispatch 终态自增一次
+      (status ∈ {success, fail, skip})
+    - push_latency_seconds{channel} 记录端到端耗时 (秒)
     """
+    channel_label = PushChannel.UMENG_PUSH.value
+    dispatch_started_at = time.monotonic()
     tokens = await _load_device_tokens(db, hasn_id)
     if not tokens:
         logger.info('[push] hasn_id=%s 无 umeng device_token, 跳过', hasn_id)
+        PUSH_DISPATCHED_TOTAL.labels(
+            channel=channel_label, status='skip',
+        ).inc()
+        PUSH_LATENCY_SECONDS.labels(channel=channel_label).observe(
+            time.monotonic() - dispatch_started_at,
+        )
         return DispatchResult(sent=0, skipped=0)
 
     body_dict = build_umeng_body(
@@ -212,6 +252,12 @@ async def dispatch(
                     '[push] umeng dispatched: hasn_id=%s tokens=%d task_id=%s',
                     hasn_id, len(tokens), task_id,
                 )
+                PUSH_DISPATCHED_TOTAL.labels(
+                    channel=channel_label, status='success',
+                ).inc()
+                PUSH_LATENCY_SECONDS.labels(channel=channel_label).observe(
+                    time.monotonic() - dispatch_started_at,
+                )
                 return DispatchResult(
                     sent=len(tokens), skipped=0, task_id=task_id,
                 )
@@ -224,6 +270,12 @@ async def dispatch(
         if attempt < max_retries:
             await asyncio.sleep(backoff_base * (2 ** (attempt - 1)))
 
+    PUSH_DISPATCHED_TOTAL.labels(
+        channel=channel_label, status='fail',
+    ).inc()
+    PUSH_LATENCY_SECONDS.labels(channel=channel_label).observe(
+        time.monotonic() - dispatch_started_at,
+    )
     raise PushDispatchError(
         f'Umeng U-Push dispatch failed after {max_retries} attempts '
         f'(last_error={last_exc!r}, last_response={last_error_text!r})'

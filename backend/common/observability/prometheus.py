@@ -35,3 +35,28 @@ PROMETHEUS_RESPONSE_COUNTER = Counter(
     documentation='按方法、路径和状态码统计响应总数',
     labelnames=['app_name', 'method', 'path', 'status_code'],
 )
+
+
+# ---------------------------------------------------------------------------
+# M1 Android 推送可观测性 (B9)
+# 规范: docs/架构设计/移动端/04-推送触达与后台运行模型详细设计.md §8.5 / §12.2
+# 指标名不带 fba_ 前缀 — 业务语义直接暴露 (push.*), 便于 Grafana 面板聚合.
+# ---------------------------------------------------------------------------
+
+PUSH_DISPATCHED_TOTAL = Counter(
+    name='push_dispatched_total',
+    documentation='友盟 U-Push 下发次数, 按 channel 与 status (success/fail/skip) 分桶',
+    labelnames=['channel', 'status'],
+)
+
+PUSH_LATENCY_SECONDS = Histogram(
+    name='push_latency_seconds',
+    documentation='友盟 U-Push dispatch 端到端耗时 (秒)',
+    labelnames=['channel'],
+)
+
+PUSH_TOKEN_ACTIVE_TOTAL = Gauge(
+    name='push_token_active_total',
+    documentation='按 channel 统计活跃 push_token 总数 (upsert / delete 后刷新)',
+    labelnames=['channel'],
+)
