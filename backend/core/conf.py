@@ -394,6 +394,19 @@ class Settings(BaseSettings):
     WEBSITE_DEPLOY_DIR: str | None = '/var/www/html/agents_sites'
     WEBSITE_BASE_URL: str | None = 'https://huanxing.dcfuture.cn/agents_sites'
 
+    ##################################################
+    # [ Mobile M1 ] Umeng U-Push (B5)
+    ##################################################
+    # 友盟 U-Push 服务端推送; UMENG_APP_MASTER_SECRET 仅后端持有 (D4).
+    # 真实值走 Vault: secret/huanxing/backend/umeng; .env.example 仅占位.
+    UMENG_APP_KEY: str = ''
+    UMENG_APP_MASTER_SECRET: str = ''
+    UMENG_PUSH_API_URL: str = 'https://msg.umeng.com/api/send'
+    UMENG_PUSH_TIMEOUT_SECONDS: float = 5.0
+    UMENG_PUSH_MAX_RETRIES: int = 3
+    UMENG_PUSH_BACKOFF_BASE_SECONDS: float = 0.5
+    UMENG_PUSH_PRODUCTION_MODE: bool = False
+
     @model_validator(mode='before')
     @classmethod
     def check_env(cls, values: Any) -> Any:
