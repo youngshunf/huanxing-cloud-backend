@@ -16,13 +16,18 @@ class HasnContacts(Base):
     id: Mapped[id_key] = mapped_column(init=False)
     owner_id: Mapped[str] = mapped_column(sa.String(36), default='', comment='关系拥有者 hasn_id')
     peer_id: Mapped[str] = mapped_column(sa.String(36), default='', comment='对方 hasn_id')
+    peer_owner_id: Mapped[str | None] = mapped_column(
+        sa.String(36), default=None, comment='对方归属人 hasn_id (peer 自己的 owner)',
+    )
     peer_type: Mapped[str] = mapped_column(sa.String(10), default='', comment='对方类型 (human:人类:blue/agent:代理:green)')
     relation_type: Mapped[str] = mapped_column(sa.String(20), default='', comment='关系类型 (social:社交:blue/commerce:商业:orange/service:履约:green/professional:专业:purple/platform:平台:cyan)')
     trust_level: Mapped[int] = mapped_column(sa.SMALLINT(), default=0, comment='信任等级 (0:已拉黑:red/1:陌生人:gray/2:普通联系人:blue/3:朋友:green/4:密友:orange/5:所有者:purple)')
     scope: Mapped[dict | None] = mapped_column(postgresql.JSONB(), default=None, comment='关系作用域 (JSONB)')
     custom_permissions: Mapped[dict] = mapped_column(postgresql.JSONB(), default_factory=dict, comment='自定义权限覆盖 (JSONB)')
     nickname: Mapped[str | None] = mapped_column(sa.String(100), default=None, comment='备注名')
-    tags: Mapped[str | None] = mapped_column(sa.String(0), default=None, comment='分组标签')
+    tags: Mapped[list[str] | None] = mapped_column(
+        postgresql.ARRAY(sa.String()), default=None, comment='分组标签',
+    )
     subscription: Mapped[bool] = mapped_column(sa.BOOLEAN(), default=True, comment='是否订阅推送')
     status: Mapped[str] = mapped_column(sa.String(20), default='', comment='状态 (pending:待处理:blue/connected:已连接:green/blocked:已拉黑:red/archived:已归档:gray)')
     request_message: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='好友请求附言')

@@ -20,6 +20,7 @@ import jwt
 from fastapi import Depends, HTTPException, Request
 from fastapi.security.utils import get_authorization_scheme_param
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.common.security.jwt import jwt_decode, jwt_authentication
@@ -30,6 +31,7 @@ from backend.utils.timezone import timezone
 
 from backend.app.hasn.model import HasnHumans, HasnNodes, HasnOwnerApiKeys
 from backend.app.hasn.model.hasn_agents import HasnAgents
+from backend.app.hasn.model.hasn_contacts import HasnContacts
 
 
 # ─── Star ID 生成 ───
@@ -497,6 +499,29 @@ async def register_hasn_agent(
     )
     db.add(agent)
     await db.flush()
+
+    # 同事务写入 hasn_contacts（owner→agent 的 service 关系，trust_level=5/connected）
+    # 保证注册 agent 后 contacts 表立即可被 list_contacts 检索到；重复调用通过
+    # ON CONFLICT (owner_id, peer_id, relation_type) DO NOTHING 幂等。
+    await db.execute(
+        pg_insert(HasnContacts)
+        .values(
+            owner_id=owner_hasn_id,
+            peer_id=agent_hasn_id,
+            peer_owner_id=owner_hasn_id,
+            peer_type='agent',
+            relation_type='service',
+            trust_level=5,
+            status='connected',
+            subscription=False,
+            interaction_count=0,
+            custom_permissions={},
+            connected_at=timezone.now(),
+        )
+        .on_conflict_do_nothing(
+            index_elements=['owner_id', 'peer_id', 'relation_type'],
+        )
+    )
 
     return {
         'agent': agent,
