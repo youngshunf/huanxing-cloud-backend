@@ -1,9 +1,11 @@
 from typing import Any, Sequence
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn.crud.crud_hasn_contacts import hasn_contacts_dao
 from backend.app.hasn.model import HasnContacts
+from backend.app.hasn.model.hasn_humans import HasnHumans
 from backend.app.hasn.schema.hasn_contacts import CreateHasnContactsParam, DeleteHasnContactsParam, UpdateHasnContactsParam
 from backend.common.exception import errors
 from backend.common.pagination import paging_data
@@ -25,14 +27,25 @@ class HasnContactsService:
         return hasn_contacts
 
     @staticmethod
-    async def get_list(db: AsyncSession) -> dict[str, Any]:
+    async def get_list(
+        db: AsyncSession,
+        user_id: int | None = None,
+    ) -> dict[str, Any]:
         """
         获取HASN 联系人关系列表
 
         :param db: 数据库会话
+        :param user_id: 当提供时，仅返回该平台用户（sys_user.id）所对应 hasn_humans.hasn_id
+            拥有（contacts.owner_id）的记录。不同 user_id 返回不同集合；
+            找不到对应 Human 时返回空集合（避免权限泄露）。
         :return:
         """
         hasn_contacts_select = await hasn_contacts_dao.get_select()
+        if user_id is not None:
+            owner_ids_subq = select(HasnHumans.hasn_id).where(HasnHumans.user_id == user_id)
+            hasn_contacts_select = hasn_contacts_select.where(
+                HasnContacts.owner_id.in_(owner_ids_subq)
+            )
         return await paging_data(db, hasn_contacts_select)
 
     @staticmethod

@@ -216,6 +216,11 @@ async def list_contacts(
             scope=c.scope,
             connected_at=str(c.connected_at) if c.connected_at else None,
             last_interaction_at=str(c.last_interaction_at) if c.last_interaction_at else None,
+            # Phase 1 US-002: 补齐 contacts 业务字段
+            interaction_count=c.interaction_count or 0,
+            request_message=c.request_message,
+            auto_expire=str(c.auto_expire) if c.auto_expire else None,
+            peer_owner_id=c.peer_owner_id,
         ))
 
     return response_base.success(data=HasnContactListResp(

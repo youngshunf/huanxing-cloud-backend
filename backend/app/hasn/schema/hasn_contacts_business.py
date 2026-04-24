@@ -70,6 +70,11 @@ class HasnContactOut(BaseModel):
     scope: dict | None = None                   # 当前作用域
     connected_at: str | None = None
     last_interaction_at: str | None = None
+    # Phase 1 US-002: 补齐 contacts 表字段
+    interaction_count: int = 0
+    request_message: str | None = None
+    auto_expire: str | None = None
+    peer_owner_id: str | None = None
 
 
 class HasnContactListResp(BaseModel):
