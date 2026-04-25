@@ -1,12 +1,15 @@
 from typing import Any, Sequence
 
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
 from backend.app.hasn.model import HasnAgents
+from backend.app.hasn.model.hasn_contacts import HasnContacts
 from backend.app.hasn.schema.hasn_agents import CreateHasnAgentsParam, DeleteHasnAgentsParam, UpdateHasnAgentsParam
 from backend.common.exception import errors
 from backend.common.pagination import paging_data
+from backend.utils.timezone import timezone
 
 
 class HasnAgentsService:
@@ -49,13 +52,38 @@ class HasnAgentsService:
     @staticmethod
     async def create(*, db: AsyncSession, obj: CreateHasnAgentsParam) -> None:
         """
-        创建HASN Agent 
+        创建HASN Agent
+
+        附带写入 hasn_contacts（owner→agent 的 service 关系，trust_level=5/connected），
+        与 hasn_auth.register_hasn_agent 行为对齐：所有 agent 创建路径
+        （app create_my_hasn_agents / admin create_hasn_agents）一律自动落 contacts。
+        ON CONFLICT (owner_id, peer_id, relation_type) DO NOTHING 幂等。
 
         :param db: 数据库会话
         :param obj: 创建HASN Agent 参数
         :return:
         """
         await hasn_agents_dao.create(db, obj)
+        await db.execute(
+            pg_insert(HasnContacts)
+            .values(
+                owner_id=obj.owner_id,
+                peer_id=obj.hasn_id,
+                peer_owner_id=obj.owner_id,
+                peer_type='agent',
+                relation_type='service',
+                trust_level=5,
+                status='connected',
+                subscription=False,
+                interaction_count=0,
+                custom_permissions={},
+                nickname=obj.name,
+                connected_at=timezone.now(),
+            )
+            .on_conflict_do_nothing(
+                index_elements=['owner_id', 'peer_id', 'relation_type'],
+            )
+        )
 
     @staticmethod
     async def update(*, db: AsyncSession, pk: int, obj: UpdateHasnAgentsParam) -> int:
