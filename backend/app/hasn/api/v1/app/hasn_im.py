@@ -4,7 +4,7 @@
 认证方式: hasn_auth (JWT / Owner API Key / Agent Key)
 """
 from fastapi import APIRouter, Depends, Query, Path, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from sqlalchemy import select, or_, and_, func, desc
 
@@ -40,16 +40,12 @@ class HasnEnvelopeOut(BaseModel):
     id: str
     version: str = '1.0'
     type: str = 'message'
-    from_ref: dict  # {hasn_id, entity_type, owner_id}
-    to_ref: dict    # {hasn_id, entity_type, owner_id}
+    from_ref: dict = Field(serialization_alias='from')  # {hasn_id, entity_type, owner_id}
+    to_ref: dict = Field(serialization_alias='to')       # {hasn_id, entity_type, owner_id}
     content: dict   # {content_type, body}
     context: dict   # {conversation_id, relation_type, ...}
     metadata: dict  # {priority, created_at, server_received_at}
     local_id: Optional[str] = None
-
-    class Config:
-        # 序列化时将 from_ref 映射为 from (避免 Python 关键字)
-        fields = {'from_ref': 'from', 'to_ref': 'to'}
 
 
 class MarkReadReq(BaseModel):
