@@ -42,6 +42,7 @@ def _coerce_expires_at(token_expire) -> datetime | None:
 @router.post(
     '/logout',
     summary='JWT 吊销 (移动端 M1)',
+    name='app_logout',
     dependencies=[DependsJwtAuth],
 )
 async def logout(
