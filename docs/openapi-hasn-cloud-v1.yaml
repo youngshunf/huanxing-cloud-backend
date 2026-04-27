@@ -1,0 +1,854 @@
+openapi: 3.1.0
+info:
+  title: HuanXing HASN Cloud Control Plane API
+  version: 1.0.0-p0
+  description: |
+    P0 contract draft for hasn-node ↔ huanxing-cloud-backend integration.
+
+    This OpenAPI file is a control-plane contract. HASN wire frames,
+    envelopes, message schemas, and conformance fixtures remain canonical in
+    `docs/HASN-centralized/HASN-Protocol/` of the parent project.
+
+    Runtime-less mode is first-class: message delivery to Human/Owner inbox
+    and owned Agent inbox MUST NOT depend on Runtime availability.
+servers:
+  - url: https://api.huanxing.dcfuture.cn
+    description: production placeholder
+  - url: http://localhost:8000
+    description: local development
+security:
+  - bearerAuth: []
+tags:
+  - name: Onboarding
+  - name: Sync
+  - name: Sandbox
+  - name: ChannelBinding
+  - name: MessageHub
+  - name: RuntimeReport
+  - name: AntiAbuse
+paths:
+  /api/v1/hasn/auth/phone/send_code:
+    post:
+      tags: [Onboarding]
+      summary: Send phone login verification code
+      operationId: hasnAuthPhoneSendCode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneSendCodeRequest'
+      responses:
+        '200':
+          description: Verification code sent or rate-limited by policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneSendCodeResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/auth/phone/verify:
+    post:
+      tags: [Onboarding]
+      summary: Verify phone login code and issue HASN session token
+      operationId: hasnAuthPhoneVerify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneVerifyRequest'
+      responses:
+        '200':
+          description: Login verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneVerifyResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/onboarding/ensure:
+    post:
+      tags: [Onboarding]
+      summary: Ensure Human, Node, OwnerBinding, default Agent, and bootstrap sync state
+      operationId: hasnOnboardingEnsure
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingEnsureRequest'
+      responses:
+        '200':
+          description: Idempotent onboarding result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardingEnsureResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/sync/pull:
+    post:
+      tags: [Sync]
+      summary: Pull sync events and inbox entries after cursor
+      operationId: hasnSyncPull
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncPullRequest'
+      responses:
+        '200':
+          description: Sync event batch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncPullResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/sync/push:
+    post:
+      tags: [Sync]
+      summary: Push local client events and acks to cloud control plane
+      operationId: hasnSyncPush
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncPushRequest'
+      responses:
+        '200':
+          description: Push accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncPushResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/runtime/report:
+    post:
+      tags: [RuntimeReport]
+      summary: Report local Runtime/Binding status summary without private local metadata
+      operationId: hasnRuntimeReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimeReportRequest'
+      responses:
+        '200':
+          description: Runtime report accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AckResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/inbox/pull:
+    post:
+      tags: [MessageHub]
+      summary: Pull owner inbox, owned Agent inbox visible copies, and suppressed inbox entries
+      operationId: hasnInboxPull
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboxPullRequest'
+      responses:
+        '200':
+          description: Inbox batch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxPullResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/messages/send:
+    post:
+      tags: [MessageHub]
+      summary: Send a HASN message through cloud message hub
+      description: |
+        Delivery succeeds when the message is accepted into the appropriate
+        Human/Owner inbox or Agent inbox. Runtime dispatch is optional and
+        failures such as RuntimeUnavailable are surfaced as dispatch status,
+        not message delivery failure.
+      operationId: hasnMessageSend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageHubSendRequest'
+      responses:
+        '200':
+          description: Message accepted by hub
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageHubSendResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/sandbox/create:
+    post:
+      tags: [Sandbox]
+      summary: Create or ensure tenant sandbox for owner
+      operationId: hasnSandboxCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SandboxCreateRequest'
+      responses:
+        '200':
+          description: Sandbox ensured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxStatusResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/sandbox/{sandbox_id}/wake:
+    post:
+      tags: [Sandbox]
+      summary: Wake sleeping tenant sandbox
+      operationId: hasnSandboxWake
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      responses:
+        '200':
+          description: Sandbox wake requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxStatusResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/sandbox/{sandbox_id}/sleep:
+    post:
+      tags: [Sandbox]
+      summary: Sleep tenant sandbox
+      operationId: hasnSandboxSleep
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      responses:
+        '200':
+          description: Sandbox sleep requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxStatusResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/sandbox/{sandbox_id}/delete:
+    post:
+      tags: [Sandbox]
+      summary: Delete tenant sandbox with purge ETA
+      operationId: hasnSandboxDelete
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      responses:
+        '200':
+          description: Sandbox delete requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxStatusResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/sandbox/{sandbox_id}/status:
+    get:
+      tags: [Sandbox]
+      summary: Get tenant sandbox status
+      operationId: hasnSandboxStatus
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      responses:
+        '200':
+          description: Sandbox status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxStatusResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/channel/pending_intents:
+    post:
+      tags: [ChannelBinding]
+      summary: Create or query pending channel onboarding intent
+      operationId: hasnChannelPendingIntent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PendingIntentRequest'
+      responses:
+        '200':
+          description: Pending intent result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PendingIntentResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/channel/bindings:
+    post:
+      tags: [ChannelBinding]
+      summary: Create or update channel binding
+      operationId: hasnChannelBindingUpsert
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelBindingUpsertRequest'
+      responses:
+        '200':
+          description: Channel binding upserted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelBindingResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/channel/bridge/inbound:
+    post:
+      tags: [ChannelBinding]
+      summary: Receive normalized third-party channel inbound message
+      operationId: hasnChannelBridgeInbound
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BridgeInboundRequest'
+      responses:
+        '200':
+          description: Bridge inbound accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgeInboundResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/abuse/report:
+    post:
+      tags: [AntiAbuse]
+      summary: Report abuse or spam
+      operationId: hasnAbuseReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AbuseReportRequest'
+      responses:
+        '200':
+          description: Abuse report accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AbuseReportResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    SandboxId:
+      name: sandbox_id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    ErrorResponse:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    Id:
+      type: string
+      minLength: 1
+    Timestamp:
+      type: string
+      format: date-time
+    Cursor:
+      type: string
+      nullable: true
+    AckResponse:
+      type: object
+      required: [ok, trace_id]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        trace_id:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          const: false
+        error:
+          $ref: '#/components/schemas/ErrorObject'
+    ErrorObject:
+      type: object
+      required: [code, name, message]
+      properties:
+        code:
+          type: integer
+        name:
+          type: string
+        message:
+          type: string
+        trace_id:
+          type: string
+        detail:
+          type: object
+          additionalProperties: true
+    PhoneSendCodeRequest:
+      type: object
+      required: [phone]
+      properties:
+        phone:
+          type: string
+        purpose:
+          type: string
+          enum: [login, bind_channel]
+          default: login
+    PhoneSendCodeResponse:
+      type: object
+      required: [ok, retry_after_sec]
+      properties:
+        ok:
+          type: boolean
+        retry_after_sec:
+          type: integer
+          minimum: 0
+    PhoneVerifyRequest:
+      type: object
+      required: [phone, code]
+      properties:
+        phone:
+          type: string
+        code:
+          type: string
+        pending_intent_id:
+          type: string
+          nullable: true
+    PhoneVerifyResponse:
+      type: object
+      required: [access_token, token_type, expires_in_sec]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          const: Bearer
+        expires_in_sec:
+          type: integer
+    OnboardingEnsureRequest:
+      type: object
+      required: [node, client]
+      properties:
+        node:
+          $ref: '#/components/schemas/NodeClaim'
+        client:
+          $ref: '#/components/schemas/ClientInfo'
+        pending_intent_id:
+          type: string
+          nullable: true
+    OnboardingEnsureResponse:
+      type: object
+      required: [human, owner_binding, default_agent, sync_cursor]
+      properties:
+        human:
+          $ref: '#/components/schemas/HumanSummary'
+        owner_binding:
+          $ref: '#/components/schemas/OwnerBindingSummary'
+        default_agent:
+          $ref: '#/components/schemas/AgentSummary'
+        sandbox:
+          $ref: '#/components/schemas/SandboxSummary'
+        sync_cursor:
+          type: string
+    NodeClaim:
+      type: object
+      required: [node_id, device_name, platform]
+      properties:
+        node_id:
+          type: string
+        device_name:
+          type: string
+        platform:
+          type: string
+        client_version:
+          type: string
+    ClientInfo:
+      type: object
+      properties:
+        protocol:
+          type: string
+          default: hasn/0.2
+        supported_extensions:
+          type: array
+          items:
+            type: string
+    HumanSummary:
+      type: object
+      required: [human_id, owner_id]
+      properties:
+        human_id:
+          type: string
+        owner_id:
+          type: string
+        display_name:
+          type: string
+    OwnerBindingSummary:
+      type: object
+      required: [owner_id, node_id, status, revision]
+      properties:
+        owner_id:
+          type: string
+        node_id:
+          type: string
+        status:
+          type: string
+          enum: [active, expiring, revoked]
+        revision:
+          type: integer
+    AgentSummary:
+      type: object
+      required: [agent_id, owner_id, hasn_id]
+      properties:
+        agent_id:
+          type: string
+        owner_id:
+          type: string
+        hasn_id:
+          type: string
+        display_name:
+          type: string
+    SandboxSummary:
+      type: object
+      required: [sandbox_id, status]
+      properties:
+        sandbox_id:
+          type: string
+        status:
+          type: string
+          enum: [creating, active, sleeping, deleted, failed]
+        base_url:
+          type: string
+          nullable: true
+    SyncPullRequest:
+      type: object
+      required: [owner_id]
+      properties:
+        owner_id:
+          type: string
+        cursor:
+          $ref: '#/components/schemas/Cursor'
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+    SyncPullResponse:
+      type: object
+      required: [events, next_cursor, has_more]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/SyncEvent'
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
+    SyncPushRequest:
+      type: object
+      required: [owner_id, events]
+      properties:
+        owner_id:
+          type: string
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientEvent'
+    SyncPushResponse:
+      type: object
+      required: [accepted, rejected, next_cursor]
+      properties:
+        accepted:
+          type: integer
+        rejected:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorObject'
+        next_cursor:
+          type: string
+    SyncEvent:
+      type: object
+      required: [event_id, event_type, revision, created_at]
+      properties:
+        event_id:
+          type: string
+        event_type:
+          type: string
+        revision:
+          type: integer
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        payload:
+          type: object
+          additionalProperties: true
+    ClientEvent:
+      type: object
+      required: [client_event_id, event_type, payload]
+      properties:
+        client_event_id:
+          type: string
+        event_type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+    RuntimeReportRequest:
+      type: object
+      required: [owner_id, node_id, runtime_summaries]
+      properties:
+        owner_id:
+          type: string
+        node_id:
+          type: string
+        runtime_summaries:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuntimeSummary'
+    RuntimeSummary:
+      type: object
+      required: [agent_id, binding_id, runtime_type, status]
+      properties:
+        agent_id:
+          type: string
+        binding_id:
+          type: string
+        runtime_type:
+          type: string
+        status:
+          type: string
+          enum: [missing, offline, online, degraded, failed]
+        adapter_registered:
+          type: boolean
+        handle_available:
+          type: boolean
+        last_seen_at:
+          $ref: '#/components/schemas/Timestamp'
+    InboxPullRequest:
+      type: object
+      required: [owner_id]
+      properties:
+        owner_id:
+          type: string
+        cursor:
+          $ref: '#/components/schemas/Cursor'
+        include_suppressed:
+          type: boolean
+          default: true
+    InboxPullResponse:
+      type: object
+      required: [items, next_cursor, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboxItem'
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
+    InboxItem:
+      type: object
+      required: [message_id, owner_id, hasn_id, conversation_id, inbox_kind, created_at]
+      properties:
+        message_id:
+          type: string
+        owner_id:
+          type: string
+        hasn_id:
+          type: string
+        conversation_id:
+          type: string
+        inbox_kind:
+          type: string
+          enum: [human_inbox, agent_inbox, owner_copy, suppressed_inbox]
+        envelope:
+          type: object
+          additionalProperties: true
+        dispatch_status:
+          type: string
+          enum: [not_required, pending_runtime, dispatched, runtime_unavailable, dispatch_failed, suppressed_by_policy]
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+    MessageHubSendRequest:
+      type: object
+      required: [owner_id, envelope]
+      properties:
+        owner_id:
+          type: string
+        envelope:
+          type: object
+          description: HASN HasnEnvelope-compatible payload; canonical schema lives in HASN-Protocol/schemas/HasnEnvelope.schema.json.
+          additionalProperties: true
+        require_runtime_execution:
+          type: boolean
+          default: false
+    MessageHubSendResponse:
+      type: object
+      required: [message_id, conversation_id, delivery_status, dispatch_status]
+      properties:
+        message_id:
+          type: string
+        conversation_id:
+          type: string
+        delivery_status:
+          type: string
+          enum: [delivered, rejected]
+        dispatch_status:
+          type: string
+          enum: [not_required, pending_runtime, dispatched, runtime_unavailable, dispatch_failed, suppressed_by_policy]
+        owner_copy_created:
+          type: boolean
+        suppressed_inbox_created:
+          type: boolean
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorObject'
+    SandboxCreateRequest:
+      type: object
+      required: [owner_id, tier]
+      properties:
+        owner_id:
+          type: string
+        tier:
+          type: string
+          enum: [cloud-lite, cloud-cli]
+        region:
+          type: string
+          nullable: true
+    SandboxStatusResponse:
+      type: object
+      required: [sandbox]
+      properties:
+        sandbox:
+          $ref: '#/components/schemas/SandboxSummary'
+        purge_eta:
+          $ref: '#/components/schemas/Timestamp'
+    PendingIntentRequest:
+      type: object
+      required: [channel, external_user_id]
+      properties:
+        channel:
+          type: string
+        external_user_id:
+          type: string
+        external_chat_id:
+          type: string
+          nullable: true
+    PendingIntentResponse:
+      type: object
+      required: [pending_intent_id, expires_at]
+      properties:
+        pending_intent_id:
+          type: string
+        expires_at:
+          $ref: '#/components/schemas/Timestamp'
+        onboarding_url:
+          type: string
+    ChannelBindingUpsertRequest:
+      type: object
+      required: [owner_id, agent_id, channel, external_user_id]
+      properties:
+        owner_id:
+          type: string
+        agent_id:
+          type: string
+        channel:
+          type: string
+        external_user_id:
+          type: string
+        external_chat_id:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, paused, revoked]
+          default: active
+    ChannelBindingResponse:
+      type: object
+      required: [binding_id, status]
+      properties:
+        binding_id:
+          type: string
+        status:
+          type: string
+    BridgeInboundRequest:
+      type: object
+      required: [channel, external_message_id, payload]
+      properties:
+        channel:
+          type: string
+        external_message_id:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+    BridgeInboundResponse:
+      type: object
+      required: [accepted, message_id]
+      properties:
+        accepted:
+          type: boolean
+        message_id:
+          type: string
+        pending_intent_id:
+          type: string
+          nullable: true
+    AbuseReportRequest:
+      type: object
+      required: [reporter_owner_id, target, reason]
+      properties:
+        reporter_owner_id:
+          type: string
+        target:
+          type: object
+          additionalProperties: true
+        reason:
+          type: string
+        evidence:
+          type: object
+          additionalProperties: true
+    AbuseReportResponse:
+      type: object
+      required: [report_id, status]
+      properties:
+        report_id:
+          type: string
+        status:
+          type: string
+          enum: [accepted, duplicate, rejected]
