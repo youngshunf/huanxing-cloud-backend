@@ -16,7 +16,7 @@ from backend.utils.timezone import timezone
 from backend.app.hasn.model import HasnHumans, HasnMessages, HasnConversations, HasnUnreadCounts
 from backend.app.hasn.model.hasn_agents import HasnAgents
 from backend.app.hasn.model.hasn_contacts import HasnContacts
-from backend.app.hasn.service.ws_router import ws_router
+from backend.app.hasn.model.hasn_group_members import HasnGroupMembers
 from backend.app.hasn.constants import (
     check_action_permission,
     compute_effective_permissions,
@@ -30,6 +30,12 @@ from backend.app.hasn.service.permission_engine import permission_engine
 
 
 # ─── 目标解析 ───
+
+async def _push_message_to(hasn_id: str, payload: dict[str, Any]) -> None:
+    """延迟导入 WS 路由器，避免服务模块启动时与 binding_event_service 循环导入。"""
+    from backend.app.hasn.service.ws_router import ws_router
+    await ws_router.push_message_to(hasn_id, payload)
+
 
 async def resolve_target(db: AsyncSession, target: str) -> dict[str, Any] | None:
     """
@@ -64,6 +70,28 @@ async def resolve_target(db: AsyncSession, target: str) -> dict[str, Any] | None
                 'entity_type': 'agent',
                 'name': agent.name,
                 'owner_id': agent.owner_id,
+            }
+        return None
+
+    # 群组公开 ID（g:500001）解析为群会话。
+    # HASN 群组暂以 hasn_conversations(type='group') 作为群主表，group_id 是协议层公开标识。
+    if target.startswith('g:'):
+        result = await db.execute(
+            select(HasnConversations).where(
+                HasnConversations.type == 'group',
+                HasnConversations.group_id == target,
+                HasnConversations.status == 'active',
+            )
+        )
+        group = result.scalar_one_or_none()
+        if group:
+            return {
+                'hasn_id': group.group_id,
+                'star_id': group.group_id,
+                'entity_type': 'group',
+                'name': group.group_name or group.group_id,
+                'conversation_id': str(group.id),
+                'owner_id': group.group_owner_id,
             }
         return None
 
@@ -308,6 +336,83 @@ async def get_or_create_conversation(
     return conv
 
 
+async def get_group_conversation(db: AsyncSession, group_id: str) -> HasnConversations | None:
+    """按协议层 group_id 读取活跃群会话。"""
+    result = await db.execute(
+        select(HasnConversations).where(
+            HasnConversations.type == 'group',
+            HasnConversations.group_id == group_id,
+            HasnConversations.status == 'active',
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_group_members(db: AsyncSession, conversation_id: str) -> list[HasnGroupMembers]:
+    """列出群活跃成员。当前模型无 removed_at/status 字段，存在即视为成员。"""
+    result = await db.execute(
+        select(HasnGroupMembers).where(HasnGroupMembers.conversation_id == conversation_id)
+    )
+    return list(result.scalars().all())
+
+
+async def check_group_send_permission(
+    db: AsyncSession,
+    conversation_id: str,
+    sender_id: str,
+    group: HasnConversations,
+) -> dict[str, Any]:
+    """群消息发送权限：必须是成员；全员禁言时仅 owner/admin 可发。"""
+    result = await db.execute(
+        select(HasnGroupMembers).where(
+            HasnGroupMembers.conversation_id == conversation_id,
+            HasnGroupMembers.member_id == sender_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if not member:
+        return {'allowed': False, 'reason': '不是该群成员'}
+    if group.mute_all and member.role not in ('owner', 'admin'):
+        return {'allowed': False, 'reason': '群已全员禁言'}
+    return {'allowed': True, 'member': member}
+
+
+async def _agent_owner_id(db: AsyncSession, agent_id: str) -> str | None:
+    result = await db.execute(select(HasnAgents.owner_id).where(HasnAgents.hasn_id == agent_id))
+    return result.scalar_one_or_none()
+
+
+async def _delivery_targets_for_member(db: AsyncSession, member: HasnGroupMembers) -> list[str]:
+    """返回群成员消息应投递到的在线实体。
+
+    Agent 成员除了尝试投递给 Agent Runtime，也投递给 Owner 在线节点。
+    这样 Runtime 不在线/不存在时，Human 节点仍能作为纯 IM 客户端收到发给自己 Agent 的消息。
+    """
+    if member.member_type == 'agent' or member.member_id.startswith('a_'):
+        owner_id = await _agent_owner_id(db, member.member_id)
+        return [x for x in (member.member_id, owner_id) if x]
+    return [member.member_id]
+
+
+async def increment_unread_for(db: AsyncSession, conversation_id: str, hasn_id: str) -> None:
+    unread_result = await db.execute(
+        select(HasnUnreadCounts).where(
+            HasnUnreadCounts.hasn_id == hasn_id,
+            HasnUnreadCounts.conversation_id == conversation_id,
+        )
+    )
+    unread = unread_result.scalar_one_or_none()
+    if unread:
+        unread.unread_count = (unread.unread_count or 0) + 1
+    else:
+        db.add(HasnUnreadCounts(
+            hasn_id=hasn_id,
+            conversation_id=conversation_id,
+            unread_count=1,
+            last_read_msg_id=0,
+        ))
+
+
 # ─── 消息持久化 ───
 
 def _entity_type_int(hasn_id: str) -> int:
@@ -316,6 +421,8 @@ def _entity_type_int(hasn_id: str) -> int:
         return 1  # human
     elif hasn_id.startswith('a_'):
         return 2  # agent
+    elif hasn_id.startswith('g:'):
+        return 4  # group
     return 3  # system
 
 
@@ -376,24 +483,9 @@ async def persist_message(
         else:
             conv.last_message_preview = '[消息]'
 
-    # 更新接收方未读计数
-    unread_result = await db.execute(
-        select(HasnUnreadCounts).where(
-            HasnUnreadCounts.hasn_id == to_id,
-            HasnUnreadCounts.conversation_id == conversation_id,
-        )
-    )
-    unread = unread_result.scalar_one_or_none()
-    if unread:
-        unread.unread_count = (unread.unread_count or 0) + 1
-    else:
-        unread = HasnUnreadCounts(
-            hasn_id=to_id,
-            conversation_id=conversation_id,
-            unread_count=1,
-            last_read_msg_id=0,
-        )
-        db.add(unread)
+    # 更新接收方未读计数。群聊由 route_message 按成员扇出写未读，避免给 g:* 自身计未读。
+    if not to_id.startswith('g:'):
+        await increment_unread_for(db, conversation_id, to_id)
 
     await db.flush()
     return msg
@@ -427,6 +519,86 @@ async def route_message(
 
     to_id = target_info['hasn_id']
     to_type = target_info['entity_type']
+
+    # 群消息：跳过单聊关系矩阵，按群成员/群设置判权后持久化为群会话并扇出。
+    if to_type == 'group':
+        group = await get_group_conversation(db, to_id)
+        if not group:
+            return {'error': True, 'code': 3001, 'message': f'群组 {to_id} 不存在'}
+        group_conv_id = str(group.id)
+        group_perm = await check_group_send_permission(db, group_conv_id, from_id, group)
+        if not group_perm.get('allowed'):
+            return {'error': True, 'code': 2002, 'message': group_perm.get('reason', '无权发送群消息')}
+
+        msg = await persist_message(
+            db=db,
+            conversation_id=group_conv_id,
+            from_id=from_id,
+            to_id=to_id,
+            content=content,
+            content_type=content_type,
+            msg_type=msg_type,
+            priority=priority,
+            reply_to_id=reply_to_id,
+            local_id=local_id,
+            context={**(context or {}), 'conversation_type': 'group', 'group_id': to_id},
+        )
+
+        members = await list_group_members(db, group_conv_id)
+        recipient_ids: set[str] = set()
+        for member in members:
+            if member.member_id == from_id:
+                continue
+            await increment_unread_for(db, group_conv_id, member.member_id)
+            for delivery_id in await _delivery_targets_for_member(db, member):
+                if delivery_id != from_id:
+                    recipient_ids.add(delivery_id)
+
+        await db.commit()
+
+        from_entity_type = 'human' if from_id.startswith('h_') else ('agent' if from_id.startswith('a_') else 'system')
+        hasn_envelope = {
+            'id': msg.id,
+            'conversation_id': group_conv_id,
+            'from_id': from_id,
+            'from_type': msg.from_type,
+            'from_entity_type': from_entity_type,
+            'to_id': to_id,
+            'to_type': 4,
+            'to_entity_type': 'group',
+            'content_type': content_type,
+            'content': content,
+            'msg_type': msg_type,
+            'status': 1,
+            'priority': priority,
+            'reply_to_id': reply_to_id,
+            'local_id': local_id,
+            'created_time': msg.created_time.isoformat() if msg.created_time else None,
+            'group': {
+                'group_id': to_id,
+                'name': group.group_name,
+                'owner_id': group.group_owner_id,
+            },
+        }
+        payload = {
+            'hasn': 'hasn/2.0',
+            'method': 'hasn.message.received',
+            'params': {
+                'to_id': to_id,
+                'message': hasn_envelope,
+            }
+        }
+        for recipient_id in sorted(recipient_ids):
+            await _push_message_to(recipient_id, payload)
+
+        return {
+            'error': False,
+            'msg_id': msg.id,
+            'conversation_id': group_conv_id,
+            'status': 'sent',
+            'local_id': local_id,
+            'delivered_to': sorted(recipient_ids),
+        }
 
     # 2. 不能给自己发消息（同一 hasn_id）
     if from_id == to_id:
@@ -549,7 +721,10 @@ async def route_message(
     }
 
     # 7. 投递
-    await ws_router.push_message_to(to_id, payload)
+    await _push_message_to(to_id, payload)
+    # Runtime 缺失/离线时，Human Owner 在线节点仍要能作为纯 IM 客户端收到发给自己 Agent 的消息。
+    if to_entity_type == 'agent' and target_info.get('owner_id') and target_info.get('owner_id') != to_id:
+        await _push_message_to(target_info['owner_id'], payload)
 
     return {
         'error': False,
@@ -641,7 +816,7 @@ async def recall_message(
         'conversation_id': str(msg.conversation_id),
         'recalled_by': hasn_id,
     }
-    await ws_router.push_message_to(msg.to_id, recall_payload)
+    await _push_message_to(msg.to_id, recall_payload)
 
     return {'error': False, 'msg_id': msg_id}
 

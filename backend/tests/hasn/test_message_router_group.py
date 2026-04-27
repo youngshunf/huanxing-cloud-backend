@@ -1,0 +1,116 @@
+"""HASN 群消息路由测试。
+
+覆盖缺口 4：群组目标 g:* 可正常路由；Agent 群成员在 Runtime 缺失/不在线时，Owner 在线节点也会收到消息，保证纯 IM 客户端可用。
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock
+
+import pytest
+
+
+
+@dataclass
+class _Group:
+    id: str = '00000000-0000-0000-0000-000000000001'
+    group_id: str = 'g:500001'
+    group_name: str = '测试群'
+    group_owner_id: str = 'h_owner'
+    mute_all: bool = False
+
+
+@dataclass
+class _Member:
+    member_id: str
+    member_type: str = 'human'
+    role: str = 'member'
+
+
+@dataclass
+class _Msg:
+    id: int = 1001
+    from_type: int = 1
+    to_type: int = 4
+    created_time: datetime = datetime(2026, 4, 27, tzinfo=timezone.utc)
+
+
+class _DB:
+    commits = 0
+
+    async def commit(self):
+        self.commits += 1
+
+
+@pytest.mark.asyncio
+async def test_group_message_fans_out_to_human_and_agent_owner(monkeypatch):
+    from backend.app.hasn.service import message_router as mr
+
+    group = _Group()
+    pushed = []
+
+    monkeypatch.setattr(
+        mr,
+        'resolve_target',
+        AsyncMock(return_value={
+            'hasn_id': group.group_id,
+            'entity_type': 'group',
+            'conversation_id': group.id,
+            'owner_id': group.group_owner_id,
+        }),
+    )
+    monkeypatch.setattr(mr, 'get_group_conversation', AsyncMock(return_value=group))
+    monkeypatch.setattr(mr, 'check_group_send_permission', AsyncMock(return_value={'allowed': True}))
+    monkeypatch.setattr(mr, 'persist_message', AsyncMock(return_value=_Msg()))
+    monkeypatch.setattr(
+        mr,
+        'list_group_members',
+        AsyncMock(return_value=[
+            _Member('h_sender'),
+            _Member('h_peer'),
+            _Member('a_peer', member_type='agent'),
+        ]),
+    )
+    monkeypatch.setattr(mr, '_agent_owner_id', AsyncMock(return_value='h_agent_owner'))
+    monkeypatch.setattr(mr, 'increment_unread_for', AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        mr,
+        '_push_message_to',
+        AsyncMock(side_effect=lambda target, payload: pushed.append((target, payload))),
+    )
+
+    result = await mr.route_message(
+        _DB(),
+        from_id='h_sender',
+        to_target='g:500001',
+        content={'text': 'hello group'},
+    )
+
+    assert result['error'] is False
+    assert result['conversation_id'] == group.id
+    # Agent Runtime 与 Owner 节点都在投递列表中；即使 Runtime 缺失，Owner 仍可作为纯 IM 客户端收信。
+    assert result['delivered_to'] == ['a_peer', 'h_agent_owner', 'h_peer']
+    assert [target for target, _ in pushed] == ['a_peer', 'h_agent_owner', 'h_peer']
+    assert pushed[0][1]['method'] == 'hasn.message.received'
+    assert pushed[0][1]['params']['message']['to_entity_type'] == 'group'
+    assert pushed[0][1]['params']['message']['to_type'] == 4
+
+
+@pytest.mark.asyncio
+async def test_group_route_rejects_non_member(monkeypatch):
+    from backend.app.hasn.service import message_router as mr
+
+    monkeypatch.setattr(mr, 'resolve_target', AsyncMock(return_value={'hasn_id': 'g:500001', 'entity_type': 'group'}))
+    monkeypatch.setattr(mr, 'get_group_conversation', AsyncMock(return_value=_Group()))
+    monkeypatch.setattr(mr, 'check_group_send_permission', AsyncMock(return_value={'allowed': False, 'reason': '不是该群成员'}))
+
+    result = await mr.route_message(_DB(), from_id='h_outsider', to_target='g:500001', content={'text': 'x'})
+
+    assert result == {'error': True, 'code': 2002, 'message': '不是该群成员'}
+
+
+def test_entity_type_int_supports_group():
+    from backend.app.hasn.service.message_router import _entity_type_int
+
+    assert _entity_type_int('g:500001') == 4

@@ -8,7 +8,7 @@
 - 验证 check_relation_permission 已不被 route_message 调用 (legacy 仅保留 def)
 
 依赖隔离：resolve_target / get_or_create_conversation / persist_message /
-ws_router.push_message_to / permission_engine.evaluate / _stash_pending_commitment 全部 mock。
+_push_message_to / permission_engine.evaluate / _stash_pending_commitment 全部 mock。
 """
 from __future__ import annotations
 
@@ -80,12 +80,12 @@ def _patch_router_pipeline(
     )
     monkeypatch.setattr(mr, 'persist_message', AsyncMock(return_value=fake_msg))
 
-    # _stash_pending_commitment / ws_router.push_message_to / db.commit
+    # _stash_pending_commitment / _push_message_to / db.commit
     stash_mock = AsyncMock(return_value=None)
     monkeypatch.setattr(mr, '_stash_pending_commitment', stash_mock, raising=False)
 
     push_mock = AsyncMock(return_value=None)
-    monkeypatch.setattr(mr.ws_router, 'push_message_to', push_mock, raising=False)
+    monkeypatch.setattr(mr, '_push_message_to', push_mock, raising=False)
 
     legacy_mock = AsyncMock(return_value={'allowed': False})  # 应不被调用
     monkeypatch.setattr(mr, 'check_relation_permission', legacy_mock)
@@ -105,7 +105,7 @@ def _fake_db():
 
 
 def _extract_pushed_envelope(push_mock) -> dict:
-    """从 ws_router.push_message_to(to_id, payload) mock 调用中取出 envelope。"""
+    """从 _push_message_to(to_id, payload) mock 调用中取出 envelope。"""
     args, kwargs = push_mock.call_args
     payload = args[1] if len(args) > 1 else (kwargs.get('payload') or kwargs.get('message'))
     return payload['params']['message']
@@ -127,6 +127,35 @@ async def test_allow_pushes_with_permission(monkeypatch):
     envelope = _extract_pushed_envelope(mocks['push'])
     assert 'permission' in envelope
     assert envelope['permission']['decision'] == 'allow'
+
+
+async def test_agent_target_also_pushes_to_owner_without_runtime(monkeypatch):
+    """发给 Agent 的消息不依赖 Runtime 在线；Owner 在线节点也收到同一 IM 消息。"""
+    mocks = _patch_router_pipeline(monkeypatch, perm_decision=ALLOW)
+    from backend.app.hasn.service import message_router as mr
+    from backend.app.hasn.service.message_router import route_message
+
+    monkeypatch.setattr(
+        mr,
+        'resolve_target',
+        AsyncMock(return_value={
+            'hasn_id': 'a_receiver',
+            'star_id': '200002',
+            'entity_type': 'agent',
+            'name': 'receiver-agent',
+            'owner_id': 'h_owner',
+        }),
+    )
+
+    result = await route_message(
+        db=_fake_db(), from_id='h_sender', to_target='a_receiver',
+        content={'body': 'hi agent'}, msg_type='message',
+    )
+
+    assert result.get('error') is False
+    assert [call.args[0] for call in mocks['push'].call_args_list] == ['a_receiver', 'h_owner']
+    envelope = _extract_pushed_envelope(mocks['push'])
+    assert envelope['to_owner_id'] == 'h_owner'
 
 
 # ── Test 2: DENY → 不 push，返回 error ──
