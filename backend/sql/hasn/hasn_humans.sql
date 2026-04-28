@@ -14,6 +14,9 @@ CREATE TABLE "public"."hasn_humans" (
   "timezone"       varchar(50) DEFAULT 'Asia/Shanghai',
   "tags"           text[],
   "stats"          jsonb NOT NULL DEFAULT '{}',
+  "profile_revision" bigint NOT NULL DEFAULT 1,
+  "policy_revision"  bigint NOT NULL DEFAULT 1,
+  "sync_revision"    bigint NOT NULL DEFAULT 1,
   "created_time"   timestamptz(6) NOT NULL DEFAULT now(),
   "updated_time"   timestamptz(6)
 );
@@ -22,6 +25,7 @@ CREATE UNIQUE INDEX "idx_hasn_humans_hasn_id" ON "public"."hasn_humans" ("hasn_i
 CREATE UNIQUE INDEX "idx_hasn_humans_star_id" ON "public"."hasn_humans" ("star_id");
 CREATE UNIQUE INDEX "idx_hasn_humans_user_id" ON "public"."hasn_humans" ("user_id");
 CREATE INDEX "idx_hasn_humans_status" ON "public"."hasn_humans" ("status");
+CREATE INDEX "idx_hasn_humans_sync_revision" ON "public"."hasn_humans" ("sync_revision");
 
 COMMENT ON TABLE "public"."hasn_humans" IS 'HASN 人类用户身份表';
 COMMENT ON COLUMN "public"."hasn_humans"."id" IS '主键 ID';
@@ -36,5 +40,8 @@ COMMENT ON COLUMN "public"."hasn_humans"."contact_policy" IS '联系人策略 (J
 COMMENT ON COLUMN "public"."hasn_humans"."timezone" IS '时区';
 COMMENT ON COLUMN "public"."hasn_humans"."tags" IS '个人标签';
 COMMENT ON COLUMN "public"."hasn_humans"."stats" IS '统计信息 (JSONB)';
+COMMENT ON COLUMN "public"."hasn_humans"."profile_revision" IS 'Profile 修订号（用于 sync pull 差异判断）';
+COMMENT ON COLUMN "public"."hasn_humans"."policy_revision" IS '策略修订号（联系人/权限策略变化时递增）';
+COMMENT ON COLUMN "public"."hasn_humans"."sync_revision" IS '服务端同步修订号（Owner 维度事件游标锚点）';
 COMMENT ON COLUMN "public"."hasn_humans"."created_time" IS '创建时间';
 COMMENT ON COLUMN "public"."hasn_humans"."updated_time" IS '更新时间';

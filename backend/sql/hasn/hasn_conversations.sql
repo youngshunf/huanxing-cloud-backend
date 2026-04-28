@@ -7,6 +7,11 @@ CREATE TABLE "public"."hasn_conversations" (
   "id"                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   "type"                 varchar(10) NOT NULL DEFAULT 'direct',
   "relation_type"        varchar(20) DEFAULT 'social',
+  "owner_id"             varchar(40) NOT NULL,
+  "hasn_id"              varchar(40) NOT NULL,
+  "peer_hasn_id"         varchar(40),
+  "sync_revision"        bigint NOT NULL DEFAULT 1,
+  "deleted_at"           timestamptz(6),
 
   -- ===== 单聊字段 (type='direct') =====
   "participant_a_id"     varchar(40) NOT NULL,
@@ -47,11 +52,19 @@ CREATE INDEX "idx_hasn_conv_type" ON "public"."hasn_conversations" ("type");
 CREATE UNIQUE INDEX "idx_hasn_conv_group_id" ON "public"."hasn_conversations" ("group_id") WHERE group_id IS NOT NULL;
 CREATE INDEX "idx_hasn_conv_group_owner" ON "public"."hasn_conversations" ("group_owner_id") WHERE type = 'group';
 CREATE INDEX "idx_hasn_conv_status" ON "public"."hasn_conversations" ("status");
+CREATE INDEX "idx_hasn_conv_owner_hasn" ON "public"."hasn_conversations" ("owner_id", "hasn_id", "updated_time" DESC);
+CREATE INDEX "idx_hasn_conv_peer" ON "public"."hasn_conversations" ("owner_id", "peer_hasn_id") WHERE "peer_hasn_id" IS NOT NULL;
+CREATE INDEX "idx_hasn_conv_sync_revision" ON "public"."hasn_conversations" ("sync_revision");
 
 COMMENT ON TABLE "public"."hasn_conversations" IS 'HASN 会话表';
 COMMENT ON COLUMN "public"."hasn_conversations"."id" IS '会话 ID (UUID)';
 COMMENT ON COLUMN "public"."hasn_conversations"."type" IS '会话类型 (direct:单聊:blue/group:群聊:green)';
 COMMENT ON COLUMN "public"."hasn_conversations"."relation_type" IS '关系类型 (social:社交:blue/commerce:商业:orange/service:履约:green/professional:专业:purple/platform:平台:cyan)';
+COMMENT ON COLUMN "public"."hasn_conversations"."owner_id" IS '会话所属 Owner hasn_id（owner copy / 多端 sync 归属）';
+COMMENT ON COLUMN "public"."hasn_conversations"."hasn_id" IS '会话视角主体 hasn_id（Human 或 owned Agent）';
+COMMENT ON COLUMN "public"."hasn_conversations"."peer_hasn_id" IS '会话对端 hasn_id（群聊可为空）';
+COMMENT ON COLUMN "public"."hasn_conversations"."sync_revision" IS '服务端同步修订号';
+COMMENT ON COLUMN "public"."hasn_conversations"."deleted_at" IS '软删除时间（sync tombstone，不物理删除会话资产）';
 COMMENT ON COLUMN "public"."hasn_conversations"."participant_a_id" IS '参与方 A hasn_id（单聊必填，群聊=创建者）';
 COMMENT ON COLUMN "public"."hasn_conversations"."participant_b_id" IS '参与方 B hasn_id（单聊必填，群聊为 NULL）';
 COMMENT ON COLUMN "public"."hasn_conversations"."participant_a_type" IS '参与方 A 类型 (human:人类:blue/agent:代理:green)';
