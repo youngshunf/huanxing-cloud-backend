@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from backend.core.conf import settings
 
 # --- 管理端（JWT + RBAC） ---
+from backend.app.hasn.api.v1.onboarding import router as onboarding_router
 from backend.app.hasn.api.v1.admin.hasn_humans import router as admin_hasn_humans_router
 from backend.app.hasn.api.v1.admin.hasn_agents import router as admin_hasn_agents_router
 from backend.app.hasn.api.v1.admin.hasn_contacts import router as admin_hasn_contacts_router
@@ -20,6 +21,7 @@ from backend.app.hasn.api.v1.admin.hasn_node_bindings import router as admin_has
 
 v1 = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn', tags=['HASN 管理端'])
 
+v1.include_router(onboarding_router, tags=['HASN Onboarding'])
 v1.include_router(admin_hasn_humans_router, prefix='/humans', tags=['用户管理'])
 v1.include_router(admin_hasn_agents_router, prefix='/agents', tags=['Agent管理'])
 v1.include_router(admin_hasn_contacts_router, prefix='/contacts', tags=['联系人管理'])

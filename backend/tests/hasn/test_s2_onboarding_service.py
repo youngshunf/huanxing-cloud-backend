@@ -1,0 +1,205 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from backend.app.hasn.schema.hasn_onboarding import (
+    ClientInfo,
+    NodeClaim,
+    OnboardingEnsureRequest,
+    PhoneSendCodeRequest,
+    PhoneVerifyRequest,
+    SandboxSummary,
+)
+from backend.app.hasn.service.hasn_onboarding_service import (
+    HasnOnboardingService,
+    HasnPhoneAuthService,
+    SMS_CODE_PREFIX,
+    SMS_RATE_PREFIX,
+    DEFAULT_AGENT_DISPLAY_NAME,
+    PRIVATE_NODE_INFO_KEYS,
+)
+
+
+class FakeRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, Any] = {}
+        self.ttls: dict[str, int] = {}
+        self.deleted: list[str] = []
+
+    async def exists(self, key: str) -> bool:
+        return key in self.values
+
+    async def ttl(self, key: str) -> int:
+        return self.ttls.get(key, 0)
+
+    async def setex(self, key: str, seconds: int, value: str) -> None:
+        self.values[key] = value
+        self.ttls[key] = seconds
+
+    async def get(self, key: str) -> Any:
+        return self.values.get(key)
+
+    async def delete(self, key: str) -> None:
+        self.deleted.append(key)
+        self.values.pop(key, None)
+        self.ttls.pop(key, None)
+
+
+class FakeSms:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    async def send_code(self, phone: str, code: str) -> bool:
+        self.sent.append((phone, code))
+        return True
+
+
+@dataclass
+class FakeUser:
+    id: int
+    username: str
+    nickname: str
+    phone: str
+    avatar: str | None = None
+    bio: str | None = None
+    is_multi_login: bool = True
+    last_login_time: Any = None
+
+
+class FakeUserGateway:
+    def __init__(self) -> None:
+        self.users: dict[str, FakeUser] = {}
+
+    async def get_or_create_phone_user(self, db: Any, phone: str) -> tuple[FakeUser, bool]:
+        if phone in self.users:
+            return self.users[phone], False
+        user = FakeUser(id=len(self.users) + 1, username=phone, nickname='手机用户', phone=phone)
+        self.users[phone] = user
+        return user, True
+
+
+class FakeDb:
+    def __init__(self) -> None:
+        self.flush_count = 0
+
+    async def flush(self) -> None:
+        self.flush_count += 1
+
+
+@pytest.mark.asyncio
+async def test_phone_send_code_reuses_sms_window_and_returns_contract_shape() -> None:
+    redis = FakeRedis()
+    sms = FakeSms()
+    service = HasnPhoneAuthService(redis=redis, sms=sms, code_generator=lambda: '123456')
+
+    first = await service.send_code(PhoneSendCodeRequest(phone='13800138000'))
+    second = await service.send_code(PhoneSendCodeRequest(phone='13800138000'))
+
+    assert first.ok is True
+    assert first.retry_after_sec == 0
+    assert redis.values[f'{SMS_CODE_PREFIX}:13800138000'] == '123456'
+    assert sms.sent == [('13800138000', '123456')]
+    assert second.ok is False
+    assert second.retry_after_sec == 60
+
+
+@pytest.mark.asyncio
+async def test_phone_verify_creates_platform_user_and_issues_bearer_token() -> None:
+    redis = FakeRedis()
+    await redis.setex(f'{SMS_CODE_PREFIX}:13800138000', 1800, b'654321')
+    users = FakeUserGateway()
+    db = FakeDb()
+    captured_token_kwargs: dict[str, Any] = {}
+
+    async def fake_token_creator(user_id: int, *, multi_login: bool, **kwargs: Any) -> SimpleNamespace:
+        captured_token_kwargs.update({'user_id': user_id, 'multi_login': multi_login, **kwargs})
+        return SimpleNamespace(access_token='jwt-token')
+
+    service = HasnPhoneAuthService(
+        redis=redis,
+        sms=FakeSms(),
+        users=users,
+        token_expire_seconds=86400,
+        token_creator=fake_token_creator,
+    )
+
+    response = await service.verify(
+        db, PhoneVerifyRequest(phone='13800138000', code='654321', pending_intent_id='pi_123')
+    )
+
+    assert response.access_token == 'jwt-token'
+    assert response.token_type == 'Bearer'
+    assert response.expires_in_sec == 86400
+    assert f'{SMS_CODE_PREFIX}:13800138000' in redis.deleted
+    assert db.flush_count == 1
+    assert captured_token_kwargs['pending_intent_id'] == 'pi_123'
+    assert captured_token_kwargs['hasn_onboarding'] is True
+
+
+@dataclass
+class FakeOnboardingGateway:
+    user: FakeUser = field(default_factory=lambda: FakeUser(7, 'old-user', '老用户', '13800138000'))
+    consumed: list[tuple[str, str, str]] = field(default_factory=list)
+    node_infos: list[dict[str, Any]] = field(default_factory=list)
+
+    async def get_user(self, db: Any, user_id: int) -> FakeUser | None:
+        return self.user if user_id == self.user.id else None
+
+    async def ensure_human(self, db: Any, user: FakeUser) -> tuple[Any, bool]:
+        return SimpleNamespace(hasn_id='h_owner_1', name=user.nickname), False
+
+    async def ensure_node(self, db: Any, user_id: int, owner_id: str, request: OnboardingEnsureRequest) -> Any:
+        node_info = {
+            'device_fingerprint': request.node.node_id,
+            'device_platform': request.node.platform,
+            'client_version': request.node.client_version,
+            'protocol': request.client.protocol,
+            'supported_extensions': request.client.supported_extensions or [],
+        }
+        self.node_infos.append(node_info)
+        return SimpleNamespace(node_id=request.node.node_id)
+
+    async def ensure_owner_binding(self, db: Any, node_id: str, owner_id: str) -> Any:
+        return SimpleNamespace(node_id=node_id, owner_id=owner_id, status='active', sync_revision=3)
+
+    async def ensure_default_agent(self, db: Any, owner_id: str, node_id: str | None) -> tuple[Any, bool]:
+        return SimpleNamespace(hasn_id='a_default_1', owner_id=owner_id, name=DEFAULT_AGENT_DISPLAY_NAME), True
+
+    async def consume_pending_intent(self, db: Any, pending_intent_id: str, owner_id: str, agent_hasn_id: str) -> bool:
+        self.consumed.append((pending_intent_id, owner_id, agent_hasn_id))
+        return True
+
+    async def get_sandbox_summary(self, db: Any, owner_id: str) -> SandboxSummary | None:
+        return SandboxSummary(sandbox_id='sb_owner_1', status='sleeping', base_url=None)
+
+
+@pytest.mark.asyncio
+async def test_onboarding_ensure_closes_old_user_default_agent_and_pending_intent_loop() -> None:
+    gateway = FakeOnboardingGateway()
+    service = HasnOnboardingService(gateway=gateway)
+    request = OnboardingEnsureRequest(
+        node=NodeClaim(
+            node_id='n_device_1',
+            device_name='MacBook',
+            platform='macos',
+            client_version='1.0.0',
+        ),
+        client=ClientInfo(protocol='hasn/0.2', supported_extensions=['sync.pull']),
+        pending_intent_id='pi_resume_1',
+    )
+
+    response = await service.ensure(db=None, user_id=7, request=request)
+
+    assert response.human.owner_id == 'h_owner_1'
+    assert response.owner_binding.node_id == 'n_device_1'
+    assert response.owner_binding.revision == 3
+    assert response.default_agent.hasn_id == 'a_default_1'
+    assert response.default_agent.display_name == DEFAULT_AGENT_DISPLAY_NAME
+    assert response.sandbox and response.sandbox.status == 'sleeping'
+    assert response.sync_cursor == 'owner:h_owner_1:0'
+    assert gateway.consumed == [('pi_resume_1', 'h_owner_1', 'a_default_1')]
+    assert set(gateway.node_infos[0]).isdisjoint(PRIVATE_NODE_INFO_KEYS)

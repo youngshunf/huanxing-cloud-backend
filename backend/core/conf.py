@@ -116,6 +116,8 @@ class Settings(BaseSettings):
         f'{FASTAPI_API_V1_PATH}/auth/login',
         f'{FASTAPI_API_V1_PATH}/auth/send-code',
         f'{FASTAPI_API_V1_PATH}/auth/phone-login',
+        f'{FASTAPI_API_V1_PATH}/hasn/auth/phone/send_code',
+        f'{FASTAPI_API_V1_PATH}/hasn/auth/phone/verify',
         f'{FASTAPI_API_V1_PATH}/user_tier/my/subscription/tiers',
         f'{FASTAPI_API_V1_PATH}/user_tier/my/subscription/packages',
     ]
