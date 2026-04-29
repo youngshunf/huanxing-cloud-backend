@@ -6,107 +6,42 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-import sqlalchemy as sa
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-class TestBase(DeclarativeBase):
+class _StubBase:
+    id: int | None = None
+    created_time: datetime
+    updated_time: datetime | None = None
+
+    def __init__(self, **kwargs: Any) -> None:
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+        self.id = kwargs.get('id')
+        self.created_time = kwargs.get('created_time', datetime.now(timezone.utc))
+        self.updated_time = kwargs.get('updated_time')
+
+
+class HermesAgentStub(_StubBase):
+    deleted_time = None
+    last_active_at = None
+    last_runtime_sync_at = None
+    last_error_code = None
+    last_error_message = None
+    runtime_profile_id = None
+    profile_name = None
+    runtime_id = None
+
+
+class HermesAgentRuntimeStateStub(_StubBase):
     pass
 
 
-class HermesAgentStub(TestBase):
-    __tablename__ = 'hermes_agent'
-
-    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
-    agent_id: Mapped[str] = mapped_column(sa.String(64), unique=True)
-    user_id: Mapped[int] = mapped_column(sa.BigInteger)
-    agent_name: Mapped[str] = mapped_column(sa.String(64))
-    template: Mapped[str] = mapped_column(sa.String(32), default='assistant')
-    timezone: Mapped[str] = mapped_column(sa.String(64), default='Asia/Shanghai')
-    status: Mapped[str] = mapped_column(sa.String(20), default='creating')
-    runtime_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
-    runtime_profile_id: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
-    profile_name: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
-    llm_mode: Mapped[str] = mapped_column(sa.String(16), default='platform')
-    llm_provider: Mapped[str] = mapped_column(sa.String(32), default='openai_compatible')
-    llm_model: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
-    gateway_status: Mapped[str] = mapped_column(sa.String(20), default='stopped')
-    workspace_status: Mapped[str] = mapped_column(sa.String(20), default='unknown')
-    sandbox_status: Mapped[str] = mapped_column(sa.String(20), default='unknown')
-    channel_count: Mapped[int] = mapped_column(sa.Integer, default=0)
-    last_active_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    last_runtime_sync_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    last_error_code: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
-    last_error_message: Mapped[str | None] = mapped_column(sa.String(500), nullable=True)
-    remark: Mapped[str | None] = mapped_column(sa.String(512), nullable=True)
-    deleted_time: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    created_time: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_time: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+class HermesAgentChannelBindingStub(_StubBase):
+    updated_time = None
 
 
-class HermesAgentRuntimeStateStub(TestBase):
-    __tablename__ = 'hermes_agent_runtime_state'
-
-    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
-    agent_id: Mapped[str] = mapped_column(sa.String(64), unique=True)
-    runtime_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
-    runtime_profile_id: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
-    profile_name: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
-    gateway_status: Mapped[str] = mapped_column(sa.String(20), default='stopped')
-    gateway_restart_count: Mapped[int] = mapped_column(sa.Integer, default=0)
-    gateway_started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    api_server_reachable: Mapped[bool] = mapped_column(sa.Boolean, default=True)
-    terminal_backend: Mapped[str] = mapped_column(sa.String(16), default='docker')
-    container_workspace: Mapped[str] = mapped_column(sa.String(64), default='/workspace')
-    host_workspace_display: Mapped[str | None] = mapped_column(sa.String(256), nullable=True)
-    workspace_status: Mapped[str] = mapped_column(sa.String(20), default='ready')
-    workspace_file_count: Mapped[int] = mapped_column(sa.Integer, default=0)
-    workspace_bytes_used: Mapped[int] = mapped_column(sa.BigInteger, default=0)
-    workspace_last_write_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    mount_policy: Mapped[str] = mapped_column(sa.String(32), default='workspace_only')
-    network_policy: Mapped[str] = mapped_column(sa.String(64), default='public_outbound_internal_denied')
-    network_ready: Mapped[bool] = mapped_column(sa.Boolean, default=True)
-    runtime_snapshot: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
-    last_health_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    last_error_code: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
-    last_error_message: Mapped[str | None] = mapped_column(sa.String(500), nullable=True)
-
-
-class HermesAgentChannelBindingStub(TestBase):
-    __tablename__ = 'hermes_agent_channel_binding'
-
-    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
-    binding_id: Mapped[str] = mapped_column(sa.String(64))
-    agent_id: Mapped[str] = mapped_column(sa.String(64))
-    user_id: Mapped[int] = mapped_column(sa.BigInteger)
-    channel: Mapped[str] = mapped_column(sa.String(20))
-    bind_mode: Mapped[str] = mapped_column(sa.String(20), default='qr')
-    status: Mapped[str] = mapped_column(sa.String(32), default='unbound')
-    display_name: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
-    bound_account_display: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
-    runtime_session_id: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
-    expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    metadata_json: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
-    last_error_code: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
-    last_error_message: Mapped[str | None] = mapped_column(sa.String(500), nullable=True)
-
-
-class HermesAgentOperationStub(TestBase):
-    __tablename__ = 'hermes_agent_operation'
-
-    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
-    operation_id: Mapped[str] = mapped_column(sa.String(64))
-    agent_id: Mapped[str] = mapped_column(sa.String(64))
-    user_id: Mapped[int] = mapped_column(sa.BigInteger)
-    operation_type: Mapped[str] = mapped_column(sa.String(32))
-    operation_status: Mapped[str] = mapped_column(sa.String(20))
-    idempotency_key: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
-    runtime_request_id: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
-    started_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    request_summary_json: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
-    response_summary_json: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
-    error_json: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
+class HermesAgentOperationStub(_StubBase):
+    pass
 
 
 class FakeRuntimeClient:

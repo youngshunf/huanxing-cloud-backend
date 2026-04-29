@@ -368,14 +368,6 @@ class HermesAgentAppService:
             raise
 
     async def list_agents(self, db: AsyncSession, *, user_id: int, status: str | None = None, channel: str | None = None, page: int = 1, size: int = 20) -> dict[str, Any]:
-        conditions = [HermesAgent.user_id == user_id, HermesAgent.deleted_time.is_(None)]
-        if status:
-            conditions.append(HermesAgent.status == status)
-        stmt = sa.select(HermesAgent).where(*conditions).order_by(HermesAgent.id.desc())
-        if channel:
-            stmt = stmt.join(HermesAgentChannelBinding, HermesAgentChannelBinding.agent_id == HermesAgent.agent_id).where(
-                HermesAgentChannelBinding.channel == channel
-            )
         if hasattr(db, 'hermes_agents'):
             agents_all = [item for item in db.hermes_agents if item.user_id == user_id and item.deleted_time is None]
             if status:
@@ -387,6 +379,14 @@ class HermesAgentAppService:
             total = len(agents_all)
             agents = agents_all[(page - 1) * size:(page - 1) * size + size]
         else:
+            conditions = [HermesAgent.user_id == user_id, HermesAgent.deleted_time.is_(None)]
+            if status:
+                conditions.append(HermesAgent.status == status)
+            stmt = sa.select(HermesAgent).where(*conditions).order_by(HermesAgent.id.desc())
+            if channel:
+                stmt = stmt.join(HermesAgentChannelBinding, HermesAgentChannelBinding.agent_id == HermesAgent.agent_id).where(
+                    HermesAgentChannelBinding.channel == channel
+                )
             total = (await db.execute(sa.select(sa.func.count()).select_from(stmt.subquery()))).scalar_one()
             result = await db.execute(stmt.offset((page - 1) * size).limit(size))
             agents = list(result.scalars().all())
