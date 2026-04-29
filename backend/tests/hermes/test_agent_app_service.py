@@ -79,6 +79,32 @@ class FakeRuntimeClient:
         self.calls.append(('get_gateway_status', runtime_profile_id, None))
         return {'status': 'running', 'api_server_host': '127.0.0.1', 'api_server_port': 18001}
 
+    async def get_workspace_status(self, runtime_profile_id, trace_id=None):
+        self.calls.append(('get_workspace_status', runtime_profile_id, None))
+        return {
+            'profile_id': runtime_profile_id,
+            'workspace_path': f'/tmp/hermes/workspaces/{runtime_profile_id}',
+            'container_workspace': '/workspace',
+            'status': 'active',
+            'file_count': 2,
+            'bytes_used': 128,
+            'last_write_at': '2026-04-29T10:05:00+00:00',
+        }
+
+    async def chat_completions(self, runtime_profile_id, payload, trace_id=None):
+        self.calls.append(('chat_completions', runtime_profile_id, payload))
+        return {'id': 'chatcmpl_test', 'choices': [{'message': {'role': 'assistant', 'content': 'ok'}}]}
+
+    async def get_channels(self, runtime_profile_id, trace_id=None):
+        self.calls.append(('get_channels', runtime_profile_id, None))
+        return {
+            'profile_id': runtime_profile_id,
+            'channels': [
+                {'channel': 'feishu', 'status': 'bound', 'metadata': {'account_display': 'ou_****1001'}},
+                {'channel': 'weixin', 'status': 'unbound', 'metadata': {}},
+            ],
+        }
+
 
 @pytest_asyncio.fixture
 async def db_session(monkeypatch):
@@ -173,3 +199,32 @@ async def test_runtime_unavailable_returns_structured_error_and_records_operatio
     assert len(ops) == 1
     assert ops[0].operation_status == 'failed'
     assert ops[0].error_json['error'] == 'runtime_unavailable'
+
+
+@pytest.mark.asyncio
+async def test_channels_shape_matches_website_contract_and_chat_syncs_workspace_state(db_session):
+    from backend.app.hermes.service.hermes_agent_app_service import HermesAgentAppService
+
+    runtime = FakeRuntimeClient()
+    service = HermesAgentAppService(runtime_client=runtime, id_factory=lambda: 'agt_sync')
+    await service.create_agent(db=db_session, user_id=1001, payload=_request(1001), trace_id='trace-create')
+
+    channels = await service.channels(db=db_session, user_id=1001, agent_id='agt_sync', trace_id='trace-channels')
+    assert isinstance(channels, list)
+    assert channels[0]['channel'] == 'feishu'
+    assert channels[0]['display_name'] == '飞书'
+    assert channels[0]['bound_account_display'] == 'ou_****1001'
+
+    chat = await service.chat_completions(
+        db=db_session,
+        user_id=1001,
+        agent_id='agt_sync',
+        payload={'messages': [{'role': 'user', 'content': 'hello'}]},
+        trace_id='trace-chat',
+    )
+    assert chat['id'] == 'chatcmpl_test'
+    state = db_session.runtime_states[0]
+    assert state.workspace_status == 'active'
+    assert state.workspace_file_count == 2
+    assert state.workspace_bytes_used == 128
+    assert state.host_workspace_display == '/data/huanxing-hermes/workspaces/agt_sync'

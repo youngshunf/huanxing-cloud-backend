@@ -61,6 +61,15 @@ def _dt(value: Any) -> Any:
     return value
 
 
+def _parse_datetime(value: Any) -> Any:
+    if not isinstance(value, str) or not value:
+        return value
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except ValueError:
+        return value
+
+
 def _safe_json(value: Any) -> Any:
     if isinstance(value, dict):
         safe: dict[str, Any] = {}
@@ -471,12 +480,51 @@ class HermesAgentAppService:
     async def workspace_status(self, db: AsyncSession, *, user_id: int, agent_id: str, trace_id: str | None = None) -> dict[str, Any]:
         profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
         data = await self.runtime_client.get_workspace_status(profile_id, trace_id=trace_id)
+        await self._sync_workspace_state(db, user_id=user_id, agent_id=agent_id, data=data)
         return {'agent_id': agent_id, **_safe_json(data), 'host_workspace_display': _host_workspace_display(data.get('workspace_path'), agent_id)}
 
     async def channels(self, db: AsyncSession, *, user_id: int, agent_id: str, trace_id: str | None = None) -> Any:
         profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
         data = await self.runtime_client.get_channels(profile_id, trace_id=trace_id)
-        return _safe_json(data)
+        raw_channels = data.get('channels', data) if isinstance(data, dict) else data
+        channels = []
+        if isinstance(raw_channels, list):
+            for item in raw_channels:
+                if not isinstance(item, dict):
+                    continue
+                channel = str(item.get('channel') or '')
+                metadata = item.get('metadata') if isinstance(item.get('metadata'), dict) else {}
+                channels.append(
+                    {
+                        'channel': channel,
+                        'display_name': CHANNEL_DISPLAY.get(channel, channel),
+                        'enabled': channel in {'feishu', 'weixin', 'qq'},
+                        'bind_mode': 'qr_or_manual' if channel in {'feishu', 'qq'} else 'qr',
+                        'status': item.get('status', 'unbound'),
+                        'bound_account_display': metadata.get('account_display') or metadata.get('open_id'),
+                        'last_error': item.get('last_error'),
+                        'metadata': _safe_json(metadata),
+                        'updated_at': item.get('updated_at') or item.get('bound_at'),
+                    }
+                )
+        return _safe_json(channels)
+
+    async def _sync_workspace_state(self, db: AsyncSession, *, user_id: int, agent_id: str, data: dict[str, Any]) -> None:
+        agent = await self._get_owned_agent(db, user_id=user_id, agent_id=agent_id)
+        state = await self._get_runtime_state(db, agent_id)
+        agent.workspace_status = data.get('status', agent.workspace_status)
+        agent.last_runtime_sync_at = _now()
+        agent.updated_time = _now()
+        if state is not None:
+            state.workspace_status = data.get('status', getattr(state, 'workspace_status', None))
+            state.workspace_file_count = data.get('file_count', getattr(state, 'workspace_file_count', 0)) or 0
+            state.workspace_bytes_used = data.get('bytes_used', getattr(state, 'workspace_bytes_used', 0)) or 0
+            state.workspace_last_write_at = _parse_datetime(data.get('last_write_at')) or getattr(state, 'workspace_last_write_at', None)
+            state.host_workspace_display = _host_workspace_display(data.get('workspace_path'), agent_id)
+            state.container_workspace = data.get('container_workspace') or getattr(state, 'container_workspace', None) or '/workspace'
+            state.runtime_snapshot = _safe_json(data)
+            state.last_health_at = _now()
+        await db.flush()
 
     async def channel_action(self, db: AsyncSession, *, user_id: int, agent_id: str, channel: str, action: str, payload: dict[str, Any] | None = None, session_id: str | None = None, trace_id: str | None = None) -> dict[str, Any]:
         profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
@@ -518,12 +566,22 @@ class HermesAgentAppService:
         profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
         data = await self.runtime_client.chat_completions(profile_id, payload, trace_id=trace_id)
         await self._record_operation(db, user_id=user_id, agent_id=agent_id, operation_type='chat', operation_status='succeeded', trace_id=trace_id, request_summary={'stream': payload.get('stream', False)}, response_summary=data)
+        try:
+            workspace = await self.runtime_client.get_workspace_status(profile_id, trace_id=trace_id)
+            await self._sync_workspace_state(db, user_id=user_id, agent_id=agent_id, data=workspace)
+        except HermesRuntimeError:
+            pass
         return _safe_json(data)
 
     async def create_run(self, db: AsyncSession, *, user_id: int, agent_id: str, payload: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:
         profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
         data = await self.runtime_client.create_run(profile_id, payload, trace_id=trace_id)
         await self._record_operation(db, user_id=user_id, agent_id=agent_id, operation_type='run', operation_status='succeeded', trace_id=trace_id, request_summary=payload, response_summary=data)
+        try:
+            workspace = await self.runtime_client.get_workspace_status(profile_id, trace_id=trace_id)
+            await self._sync_workspace_state(db, user_id=user_id, agent_id=agent_id, data=workspace)
+        except HermesRuntimeError:
+            pass
         return _safe_json(data)
 
     async def get_run_events(self, db: AsyncSession, *, user_id: int, agent_id: str, run_id: str, trace_id: str | None = None) -> Any:
