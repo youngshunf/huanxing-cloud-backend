@@ -7,6 +7,7 @@ from backend.app.hermes.api.v1.admin.hermes_agent import router as admin_hermes_
 from backend.app.hermes.api.v1.admin.hermes_agent_runtime_state import router as admin_hermes_agent_runtime_state_router
 from backend.app.hermes.api.v1.admin.hermes_agent_channel_binding import router as admin_hermes_agent_channel_binding_router
 from backend.app.hermes.api.v1.admin.hermes_agent_operation import router as admin_hermes_agent_operation_router
+from backend.app.hermes.api.v1.app.agents import router as app_agents_router
 
 # ========================================
 # 管理端 API（JWT + RBAC）
@@ -21,3 +22,10 @@ v1.include_router(admin_hermes_agent_operation_router, prefix='/hermes/agent/ope
 
 
 
+
+# ========================================
+# 用户端 API（JWT）
+# 路径前缀: /api/v1/hermes/app
+# ========================================
+app = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hermes/app', tags=['Hermes 用户端'])
+app.include_router(app_agents_router, prefix='/agents', tags=['Hermes Agent'])

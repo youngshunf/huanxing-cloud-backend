@@ -73,5 +73,5 @@ def test_hermes_codegen_outputs_are_admin_only_and_under_hermes_app():
 
     router_text = (HERMES_APP_DIR / "api" / "router.py").read_text(encoding="utf-8")
     assert "api.v1.admin" in router_text
-    assert "api.v1.app" not in router_text
-    assert "/agents" not in router_text
+    assert "api.v1.app.agents" in router_text
+    assert "app.include_router(app_agents_router, prefix='/agents'" in router_text

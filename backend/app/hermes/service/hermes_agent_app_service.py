@@ -1,0 +1,534 @@
+from __future__ import annotations
+
+import secrets
+from collections.abc import Callable
+from datetime import datetime
+from typing import Any
+from uuid import uuid4
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.hermes.model import (
+    HermesAgent,
+    HermesAgentChannelBinding,
+    HermesAgentOperation,
+    HermesAgentRuntimeState,
+)
+from backend.app.hermes.service.hermes_runtime_client import HermesRuntimeClient, HermesRuntimeError
+from backend.common.exception import errors
+from backend.core.conf import settings
+from backend.utils.timezone import timezone
+
+CHANNEL_DISPLAY = {
+    'feishu': '飞书',
+    'weixin': '微信',
+    'qq': 'QQ',
+    'wecom': '企业微信',
+    'webhook': 'Webhook',
+}
+SECRET_KEYS = {
+    'runtime_profile_id',
+    'profile_path',
+    'workspace_path',
+    'api_server_host',
+    'api_server_port',
+    'api_key',
+    'app_secret',
+    'secret',
+    'token',
+    'runtime_token',
+}
+
+
+def _now() -> datetime:
+    return timezone.now()
+
+
+def _new(model: type, **values: Any) -> Any:
+    try:
+        return model(**values)
+    except TypeError:
+        obj = model()
+        for key, value in values.items():
+            setattr(obj, key, value)
+        return obj
+
+
+def _dt(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _safe_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        safe: dict[str, Any] = {}
+        for key, item in value.items():
+            if key in SECRET_KEYS or key.endswith('_secret') or key.endswith('_token'):
+                continue
+            safe[key] = _safe_json(item)
+        return safe
+    if isinstance(value, list):
+        return [_safe_json(item) for item in value]
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _host_workspace_display(workspace_path: str | None, agent_id: str) -> str | None:
+    if not workspace_path:
+        return None
+    if agent_id in workspace_path:
+        return f'/data/huanxing-hermes/workspaces/{agent_id}'
+    parts = workspace_path.rstrip('/').split('/')
+    return f'.../{parts[-1]}' if parts and parts[-1] else None
+
+
+class HermesAgentAppService:
+    def __init__(self, *, runtime_client: Any | None = None, id_factory: Callable[[], str] | None = None) -> None:
+        self.runtime_client = runtime_client or HermesRuntimeClient()
+        self.id_factory = id_factory or self._generate_agent_id
+
+    @staticmethod
+    def _generate_agent_id() -> str:
+        return f'agt_{secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:10]}'
+
+    async def _get_owned_agent(self, db: AsyncSession, *, user_id: int, agent_id: str, include_deleted: bool = False) -> Any:
+        if hasattr(db, 'hermes_agents'):
+            agent = next((item for item in db.hermes_agents if item.agent_id == agent_id and item.user_id == user_id and (include_deleted or item.deleted_time is None)), None)
+        else:
+            conditions = [HermesAgent.agent_id == agent_id, HermesAgent.user_id == user_id]
+            if not include_deleted:
+                conditions.append(HermesAgent.deleted_time.is_(None))
+            result = await db.execute(sa.select(HermesAgent).where(*conditions))
+            agent = result.scalar_one_or_none()
+        if not agent:
+            raise errors.NotFoundError(msg='Hermes Agent 不存在')
+        return agent
+
+    async def _get_runtime_state(self, db: AsyncSession, agent_id: str) -> Any | None:
+        if hasattr(db, 'runtime_states'):
+            return next((item for item in db.runtime_states if item.agent_id == agent_id), None)
+        result = await db.execute(sa.select(HermesAgentRuntimeState).where(HermesAgentRuntimeState.agent_id == agent_id))
+        return result.scalar_one_or_none()
+
+    async def _get_channels(self, db: AsyncSession, *, user_id: int, agent_id: str) -> list[Any]:
+        if hasattr(db, 'channel_bindings'):
+            return [item for item in db.channel_bindings if item.user_id == user_id and item.agent_id == agent_id]
+        result = await db.execute(
+            sa.select(HermesAgentChannelBinding).where(
+                HermesAgentChannelBinding.user_id == user_id,
+                HermesAgentChannelBinding.agent_id == agent_id,
+            )
+        )
+        return list(result.scalars().all())
+
+    async def _record_operation(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        agent_id: str,
+        operation_type: str,
+        operation_status: str,
+        trace_id: str | None,
+        request_summary: dict[str, Any] | None = None,
+        response_summary: dict[str, Any] | None = None,
+        error: HermesRuntimeError | None = None,
+        started_at: datetime | None = None,
+    ) -> Any:
+        op = _new(
+            HermesAgentOperation,
+            operation_id=f'op_{uuid4().hex[:20]}',
+            agent_id=agent_id,
+            user_id=user_id,
+            operation_type=operation_type,
+            operation_status=operation_status,
+            runtime_request_id=trace_id,
+            started_at=started_at or _now(),
+            finished_at=_now(),
+            request_summary_json=_safe_json(request_summary) if request_summary else None,
+            response_summary_json=_safe_json(response_summary) if response_summary else None,
+            error_json=error.to_response_data() if error else None,
+        )
+        db.add(op)
+        await db.flush()
+        return op
+
+    def _agent_card(self, agent: Any, state: Any | None = None, channels: list[Any] | None = None) -> dict[str, Any]:
+        channels = channels or []
+        return {
+            'agent_id': agent.agent_id,
+            'agent_name': agent.agent_name,
+            'status': agent.status,
+            'gateway_status': agent.gateway_status,
+            'terminal_backend': getattr(state, 'terminal_backend', None) or 'docker',
+            'container_workspace': getattr(state, 'container_workspace', None) or '/workspace',
+            'workspace_status': agent.workspace_status,
+            'llm_mode': agent.llm_mode,
+            'llm_model': agent.llm_model,
+            'channel_summary': [
+                {
+                    'channel': item.channel,
+                    'status': item.status,
+                    'display_name': item.display_name or CHANNEL_DISPLAY.get(item.channel, item.channel),
+                    'updated_at': _dt(getattr(item, 'updated_time', None)),
+                }
+                for item in channels
+            ],
+            'last_active_at': _dt(agent.last_active_at),
+            'created_at': _dt(agent.created_time),
+            'updated_at': _dt(agent.updated_time or agent.created_time),
+        }
+
+    def _agent_detail(self, agent: Any, state: Any | None, channels: list[Any]) -> dict[str, Any]:
+        return {
+            'agent_id': agent.agent_id,
+            'agent_name': agent.agent_name,
+            'template': agent.template,
+            'timezone': agent.timezone,
+            'status': agent.status,
+            'gateway': {
+                'status': agent.gateway_status,
+                'api_server_reachable': getattr(state, 'api_server_reachable', True) if state else True,
+                'restart_count': getattr(state, 'gateway_restart_count', 0) if state else 0,
+                'started_at': _dt(getattr(state, 'gateway_started_at', None)) if state else None,
+                'last_error': agent.last_error_message,
+            },
+            'workspace': {
+                'status': agent.workspace_status,
+                'container_workspace': getattr(state, 'container_workspace', None) or '/workspace',
+                'host_workspace_display': getattr(state, 'host_workspace_display', None) if state else None,
+                'file_count': getattr(state, 'workspace_file_count', 0) if state else 0,
+                'bytes_used': getattr(state, 'workspace_bytes_used', 0) if state else 0,
+                'last_write_at': _dt(getattr(state, 'workspace_last_write_at', None)) if state else None,
+            },
+            'sandbox': {
+                'terminal_backend': getattr(state, 'terminal_backend', None) or 'docker',
+                'network_policy': getattr(state, 'network_policy', None) or 'public_outbound_internal_denied',
+                'mount_policy': getattr(state, 'mount_policy', None) or 'workspace_only',
+                'ready': bool(getattr(state, 'network_ready', True)) if state else True,
+                'last_error': getattr(state, 'last_error_message', None) if state else None,
+            },
+            'llm': {
+                'mode': agent.llm_mode,
+                'provider': agent.llm_provider,
+                'model': agent.llm_model,
+                'api_key_configured': agent.llm_mode == 'platform',
+            },
+            'channels': [self._channel_public(item) for item in channels],
+            'last_error': {'code': agent.last_error_code, 'message': agent.last_error_message} if agent.last_error_code else None,
+            'created_at': _dt(agent.created_time),
+            'updated_at': _dt(agent.updated_time or agent.created_time),
+        }
+
+    @staticmethod
+    def _channel_public(item: Any) -> dict[str, Any]:
+        return {
+            'channel': item.channel,
+            'display_name': item.display_name or CHANNEL_DISPLAY.get(item.channel, item.channel),
+            'enabled': item.channel in {'feishu', 'weixin', 'qq'},
+            'bind_mode': 'qr_or_manual' if item.channel in {'feishu', 'qq'} else 'qr',
+            'status': item.status,
+            'bound_account_display': item.bound_account_display,
+            'last_error': item.last_error_message,
+            'metadata': _safe_json(item.metadata_json or {}),
+            'updated_at': _dt(getattr(item, 'updated_time', None)),
+        }
+
+    async def create_agent(self, db: AsyncSession, *, user_id: int, payload: Any, trace_id: str | None = None) -> dict[str, Any]:
+        agent_id = self.id_factory()
+        now = _now()
+        llm_model = getattr(settings, 'HUANXING_HERMES_PLATFORM_LLM_MODEL', None) or getattr(
+            settings, 'HERMES_PLATFORM_LLM_MODEL', 'anthropic/claude-sonnet-4.5'
+        )
+        agent = _new(
+            HermesAgent,
+            agent_id=agent_id,
+            user_id=user_id,
+            agent_name=payload.agent_name,
+            template=payload.template or 'assistant',
+            timezone=payload.timezone or 'Asia/Shanghai',
+            status='creating',
+            llm_mode='platform',
+            llm_provider='openai_compatible',
+            llm_model=llm_model,
+            gateway_status='stopped',
+            workspace_status='unknown',
+            sandbox_status='unknown',
+            channel_count=0,
+            created_time=now,
+            updated_time=now,
+        )
+        db.add(agent)
+        await db.flush()
+
+        runtime_payload = {
+            'agent_id': agent_id,
+            'owner_user_id': str(user_id),
+            'agent_name': payload.agent_name,
+            'timezone': payload.timezone or 'Asia/Shanghai',
+            'template': payload.template or 'assistant',
+            'llm': {
+                'mode': 'platform',
+                'provider': 'openai_compatible',
+                'base_url': getattr(settings, 'HUANXING_HERMES_PLATFORM_LLM_BASE_URL', 'https://api.huanxing.ai/api/v1/llm/proxy/v1'),
+                'api_key': getattr(settings, 'HUANXING_HERMES_PLATFORM_LLM_API_KEY', ''),
+                'model': llm_model,
+                'plan_id': getattr(settings, 'HUANXING_HERMES_PLATFORM_LLM_PLAN_ID', 'pro_monthly'),
+            },
+            'sandbox': {
+                'terminal_backend': 'docker',
+                'docker_image': 'nikolaik/python-nodejs:python3.11-nodejs20',
+                'network_policy': 'public_outbound_internal_denied',
+            },
+        }
+        started_at = now
+        try:
+            runtime = await self.runtime_client.ensure_agent(runtime_payload, trace_id=trace_id)
+            runtime_profile_id = runtime['runtime_profile_id']
+            agent.runtime_profile_id = runtime_profile_id
+            agent.profile_name = runtime.get('profile_name')
+            agent.runtime_id = runtime.get('runtime_id') or getattr(settings, 'HUANXING_HERMES_RUNTIME_ID', 'hermes-runtime-local')
+            agent.status = 'created'
+            agent.workspace_status = runtime.get('workspace_status') or 'ready'
+            agent.sandbox_status = 'ready'
+            agent.last_runtime_sync_at = _now()
+
+            if payload.soul is not None:
+                await self.runtime_client.put_soul(runtime_profile_id, payload.soul, trace_id=trace_id)
+            if payload.user_profile is not None:
+                await self.runtime_client.put_user_profile(runtime_profile_id, payload.user_profile, trace_id=trace_id)
+
+            gateway = None
+            if payload.auto_start_gateway:
+                gateway = await self.runtime_client.start_gateway(runtime_profile_id, trace_id=trace_id)
+                agent.gateway_status = gateway.get('status', 'running')
+                agent.status = 'running' if agent.gateway_status == 'running' else 'created'
+            else:
+                agent.status = 'created'
+                agent.gateway_status = 'stopped'
+
+            state = _new(
+                HermesAgentRuntimeState,
+                agent_id=agent_id,
+                runtime_id=agent.runtime_id,
+                runtime_profile_id=runtime_profile_id,
+                profile_name=agent.profile_name,
+                gateway_status=agent.gateway_status,
+                gateway_restart_count=(gateway or {}).get('restart_count', 0),
+                gateway_started_at=(gateway or {}).get('started_at'),
+                api_server_reachable=(gateway or {}).get('api_server_reachable', True),
+                terminal_backend='docker',
+                container_workspace=runtime.get('container_workspace') or '/workspace',
+                host_workspace_display=_host_workspace_display(runtime.get('workspace_path'), agent_id),
+                workspace_status=agent.workspace_status,
+                workspace_file_count=0,
+                workspace_bytes_used=0,
+                workspace_last_write_at=None,
+                mount_policy='workspace_only',
+                network_policy='public_outbound_internal_denied',
+                network_ready=True,
+                runtime_snapshot=_safe_json(runtime),
+                last_health_at=_now(),
+            )
+            db.add(state)
+            agent.updated_time = _now()
+            await self._record_operation(
+                db,
+                user_id=user_id,
+                agent_id=agent_id,
+                operation_type='create_agent',
+                operation_status='succeeded',
+                trace_id=trace_id,
+                request_summary=runtime_payload,
+                response_summary=runtime,
+                started_at=started_at,
+            )
+            await db.flush()
+            return self._agent_card(agent, state, [])
+        except HermesRuntimeError as exc:
+            agent.status = 'error'
+            agent.last_error_code = exc.error
+            agent.last_error_message = exc.details
+            agent.updated_time = _now()
+            await self._record_operation(
+                db,
+                user_id=user_id,
+                agent_id=agent_id,
+                operation_type='create_agent',
+                operation_status='failed',
+                trace_id=trace_id,
+                request_summary=runtime_payload,
+                error=exc,
+                started_at=started_at,
+            )
+            await db.flush()
+            raise
+
+    async def list_agents(self, db: AsyncSession, *, user_id: int, status: str | None = None, channel: str | None = None, page: int = 1, size: int = 20) -> dict[str, Any]:
+        conditions = [HermesAgent.user_id == user_id, HermesAgent.deleted_time.is_(None)]
+        if status:
+            conditions.append(HermesAgent.status == status)
+        stmt = sa.select(HermesAgent).where(*conditions).order_by(HermesAgent.id.desc())
+        if channel:
+            stmt = stmt.join(HermesAgentChannelBinding, HermesAgentChannelBinding.agent_id == HermesAgent.agent_id).where(
+                HermesAgentChannelBinding.channel == channel
+            )
+        if hasattr(db, 'hermes_agents'):
+            agents_all = [item for item in db.hermes_agents if item.user_id == user_id and item.deleted_time is None]
+            if status:
+                agents_all = [item for item in agents_all if item.status == status]
+            if channel:
+                allowed = {item.agent_id for item in db.channel_bindings if item.user_id == user_id and item.channel == channel}
+                agents_all = [item for item in agents_all if item.agent_id in allowed]
+            agents_all.sort(key=lambda item: item.id or 0, reverse=True)
+            total = len(agents_all)
+            agents = agents_all[(page - 1) * size:(page - 1) * size + size]
+        else:
+            total = (await db.execute(sa.select(sa.func.count()).select_from(stmt.subquery()))).scalar_one()
+            result = await db.execute(stmt.offset((page - 1) * size).limit(size))
+            agents = list(result.scalars().all())
+        items = []
+        for agent in agents:
+            state = await self._get_runtime_state(db, agent.agent_id)
+            channels = await self._get_channels(db, user_id=user_id, agent_id=agent.agent_id)
+            items.append(self._agent_card(agent, state, channels))
+        return {'items': items, 'total': total, 'page': page, 'size': size}
+
+    async def get_agent_detail(self, db: AsyncSession, *, user_id: int, agent_id: str) -> dict[str, Any]:
+        agent = await self._get_owned_agent(db, user_id=user_id, agent_id=agent_id)
+        state = await self._get_runtime_state(db, agent_id)
+        channels = await self._get_channels(db, user_id=user_id, agent_id=agent_id)
+        return self._agent_detail(agent, state, channels)
+
+    async def update_agent(self, db: AsyncSession, *, user_id: int, agent_id: str, payload: Any, trace_id: str | None = None) -> dict[str, Any]:
+        agent = await self._get_owned_agent(db, user_id=user_id, agent_id=agent_id)
+        updates = payload.model_dump(exclude_unset=True) if hasattr(payload, 'model_dump') else dict(payload)
+        for field in ('agent_name', 'timezone'):
+            if field in updates and updates[field] is not None:
+                setattr(agent, field, updates[field])
+        agent.updated_time = _now()
+        await self._record_operation(db, user_id=user_id, agent_id=agent_id, operation_type='update_agent', operation_status='succeeded', trace_id=trace_id, request_summary=updates)
+        await db.flush()
+        return await self.get_agent_detail(db, user_id=user_id, agent_id=agent_id)
+
+    async def delete_agent(self, db: AsyncSession, *, user_id: int, agent_id: str, trace_id: str | None = None) -> dict[str, Any]:
+        agent = await self._get_owned_agent(db, user_id=user_id, agent_id=agent_id)
+        agent.status = 'deleting'
+        agent.updated_time = _now()
+        try:
+            if agent.runtime_profile_id:
+                await self.runtime_client.stop_gateway(agent.runtime_profile_id, trace_id=trace_id)
+            agent.status = 'deleted'
+            agent.deleted_time = _now()
+            agent.gateway_status = 'stopped'
+            agent.updated_time = _now()
+            await self._record_operation(db, user_id=user_id, agent_id=agent_id, operation_type='delete_agent', operation_status='succeeded', trace_id=trace_id)
+            await db.flush()
+            return {'agent_id': agent.agent_id, 'status': agent.status}
+        except HermesRuntimeError as exc:
+            agent.status = 'error'
+            agent.last_error_code = exc.error
+            agent.last_error_message = exc.details
+            await self._record_operation(db, user_id=user_id, agent_id=agent_id, operation_type='delete_agent', operation_status='failed', trace_id=trace_id, error=exc)
+            await db.flush()
+            raise
+
+    async def runtime_profile_id(self, db: AsyncSession, *, user_id: int, agent_id: str) -> str:
+        agent = await self._get_owned_agent(db, user_id=user_id, agent_id=agent_id)
+        if not agent.runtime_profile_id:
+            raise HermesRuntimeError(error='runtime_profile_missing', details='agent has no runtime profile', action='recreate agent')
+        return agent.runtime_profile_id
+
+    async def get_persona(self, db: AsyncSession, *, user_id: int, agent_id: str, kind: str, trace_id: str | None = None) -> dict[str, Any]:
+        profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
+        data = await (self.runtime_client.get_soul(profile_id, trace_id=trace_id) if kind == 'soul' else self.runtime_client.get_user_profile(profile_id, trace_id=trace_id))
+        return {'agent_id': agent_id, 'kind': kind, 'content': data.get('content', ''), 'updated_at': data.get('updated_at'), 'effective_policy': 'next_message'}
+
+    async def put_persona(self, db: AsyncSession, *, user_id: int, agent_id: str, kind: str, content: str, trace_id: str | None = None) -> dict[str, Any]:
+        profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
+        data = await (self.runtime_client.put_soul(profile_id, content, trace_id=trace_id) if kind == 'soul' else self.runtime_client.put_user_profile(profile_id, content, trace_id=trace_id))
+        await self._record_operation(db, user_id=user_id, agent_id=agent_id, operation_type='update_agent', operation_status='succeeded', trace_id=trace_id, request_summary={'kind': kind})
+        return {'agent_id': agent_id, 'kind': kind, 'content': content, 'updated_at': data.get('updated_at'), 'effective_policy': 'next_message'}
+
+    async def gateway(self, db: AsyncSession, *, user_id: int, agent_id: str, action: str, trace_id: str | None = None, limit: int = 100) -> Any:
+        profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
+        if action == 'status':
+            data = await self.runtime_client.get_gateway_status(profile_id, trace_id=trace_id)
+        elif action == 'logs':
+            return await self.runtime_client.get_gateway_logs(profile_id, limit=limit, trace_id=trace_id)
+        else:
+            data = await getattr(self.runtime_client, f'{action}_gateway')(profile_id, trace_id=trace_id)
+            agent = await self._get_owned_agent(db, user_id=user_id, agent_id=agent_id)
+            agent.gateway_status = data.get('status', agent.gateway_status)
+            agent.status = 'running' if agent.gateway_status == 'running' else 'stopped'
+            agent.updated_time = _now()
+            await self._record_operation(db, user_id=user_id, agent_id=agent_id, operation_type=f'{action}_gateway', operation_status='succeeded', trace_id=trace_id, response_summary=data)
+        return {'agent_id': agent_id, **_safe_json(data)}
+
+    async def workspace_status(self, db: AsyncSession, *, user_id: int, agent_id: str, trace_id: str | None = None) -> dict[str, Any]:
+        profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
+        data = await self.runtime_client.get_workspace_status(profile_id, trace_id=trace_id)
+        return {'agent_id': agent_id, **_safe_json(data), 'host_workspace_display': _host_workspace_display(data.get('workspace_path'), agent_id)}
+
+    async def channels(self, db: AsyncSession, *, user_id: int, agent_id: str, trace_id: str | None = None) -> Any:
+        profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
+        data = await self.runtime_client.get_channels(profile_id, trace_id=trace_id)
+        return _safe_json(data)
+
+    async def channel_action(self, db: AsyncSession, *, user_id: int, agent_id: str, channel: str, action: str, payload: dict[str, Any] | None = None, session_id: str | None = None, trace_id: str | None = None) -> dict[str, Any]:
+        profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
+        payload = payload or {}
+        if action == 'qr_start':
+            data = await self.runtime_client.start_channel_qr(profile_id, channel, payload, trace_id=trace_id)
+        elif action == 'qr_status':
+            data = await self.runtime_client.get_channel_qr_status(profile_id, channel, session_id or '', trace_id=trace_id)
+        elif action == 'manual':
+            data = await self.runtime_client.manual_channel(profile_id, channel, payload, trace_id=trace_id)
+        elif action == 'test':
+            data = await self.runtime_client.test_channel(profile_id, channel, payload, trace_id=trace_id)
+        elif action == 'unbind':
+            data = await self.runtime_client.unbind_channel(profile_id, channel, payload, trace_id=trace_id)
+        else:
+            raise errors.NotFoundError(msg='Channel action 不存在')
+        await self._upsert_channel_binding(db, user_id=user_id, agent_id=agent_id, channel=channel, data=data, action=action)
+        await self._record_operation(db, user_id=user_id, agent_id=agent_id, operation_type='bind_channel' if action != 'unbind' else 'unbind_channel', operation_status='succeeded', trace_id=trace_id, request_summary=payload, response_summary=data)
+        return _safe_json(data)
+
+    async def _upsert_channel_binding(self, db: AsyncSession, *, user_id: int, agent_id: str, channel: str, data: dict[str, Any], action: str) -> None:
+        if hasattr(db, 'channel_bindings'):
+            item = next((row for row in db.channel_bindings if row.user_id == user_id and row.agent_id == agent_id and row.channel == channel), None)
+        else:
+            result = await db.execute(sa.select(HermesAgentChannelBinding).where(HermesAgentChannelBinding.user_id == user_id, HermesAgentChannelBinding.agent_id == agent_id, HermesAgentChannelBinding.channel == channel))
+            item = result.scalar_one_or_none()
+        if not item:
+            item = _new(HermesAgentChannelBinding, binding_id=f'bind_{uuid4().hex[:20]}', agent_id=agent_id, user_id=user_id, channel=channel, bind_mode='qr' if action.startswith('qr') else 'manual', status='unbound', display_name=CHANNEL_DISPLAY.get(channel, channel))
+            db.add(item)
+        item.status = data.get('status', item.status)
+        item.runtime_session_id = data.get('session_id', item.runtime_session_id)
+        item.expires_at = data.get('expires_at', item.expires_at)
+        metadata = data.get('metadata') if isinstance(data.get('metadata'), dict) else {}
+        item.metadata_json = _safe_json(metadata)
+        item.bound_account_display = metadata.get('account_display') or metadata.get('open_id') or item.bound_account_display
+        await db.flush()
+
+    async def chat_completions(self, db: AsyncSession, *, user_id: int, agent_id: str, payload: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:
+        profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
+        data = await self.runtime_client.chat_completions(profile_id, payload, trace_id=trace_id)
+        await self._record_operation(db, user_id=user_id, agent_id=agent_id, operation_type='chat', operation_status='succeeded', trace_id=trace_id, request_summary={'stream': payload.get('stream', False)}, response_summary=data)
+        return _safe_json(data)
+
+    async def create_run(self, db: AsyncSession, *, user_id: int, agent_id: str, payload: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:
+        profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
+        data = await self.runtime_client.create_run(profile_id, payload, trace_id=trace_id)
+        await self._record_operation(db, user_id=user_id, agent_id=agent_id, operation_type='run', operation_status='succeeded', trace_id=trace_id, request_summary=payload, response_summary=data)
+        return _safe_json(data)
+
+    async def get_run_events(self, db: AsyncSession, *, user_id: int, agent_id: str, run_id: str, trace_id: str | None = None) -> Any:
+        profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
+        return _safe_json(await self.runtime_client.get_run_events(profile_id, run_id, trace_id=trace_id))
+
+
+hermes_agent_app_service = HermesAgentAppService()

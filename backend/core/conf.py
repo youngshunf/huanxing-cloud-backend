@@ -104,6 +104,16 @@ class Settings(BaseSettings):
     AGENT_SECRET_KEY: str = ''  # 生产环境在 .env 中设置，支持逗号分隔多 key
     HUANXING_SITE_URL: str = 'https://huanxing.dcfuture.cn'  # 前端站点域名，用于生成分享链接等
 
+    # Hermes Runtime（仅后端持有；不得返回给浏览器）
+    HUANXING_HERMES_RUNTIME_BASE_URL: str = ''
+    HUANXING_HERMES_RUNTIME_API_TOKEN: str = ''
+    HUANXING_HERMES_RUNTIME_TIMEOUT_SECONDS: float = 10.0
+    HUANXING_HERMES_RUNTIME_ID: str = 'hermes-runtime-local'
+    HUANXING_HERMES_PLATFORM_LLM_BASE_URL: str = 'https://api.huanxing.ai/api/v1/llm/proxy/v1'
+    HUANXING_HERMES_PLATFORM_LLM_API_KEY: str = ''
+    HUANXING_HERMES_PLATFORM_LLM_MODEL: str = 'anthropic/claude-sonnet-4.5'
+    HUANXING_HERMES_PLATFORM_LLM_PLAN_ID: str = 'pro_monthly'
+
     # Token
     TOKEN_ALGORITHM: str = 'HS256'
     TOKEN_EXPIRE_SECONDS: int = 60 * 60 * 24  # 1 天
