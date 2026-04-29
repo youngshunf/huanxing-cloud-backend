@@ -216,7 +216,7 @@ async def workspace_status(request: Request, db: CurrentSession, agent_id: str) 
 
 
 @router.post('/{agent_id}/chat/completions', summary='Web Chat', dependencies=[DependsJwtAuth])
-async def chat_completions(request: Request, db: CurrentSessionTransaction, agent_id: str, payload: dict[str, Any]) -> ResponseModel:
+async def hermes_chat_completions(request: Request, db: CurrentSessionTransaction, agent_id: str, payload: dict[str, Any]) -> ResponseModel:
     try:
         return response_base.success(data=await hermes_agent_app_service.chat_completions(db, user_id=request.user.id, agent_id=agent_id, payload=payload, trace_id=_trace_id(request)))
     except HermesRuntimeError as exc:
@@ -224,7 +224,7 @@ async def chat_completions(request: Request, db: CurrentSessionTransaction, agen
 
 
 @router.post('/{agent_id}/runs', summary='创建 Run', dependencies=[DependsJwtAuth])
-async def create_run(request: Request, db: CurrentSessionTransaction, agent_id: str, payload: dict[str, Any]) -> ResponseModel:
+async def hermes_create_run(request: Request, db: CurrentSessionTransaction, agent_id: str, payload: dict[str, Any]) -> ResponseModel:
     try:
         return response_base.success(data=await hermes_agent_app_service.create_run(db, user_id=request.user.id, agent_id=agent_id, payload=payload, trace_id=_trace_id(request)))
     except HermesRuntimeError as exc:
@@ -232,7 +232,7 @@ async def create_run(request: Request, db: CurrentSessionTransaction, agent_id: 
 
 
 @router.get('/{agent_id}/runs/{run_id}/events', summary='Run Events', dependencies=[DependsJwtAuth])
-async def run_events(request: Request, db: CurrentSession, agent_id: str, run_id: str) -> ResponseModel:
+async def hermes_run_events(request: Request, db: CurrentSession, agent_id: str, run_id: str) -> ResponseModel:
     try:
         return response_base.success(data=await hermes_agent_app_service.get_run_events(db, user_id=request.user.id, agent_id=agent_id, run_id=run_id, trace_id=_trace_id(request)))
     except HermesRuntimeError as exc:
