@@ -79,6 +79,7 @@ fba = "backend.cli:main"
 
 [dependency-groups]
 dev = [
+  "aiosqlite>=0.22.1",
   "pytest>=9.0.2",
   "pytest-sugar>=1.1.1",
 ]

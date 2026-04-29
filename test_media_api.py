@@ -11,6 +11,9 @@ from datetime import datetime
 BASE_URL = "http://127.0.0.1:8020/api/v1/llm/proxy/v1"
 API_KEY = "sk-cf-test-key-123456"  # 测试用的 API Key
 
+# This is a manual smoke-test script; pytest should not collect its async helpers.
+__test__ = False
+
 async def test_image_generation():
     """测试图像生成接口"""
     print("\n" + "="*60)

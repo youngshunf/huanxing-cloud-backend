@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, text
 
 # 本地开发数据库连接（PostgreSQL 127.0.0.1:15432，库名 huanxing，用户 mac）
 # 如需修改，请直接编辑此常量
-DATABASE_URL = 'postgresql://mac@127.0.0.1:15432/huanxing'
+DATABASE_URL = 'postgresql+psycopg://mac@127.0.0.1:15432/huanxing'
 
 
 @pytest.fixture(scope='module')

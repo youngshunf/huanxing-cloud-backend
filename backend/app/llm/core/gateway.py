@@ -437,7 +437,7 @@ class LLMGateway:
             'messages': messages,
             'api_key': api_key,
             'stream': request.stream,
-            'timeout': timeout or 600,  # P0-2: 默认 60 秒超时
+            'timeout': timeout or 60,  # P0-2: 默认 60 秒超时
         }
 
         # 设置 API base URL
@@ -2043,7 +2043,7 @@ class LLMGateway:
             'max_tokens': effective_max_tokens,
             'api_key': api_key,
             'stream': request.stream,
-            'timeout': timeout or 600,  # P0-2: 默认 60 秒超时
+            'timeout': timeout or 60,  # P0-2: 默认 60 秒超时
         }
 
         # 设置 API base URL
