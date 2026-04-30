@@ -778,16 +778,6 @@ def _entity_type_int(hasn_id: str) -> int:
     return 3
 
 
-def _runtime_suppress_reason(runtime: RuntimeSummary | None) -> str:
-    if runtime is None:
-        return 'runtime_unavailable'
-    if not runtime.adapter_registered:
-        return 'adapter_missing'
-    if not runtime.handle_available:
-        return 'handle_unavailable'
-    return 'runtime_unavailable'
-
-
 def _redact_runtime_summary(summary: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in dict(summary).items() if k not in PRIVATE_RUNTIME_KEYS}
 
@@ -855,6 +845,11 @@ def _envelope_for_delivery(
 
 
 def _runtime_warning_payload(message: StoredMessage, envelope: dict[str, Any]) -> dict[str, Any]:
+    warning = (
+        _RUNTIME_DISPATCH_FAILED_WARNING
+        if message.dispatch_status == 'dispatch_failed'
+        else _RUNTIME_UNAVAILABLE_WARNING
+    )
     return {
         'hasn': 'hasn/2.0',
         'method': 'hasn.runtime.warning',
@@ -863,7 +858,7 @@ def _runtime_warning_payload(message: StoredMessage, envelope: dict[str, Any]) -
             'message_id': message.message_id,
             'conversation_id': message.conversation_id,
             'dispatch_status': message.dispatch_status,
-            'warning': _RUNTIME_UNAVAILABLE_WARNING.model_dump(),
+            'warning': warning.model_dump(),
             'message': _envelope_for_delivery(
                 message,
                 Recipient(message.hasn_id, 'agent', message.owner_id),

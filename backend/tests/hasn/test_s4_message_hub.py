@@ -15,6 +15,7 @@ from backend.app.hasn.service.hasn_message_hub_service import (
     RuntimeSummary,
     StoredMessage,
 )
+from backend.common.exception import errors
 
 pytestmark = pytest.mark.asyncio
 
@@ -151,7 +152,7 @@ async def test_unbound_agent_is_rejected_before_agent_inbox_or_suppressed_inbox(
     fanout = MultiNodeFanout(online_nodes={'h_owner': ['node-a', 'node-b']})
     service = _service(gateway, fanout)
 
-    with pytest.raises(Exception, match='AgentUnreachable: NoRuntimeBinding'):
+    with pytest.raises(errors.RequestError, match='AgentUnreachable: NoRuntimeBinding'):
         await service.send(
             None,
             MessageHubSendRequest(

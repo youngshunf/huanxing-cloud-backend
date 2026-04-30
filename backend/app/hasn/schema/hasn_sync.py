@@ -15,7 +15,6 @@ from backend.common.schema import SchemaBase
 
 
 RuntimeStatus = Literal['missing', 'offline', 'online', 'degraded', 'failed']
-SyncPushStatus = Literal['accepted', 'applied', 'duplicate', 'conflict', 'rejected', 'failed']
 
 
 class CursorMixin(SchemaBase):

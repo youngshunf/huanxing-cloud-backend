@@ -265,7 +265,7 @@ class HasnSyncService:
     gateway: SyncGateway = field(default_factory=SqlAlchemySyncGateway)
 
     async def pull(self, db: AsyncSession, request: SyncPullRequest) -> SyncPullResponse:
-        after_revision = _parse_owner_cursor(request.cursor, request.owner_id)
+        after_revision = _parse_owner_cursor(request.cursor)
         events = await self.gateway.pull_events(
             db,
             owner_id=request.owner_id,
@@ -331,7 +331,7 @@ class HasnSyncService:
         )
 
 
-def _parse_owner_cursor(cursor: str | None, owner_id: str) -> int:
+def _parse_owner_cursor(cursor: str | None) -> int:
     if not cursor:
         return 0
     parts = str(cursor).rsplit(':', maxsplit=1)
