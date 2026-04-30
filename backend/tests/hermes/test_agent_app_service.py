@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
@@ -73,7 +73,12 @@ class FakeRuntimeClient:
 
     async def start_gateway(self, runtime_profile_id, trace_id=None):
         self.calls.append(('start_gateway', runtime_profile_id, None))
-        return {'status': 'running', 'api_server_host': '127.0.0.1', 'api_server_port': 18001}
+        return {
+            'status': 'running',
+            'api_server_host': '127.0.0.1',
+            'api_server_port': 18001,
+            'started_at': '2026-04-29T10:03:00+08:00',
+        }
 
     async def get_gateway_status(self, runtime_profile_id, trace_id=None):
         self.calls.append(('get_gateway_status', runtime_profile_id, None))
@@ -165,6 +170,9 @@ async def test_create_multiple_agents_for_one_user_saves_runtime_profile_and_use
     assert ('put_soul', 'rtp_agt_a', '# SOUL') in runtime.calls
     assert ('put_user_profile', 'rtp_agt_a', '# USER') in runtime.calls
     assert ('start_gateway', 'rtp_agt_a', None) in runtime.calls
+    assert db_session.runtime_states[0].gateway_started_at == datetime(
+        2026, 4, 29, 10, 3, tzinfo=timezone(timedelta(hours=8))
+    )
 
 
 @pytest.mark.asyncio

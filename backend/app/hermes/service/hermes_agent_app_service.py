@@ -327,7 +327,7 @@ class HermesAgentAppService:
                 profile_name=agent.profile_name,
                 gateway_status=agent.gateway_status,
                 gateway_restart_count=(gateway or {}).get('restart_count', 0),
-                gateway_started_at=(gateway or {}).get('started_at'),
+                gateway_started_at=_parse_datetime((gateway or {}).get('started_at')),
                 api_server_reachable=(gateway or {}).get('api_server_reachable', True),
                 terminal_backend='docker',
                 container_workspace=runtime.get('container_workspace') or '/workspace',
