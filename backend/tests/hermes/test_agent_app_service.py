@@ -148,8 +148,8 @@ async def db_session(monkeypatch):
     return InMemorySession()
 
 
-def _request(user_id: int):
-    return SimpleNamespace(agent_name='福仔', template='assistant', timezone='Asia/Shanghai', soul='# SOUL', user_profile='# USER', auto_start_gateway=True)
+def _request(user_id: int, *, agent_name: str = '福仔'):
+    return SimpleNamespace(agent_name=agent_name, template='assistant', timezone='Asia/Shanghai', soul='# SOUL', user_profile='# USER', auto_start_gateway=True)
 
 
 @pytest.mark.asyncio
@@ -159,8 +159,8 @@ async def test_create_multiple_agents_for_one_user_saves_runtime_profile_and_use
     runtime = FakeRuntimeClient()
     service = HermesAgentAppService(runtime_client=runtime, id_factory=iter(['agt_a', 'agt_b']).__next__)
 
-    first = await service.create_agent(db=db_session, user_id=1001, payload=_request(1001), trace_id='trace-a')
-    second = await service.create_agent(db=db_session, user_id=1001, payload=_request(1001), trace_id='trace-b')
+    first = await service.create_agent(db=db_session, user_id=1001, payload=_request(1001, agent_name='福仔'), trace_id='trace-a')
+    second = await service.create_agent(db=db_session, user_id=1001, payload=_request(1001, agent_name='小福'), trace_id='trace-b')
 
     assert first['agent_id'] == 'agt_a'
     assert second['agent_id'] == 'agt_b'
@@ -173,6 +173,40 @@ async def test_create_multiple_agents_for_one_user_saves_runtime_profile_and_use
     assert db_session.runtime_states[0].gateway_started_at == datetime(
         2026, 4, 29, 10, 3, tzinfo=timezone(timedelta(hours=8))
     )
+
+
+@pytest.mark.asyncio
+async def test_create_duplicate_agent_name_fails_before_runtime_allocation(db_session):
+    from backend.app.hermes.service.hermes_agent_app_service import HermesAgentAppService
+    from backend.common.exception import errors
+
+    runtime = FakeRuntimeClient()
+    service = HermesAgentAppService(runtime_client=runtime, id_factory=iter(['agt_a', 'agt_dup']).__next__)
+
+    await service.create_agent(db=db_session, user_id=1001, payload=_request(1001, agent_name='福仔'), trace_id='trace-a')
+
+    with pytest.raises(errors.ConflictError) as exc:
+        await service.create_agent(db=db_session, user_id=1001, payload=_request(1001, agent_name='福仔'), trace_id='trace-dup')
+
+    assert exc.value.msg == 'Agent 名称已存在，请换一个名称'
+    assert [call[0] for call in runtime.calls].count('ensure_agent') == 1
+    assert len(db_session.hermes_agents) == 1
+
+
+@pytest.mark.asyncio
+async def test_update_duplicate_agent_name_fails_before_renaming(db_session):
+    from backend.app.hermes.service.hermes_agent_app_service import HermesAgentAppService
+    from backend.common.exception import errors
+
+    service = HermesAgentAppService(runtime_client=FakeRuntimeClient(), id_factory=iter(['agt_a', 'agt_b']).__next__)
+    await service.create_agent(db=db_session, user_id=1001, payload=_request(1001, agent_name='福仔'), trace_id='trace-a')
+    await service.create_agent(db=db_session, user_id=1001, payload=_request(1001, agent_name='小福'), trace_id='trace-b')
+
+    with pytest.raises(errors.ConflictError) as exc:
+        await service.update_agent(db=db_session, user_id=1001, agent_id='agt_b', payload={'agent_name': '福仔'}, trace_id='trace-update')
+
+    assert exc.value.msg == 'Agent 名称已存在，请换一个名称'
+    assert db_session.hermes_agents[1].agent_name == '小福'
 
 
 @pytest.mark.asyncio

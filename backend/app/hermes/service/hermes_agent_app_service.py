@@ -133,6 +133,35 @@ class HermesAgentAppService:
         )
         return list(result.scalars().all())
 
+    async def _ensure_agent_name_available(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        agent_name: str,
+        exclude_agent_id: str | None = None,
+    ) -> None:
+        if hasattr(db, 'hermes_agents'):
+            exists = any(
+                item.user_id == user_id
+                and item.agent_name == agent_name
+                and item.deleted_time is None
+                and item.agent_id != exclude_agent_id
+                for item in db.hermes_agents
+            )
+        else:
+            conditions = [
+                HermesAgent.user_id == user_id,
+                HermesAgent.agent_name == agent_name,
+                HermesAgent.deleted_time.is_(None),
+            ]
+            if exclude_agent_id:
+                conditions.append(HermesAgent.agent_id != exclude_agent_id)
+            result = await db.execute(sa.select(HermesAgent.agent_id).where(*conditions).limit(1))
+            exists = result.scalar_one_or_none() is not None
+        if exists:
+            raise errors.ConflictError(msg='Agent 名称已存在，请换一个名称')
+
     async def _record_operation(
         self,
         db: AsyncSession,
@@ -249,6 +278,7 @@ class HermesAgentAppService:
     async def create_agent(self, db: AsyncSession, *, user_id: int, payload: Any, trace_id: str | None = None) -> dict[str, Any]:
         agent_id = self.id_factory()
         now = _now()
+        await self._ensure_agent_name_available(db, user_id=user_id, agent_name=payload.agent_name)
         llm_model = getattr(settings, 'HUANXING_HERMES_PLATFORM_LLM_MODEL', None) or getattr(
             settings, 'HERMES_PLATFORM_LLM_MODEL', 'anthropic/claude-sonnet-4.5'
         )
@@ -415,6 +445,13 @@ class HermesAgentAppService:
     async def update_agent(self, db: AsyncSession, *, user_id: int, agent_id: str, payload: Any, trace_id: str | None = None) -> dict[str, Any]:
         agent = await self._get_owned_agent(db, user_id=user_id, agent_id=agent_id)
         updates = payload.model_dump(exclude_unset=True) if hasattr(payload, 'model_dump') else dict(payload)
+        if updates.get('agent_name') and updates['agent_name'] != agent.agent_name:
+            await self._ensure_agent_name_available(
+                db,
+                user_id=user_id,
+                agent_name=updates['agent_name'],
+                exclude_agent_id=agent_id,
+            )
         for field in ('agent_name', 'timezone'):
             if field in updates and updates[field] is not None:
                 setattr(agent, field, updates[field])
