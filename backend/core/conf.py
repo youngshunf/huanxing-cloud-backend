@@ -111,7 +111,7 @@ class Settings(BaseSettings):
     HUANXING_HERMES_RUNTIME_ID: str = 'hermes-runtime-local'
     HUANXING_HERMES_PLATFORM_LLM_BASE_URL: str = 'https://api.huanxing.ai/api/v1/llm/proxy/v1'
     HUANXING_HERMES_PLATFORM_LLM_API_KEY: str = ''
-    HUANXING_HERMES_PLATFORM_LLM_MODEL: str = 'anthropic/claude-sonnet-4.5'
+    HUANXING_HERMES_PLATFORM_LLM_MODEL: str = 'openai/gpt-5.5'
     HUANXING_HERMES_PLATFORM_LLM_PLAN_ID: str = 'pro_monthly'
 
     # Token

@@ -280,7 +280,7 @@ class HermesAgentAppService:
         now = _now()
         await self._ensure_agent_name_available(db, user_id=user_id, agent_name=payload.agent_name)
         llm_model = getattr(settings, 'HUANXING_HERMES_PLATFORM_LLM_MODEL', None) or getattr(
-            settings, 'HERMES_PLATFORM_LLM_MODEL', 'anthropic/claude-sonnet-4.5'
+            settings, 'HERMES_PLATFORM_LLM_MODEL', 'openai/gpt-5.5'
         )
         agent = _new(
             HermesAgent,
