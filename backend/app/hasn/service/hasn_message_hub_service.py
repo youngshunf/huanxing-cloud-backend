@@ -70,15 +70,44 @@ class RuntimeSummary:
     binding_id: str | None = None
     runtime_type: str | None = None
     summary_json: dict[str, Any] = field(default_factory=dict)
+    node_id: str | None = None
+    binding_node_id: str | None = None
+    presence: str | None = None
 
     @property
-    def is_dispatchable(self) -> bool:
+    def is_reachable(self) -> bool:
+        binding_node_id = self.binding_node_id or self.node_id
+        same_node = self.node_id is None or binding_node_id == self.node_id
+        presence_online = self.presence in {None, '', 'online'}
         return (
-            self.runtime_status in {'online', 'active'}
+            self.runtime_status in {'online', 'active', 'degraded'}
             and self.adapter_registered
             and self.handle_available
             and bool(self.binding_id)
+            and same_node
+            and presence_online
         )
+
+    @property
+    def is_dispatchable(self) -> bool:
+        return self.is_reachable
+
+    @property
+    def unreachable_reason(self) -> str:
+        if not self.binding_id:
+            return 'NoRuntimeBinding'
+        binding_node_id = self.binding_node_id or self.node_id
+        if self.node_id is not None and binding_node_id != self.node_id:
+            return 'RuntimeBindingNodeMismatch'
+        if self.presence not in {None, '', 'online'}:
+            return 'PresenceOffline'
+        if self.runtime_status not in {'online', 'active', 'degraded'}:
+            return 'RuntimeOffline'
+        if not self.adapter_registered:
+            return 'RuntimeAdapterMissing'
+        if not self.handle_available:
+            return 'RuntimeHandleUnavailable'
+        return 'AgentUnreachable'
 
 
 @dataclass(slots=True)
@@ -131,6 +160,9 @@ class MessageHubGateway(Protocol):
     async def pull_inbox(
         self, db: AsyncSession, request: InboxPullRequest, *, limit: int = 100
     ) -> InboxPullResponse: ...
+    async def mark_dispatch_status(
+        self, db: AsyncSession, *, message_id: str, dispatch_status: str
+    ) -> None: ...
 
 
 class FanoutGateway(Protocol):
@@ -349,7 +381,8 @@ class SqlAlchemyMessageHubGateway:
                        handle_available,
                        binding_id,
                        runtime_type,
-                       summary_json
+                       summary_json,
+                       node_id
                 FROM public.hasn_agent_runtime_reports
                 WHERE owner_id = :owner_id
                   AND agent_hasn_id = :agent_hasn_id
@@ -370,6 +403,13 @@ class SqlAlchemyMessageHubGateway:
             binding_id=row.get('binding_id'),
             runtime_type=row.get('runtime_type'),
             summary_json=_redact_runtime_summary(row.get('summary_json') or {}),
+            node_id=row.get('node_id'),
+            binding_node_id=(row.get('summary_json') or {}).get('binding_node_id')
+            if isinstance(row.get('summary_json'), dict)
+            else None,
+            presence=(row.get('summary_json') or {}).get('presence')
+            if isinstance(row.get('summary_json'), dict)
+            else None,
         )
 
     async def store_suppressed(
@@ -477,6 +517,22 @@ class SqlAlchemyMessageHubGateway:
         )
         return list(result.mappings().all())
 
+    async def mark_dispatch_status(
+        self, db: AsyncSession, *, message_id: str, dispatch_status: str
+    ) -> None:
+        await db.execute(
+            sa.text(
+                '''
+                UPDATE public.hasn_messages
+                SET dispatch_status = :dispatch_status,
+                    updated_time = now()
+                WHERE id = CAST(:message_id AS bigint)
+                   OR owner_copy_of_message_id = CAST(:message_id AS bigint)
+                '''
+            ),
+            {'message_id': message_id, 'dispatch_status': dispatch_status},
+        )
+
     async def _pull_suppressed_rows(
         self, db: AsyncSession, owner_id: str, cursor_id: int | None, limit: int
     ) -> list[dict[str, Any]]:
@@ -540,7 +596,11 @@ class HasnMessageHubService:
                 owner_id=recipient.owner_id,
                 agent_hasn_id=recipient.hasn_id,
             )
-            dispatch_status = 'dispatched' if runtime and runtime.is_dispatchable else 'runtime_unavailable'
+            if runtime is None:
+                raise errors.RequestError(msg='AgentUnreachable: NoRuntimeBinding')
+            if not runtime.is_reachable:
+                raise errors.RequestError(msg=f'AgentUnreachable: {runtime.unreachable_reason}')
+            dispatch_status = 'dispatched'
 
         primary_kind = 'agent_inbox' if recipient.entity_type == 'agent' else 'human_inbox'
         primary = await self.gateway.store_inbox_message(
@@ -588,25 +648,34 @@ class HasnMessageHubService:
 
         warnings: list[ErrorObject] = []
         suppressed_created = False
-        if recipient.entity_type == 'agent' and dispatch_status == 'runtime_unavailable':
-            await self.gateway.store_suppressed(
-                db,
-                source_message=primary,
-                reason=_runtime_suppress_reason(runtime),
-                dispatch_status=dispatch_status,
-                runtime_summary=runtime,
-            )
-            suppressed_created = True
-            warnings.append(_RUNTIME_UNAVAILABLE_WARNING)
-
         payload = _message_received_payload(primary, recipient, envelope)
         await self.fanout.push(recipient.hasn_id, payload)
         if owner_copy:
             await self.fanout.push(recipient.owner_id, _message_received_payload(owner_copy, recipient, envelope))
 
         if recipient.entity_type == 'agent' and dispatch_status == 'dispatched' and runtime:
-            dispatched = await self.runtime_dispatcher.dispatch(recipient.hasn_id, payload, runtime)
+            try:
+                dispatched = await self.runtime_dispatcher.dispatch(recipient.hasn_id, payload, runtime)
+            except Exception:
+                dispatched = False
             if not dispatched:
+                dispatch_status = 'dispatch_failed'
+                primary.dispatch_status = dispatch_status
+                if owner_copy:
+                    owner_copy.dispatch_status = dispatch_status
+                await self.gateway.mark_dispatch_status(
+                    db,
+                    message_id=primary.message_id,
+                    dispatch_status=dispatch_status,
+                )
+                await self.gateway.store_suppressed(
+                    db,
+                    source_message=primary,
+                    reason='runtime_unavailable_after_accept',
+                    dispatch_status=dispatch_status,
+                    runtime_summary=runtime,
+                )
+                suppressed_created = True
                 warnings.append(_RUNTIME_DISPATCH_FAILED_WARNING)
 
         if suppressed_created:

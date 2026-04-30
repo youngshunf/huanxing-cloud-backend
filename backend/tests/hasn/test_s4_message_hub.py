@@ -59,7 +59,13 @@ class InMemoryS4Gateway:
         dispatch_status: str,
         runtime_summary: RuntimeSummary | None,
     ) -> None:
+        source_message.dispatch_status = dispatch_status
         self.suppressed.append(source_message)
+
+    async def mark_dispatch_status(self, db: Any, *, message_id: str, dispatch_status: str) -> None:
+        for message in self.messages:
+            if message.message_id == message_id or message.inbox_kind == 'owner_copy':
+                message.dispatch_status = dispatch_status
 
     async def pull_inbox(self, db: Any, request: InboxPullRequest, *, limit: int = 100):
         from backend.app.hasn.schema.hasn_message_hub import InboxItem, InboxPullResponse
@@ -138,40 +144,30 @@ def _service(gateway: InMemoryS4Gateway, fanout: MultiNodeFanout, runtime=None, 
     )
 
 
-async def test_runtime_less_to_agent_writes_agent_owner_copy_and_suppressed_inbox() -> None:
+async def test_unbound_agent_is_rejected_before_agent_inbox_or_suppressed_inbox() -> None:
     gateway = InMemoryS4Gateway(
         recipients={'a_agent': Recipient('a_agent', 'agent', 'h_owner', 'agent')},
     )
     fanout = MultiNodeFanout(online_nodes={'h_owner': ['node-a', 'node-b']})
     service = _service(gateway, fanout)
 
-    response = await service.send(
-        None,
-        MessageHubSendRequest(
-            owner_id='h_sender',
-            envelope={
-                'conversation_id': CONVERSATION_ID,
-                'from_id': 'h_sender',
-                'to_id': 'a_agent',
-                'content': {'text': 'hello agent'},
-            },
-        ),
-    )
+    with pytest.raises(Exception, match='AgentUnreachable: NoRuntimeBinding'):
+        await service.send(
+            None,
+            MessageHubSendRequest(
+                owner_id='h_sender',
+                envelope={
+                    'conversation_id': CONVERSATION_ID,
+                    'from_id': 'h_sender',
+                    'to_id': 'a_agent',
+                    'content': {'text': 'hello agent'},
+                },
+            ),
+        )
 
-    assert response.delivery_status == 'delivered'
-    assert response.dispatch_status == 'runtime_unavailable'
-    assert response.owner_copy_created is True
-    assert response.suppressed_inbox_created is True
-    assert [warning.name for warning in response.warnings] == ['ERR_RUNTIME_UNAVAILABLE_NON_BLOCKING']
-
-    assert [(m.inbox_kind, m.owner_id, m.hasn_id) for m in gateway.messages] == [
-        ('agent_inbox', 'h_owner', 'a_agent'),
-        ('owner_copy', 'h_owner', 'h_owner'),
-    ]
-    assert gateway.suppressed == [gateway.messages[0]]
-    assert {m.conversation_id for m in [*gateway.messages, *gateway.suppressed]} == {CONVERSATION_ID}
-    assert [target for target, _ in fanout.pushes] == ['a_agent', 'h_owner', 'h_owner']
-    assert fanout.delivered_nodes['h_owner'] == ['node-a', 'node-b', 'node-a', 'node-b']
+    assert gateway.messages == []
+    assert gateway.suppressed == []
+    assert fanout.pushes == []
 
 
 async def test_owner_inbox_fanout_targets_owner_multi_node_route_without_runtime() -> None:
@@ -205,11 +201,20 @@ async def test_owner_inbox_fanout_targets_owner_multi_node_route_without_runtime
 
 
 async def test_suppressed_inbox_pull_is_owner_multi_device_consistent_and_same_conversation() -> None:
+    runtime = RuntimeSummary(
+        agent_hasn_id='a_agent',
+        runtime_status='online',
+        adapter_registered=True,
+        handle_available=True,
+        binding_id='rb_1',
+        runtime_type='hermes',
+    )
     gateway = InMemoryS4Gateway(
         recipients={'a_agent': Recipient('a_agent', 'agent', 'h_owner', 'agent')},
+        runtimes={'a_agent': runtime},
     )
     fanout = MultiNodeFanout(online_nodes={'h_owner': ['desktop', 'web']})
-    service = _service(gateway, fanout)
+    service = _service(gateway, fanout, runtime=CapturingRuntimeDispatcher(ok=False))
 
     await service.send(
         None,

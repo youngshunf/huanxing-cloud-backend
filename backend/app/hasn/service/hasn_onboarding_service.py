@@ -47,7 +47,7 @@ SMS_CODE_EXPIRE = 1800
 SMS_RATE_PREFIX = 'sms_rate'
 SMS_RATE_EXPIRE = 60
 
-DEFAULT_AGENT_NAME = 'default'
+DEFAULT_AGENT_NAME = 'assistant'
 DEFAULT_AGENT_DISPLAY_NAME = '唤星默认 Agent'
 DEFAULT_AGENT_DESCRIPTION = 'HASN onboarding 默认 Agent，用于承接首次登录后的基础会话与 pending intent。'
 DEFAULT_AGENT_TEMPLATE: dict[str, Any] = {
