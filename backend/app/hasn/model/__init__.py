@@ -12,3 +12,11 @@ from backend.app.hasn.model.hasn_audit_log import HasnAuditLog as HasnAuditLog
 from backend.app.hasn.model.hasn_nodes import HasnNodes as HasnNodes
 from backend.app.hasn.model.hasn_owner_api_keys import HasnOwnerApiKeys as HasnOwnerApiKeys
 from backend.app.hasn.model.hasn_node_bindings import HasnNodeBindings as HasnNodeBindings
+from backend.app.hasn.model.hasn_agent_runtime_reports import HasnAgentRuntimeReports as HasnAgentRuntimeReports
+from backend.app.hasn.model.hasn_channel_bindings import HasnChannelBindings as HasnChannelBindings
+from backend.app.hasn.model.hasn_clients import HasnClients as HasnClients
+from backend.app.hasn.model.hasn_pending_intents import HasnPendingIntents as HasnPendingIntents
+from backend.app.hasn.model.hasn_suppressed_messages import HasnSuppressedMessages as HasnSuppressedMessages
+from backend.app.hasn.model.hasn_sync_events import HasnSyncEvents as HasnSyncEvents
+from backend.app.hasn.model.hasn_sync_inbox_events import HasnSyncInboxEvents as HasnSyncInboxEvents
+from backend.app.hasn.model.hasn_tenant_sandboxes import HasnTenantSandboxes as HasnTenantSandboxes

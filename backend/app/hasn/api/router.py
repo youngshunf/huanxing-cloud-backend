@@ -19,6 +19,14 @@ from backend.app.hasn.api.v1.admin.hasn_audit_log import router as admin_hasn_au
 from backend.app.hasn.api.v1.admin.hasn_nodes import router as admin_hasn_nodes_router
 from backend.app.hasn.api.v1.admin.hasn_owner_api_keys import router as admin_hasn_owner_api_keys_router
 from backend.app.hasn.api.v1.admin.hasn_node_bindings import router as admin_hasn_node_bindings_router
+from backend.app.hasn.api.v1.admin.hasn_agent_runtime_reports import router as admin_hasn_agent_runtime_reports_router
+from backend.app.hasn.api.v1.admin.hasn_channel_bindings import router as admin_hasn_channel_bindings_router
+from backend.app.hasn.api.v1.admin.hasn_clients import router as admin_hasn_clients_router
+from backend.app.hasn.api.v1.admin.hasn_pending_intents import router as admin_hasn_pending_intents_router
+from backend.app.hasn.api.v1.admin.hasn_suppressed_messages import router as admin_hasn_suppressed_messages_router
+from backend.app.hasn.api.v1.admin.hasn_sync_events import router as admin_hasn_sync_events_router
+from backend.app.hasn.api.v1.admin.hasn_sync_inbox_events import router as admin_hasn_sync_inbox_events_router
+from backend.app.hasn.api.v1.admin.hasn_tenant_sandboxes import router as admin_hasn_tenant_sandboxes_router
 
 v1 = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn', tags=['HASN 管理端'])
 
@@ -38,6 +46,14 @@ v1.include_router(admin_hasn_audit_log_router, prefix='/audit/logs', tags=['审�
 v1.include_router(admin_hasn_nodes_router, prefix='/hasn/nodess', tags=['HASN Node 主-HASN Node 主'])
 v1.include_router(admin_hasn_owner_api_keys_router, prefix='/hasn/owner/api/keyss', tags=['HASN Owner API Key -HASN Owner API Key '])
 v1.include_router(admin_hasn_node_bindings_router, prefix='/hasn/node/bindingss', tags=['HASN Node Owner Binding 租约-HASN Node Owner Binding 租约'])
+v1.include_router(admin_hasn_agent_runtime_reports_router, prefix='/runtime/reports', tags=['HASN Runtime reports'])
+v1.include_router(admin_hasn_channel_bindings_router, prefix='/channel/bindings', tags=['HASN Channel bindings'])
+v1.include_router(admin_hasn_clients_router, prefix='/clients', tags=['HASN Clients'])
+v1.include_router(admin_hasn_pending_intents_router, prefix='/pending/intents', tags=['HASN Pending intents'])
+v1.include_router(admin_hasn_suppressed_messages_router, prefix='/suppressed/messages', tags=['HASN Suppressed messages'])
+v1.include_router(admin_hasn_sync_events_router, prefix='/sync/events', tags=['HASN Sync events'])
+v1.include_router(admin_hasn_sync_inbox_events_router, prefix='/sync/inbox/events', tags=['HASN Sync inbox events'])
+v1.include_router(admin_hasn_tenant_sandboxes_router, prefix='/tenant/sandboxes', tags=['HASN Tenant sandboxes'])
 
 # --- 用户端（仅 JWT） ---
 from backend.app.hasn.api.v1.app.hasn_humans import router as app_hasn_humans_router
