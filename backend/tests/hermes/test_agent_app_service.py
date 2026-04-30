@@ -38,6 +38,10 @@ class HermesAgentRuntimeStateStub(_StubBase):
 
 class HermesAgentChannelBindingStub(_StubBase):
     updated_time = None
+    runtime_session_id = None
+    expires_at = None
+    metadata_json = None
+    bound_account_display = None
 
 
 class HermesAgentOperationStub(_StubBase):
@@ -108,6 +112,18 @@ class FakeRuntimeClient:
                 {'channel': 'feishu', 'status': 'bound', 'metadata': {'account_display': 'ou_****1001'}},
                 {'channel': 'weixin', 'status': 'unbound', 'metadata': {}},
             ],
+        }
+
+    async def start_channel_qr(self, runtime_profile_id, channel, payload, trace_id=None):
+        self.calls.append(('start_channel_qr', runtime_profile_id, {'channel': channel, **payload}))
+        return {
+            'profile_id': runtime_profile_id,
+            'session_id': 'feishu_bind_real',
+            'channel': channel,
+            'status': 'waiting_scan',
+            'expires_at': '2026-04-29T10:08:00+08:00',
+            'qr_url': 'https://accounts.feishu.cn/device',
+            'metadata': {'provider': channel, 'domain': 'feishu'},
         }
 
 
@@ -270,3 +286,25 @@ async def test_channels_shape_matches_website_contract_and_chat_syncs_workspace_
     assert state.workspace_file_count == 2
     assert state.workspace_bytes_used == 128
     assert state.host_workspace_display == '/data/huanxing-hermes/workspaces/agt_sync'
+
+
+@pytest.mark.asyncio
+async def test_channel_qr_start_parses_runtime_expiry_timestamp(db_session):
+    from backend.app.hermes.service.hermes_agent_app_service import HermesAgentAppService
+
+    runtime = FakeRuntimeClient()
+    service = HermesAgentAppService(runtime_client=runtime, id_factory=lambda: 'agt_channel_qr')
+    await service.create_agent(db=db_session, user_id=1001, payload=_request(1001), trace_id='trace-create')
+
+    data = await service.channel_action(
+        db=db_session,
+        user_id=1001,
+        agent_id='agt_channel_qr',
+        channel='feishu',
+        action='qr_start',
+        payload={'ttl_seconds': 300},
+        trace_id='trace-qr',
+    )
+
+    assert data['qr_url'].startswith('https://accounts.feishu.cn/')
+    assert db_session.channel_bindings[0].expires_at == datetime(2026, 4, 29, 10, 8, tzinfo=timezone(timedelta(hours=8)))

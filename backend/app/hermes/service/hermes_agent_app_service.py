@@ -593,7 +593,7 @@ class HermesAgentAppService:
             db.add(item)
         item.status = data.get('status', item.status)
         item.runtime_session_id = data.get('session_id', item.runtime_session_id)
-        item.expires_at = data.get('expires_at', item.expires_at)
+        item.expires_at = _parse_datetime(data.get('expires_at')) or item.expires_at
         metadata = data.get('metadata') if isinstance(data.get('metadata'), dict) else {}
         item.metadata_json = _safe_json(metadata)
         item.bound_account_display = metadata.get('account_display') or metadata.get('open_id') or item.bound_account_display
