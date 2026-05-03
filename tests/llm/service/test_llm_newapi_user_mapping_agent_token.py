@@ -300,3 +300,51 @@ async def test_revoke_agent_token_returns_false_when_already_revoked_or_missing(
 
     assert ok is False
     db.flush.assert_not_awaited()
+
+
+# ---------- rotate_agent_token tests ----------
+
+
+@pytest.mark.asyncio
+async def test_rotate_agent_token_revokes_old_then_creates_new(
+    fake_agent_id, fake_user_id, fake_newapi_user_id, fake_raw_token_key,
+):
+    """rotate = revoke 旧 + ensure 新；必须 disable 旧后才 create 新"""
+    call_order: list[str] = []
+
+    fake_revoke = AsyncMock(side_effect=lambda *a, **kw: call_order.append('revoke') or True)
+    fake_ensure = AsyncMock(side_effect=lambda *a, **kw: (
+        call_order.append('ensure'),
+        {
+            'agent_id': fake_agent_id,
+            'newapi_user_id': fake_newapi_user_id,
+            'newapi_token_id': 30002,  # 新 id
+            'token_key_prefix': fake_raw_token_key[:8],
+            'raw_token_key': fake_raw_token_key,
+            'reused': False,
+        },
+    )[1])
+
+    db = AsyncMock()
+    newapi_db = AsyncMock()
+
+    with patch.object(LlmNewapiUserMappingService, 'revoke_agent_token', new=fake_revoke), \
+         patch.object(LlmNewapiUserMappingService, 'ensure_agent_token', new=fake_ensure):
+
+        result = await LlmNewapiUserMappingService.rotate_agent_token(
+            db, newapi_db, agent_id=fake_agent_id, user_id=fake_user_id,
+        )
+
+    # 顺序：revoke 必须在 ensure 之前
+    assert call_order == ['revoke', 'ensure']
+    fake_revoke.assert_awaited_once_with(db, newapi_db, fake_agent_id)
+    fake_ensure.assert_awaited_once()
+    # ensure 调用参数：(db, newapi_db, agent_id=..., user_id=...)
+    ensure_kwargs = fake_ensure.await_args.kwargs
+    assert ensure_kwargs['agent_id'] == fake_agent_id
+    assert ensure_kwargs['user_id'] == fake_user_id
+
+    # 返回新 token
+    assert result['raw_token_key'] == fake_raw_token_key
+    assert result['newapi_token_id'] == 30002
+    assert result['reused'] is False

@@ -404,6 +404,30 @@ class LlmNewapiUserMappingService:
         return True
 
     @staticmethod
+    async def rotate_agent_token(
+        db: AsyncSession,
+        newapi_db: AsyncSession,
+        agent_id: str,
+        user_id: int,
+    ) -> dict:
+        """旋转 Agent token：先撤销旧 token，再签发新 token（§09 §2.2）。
+
+        语义 = revoke_agent_token + ensure_agent_token。
+
+        必须先 disable 旧 token 再 generate 新（避免新旧并存导致泄漏面扩大）。
+        双库 session 不能跨库 transaction，按顺序调用 + 失败补偿即可：
+        - revoke 失败（无未撤销记录）：仍走 ensure，等价于首次签发
+        - ensure 失败：抛出异常，旧 token 已撤销不可恢复（需重新 ensure 重试）
+        """
+        # 1. 撤销旧（如果存在）；返回 False 表示本来就没有未撤销的
+        await LlmNewapiUserMappingService.revoke_agent_token(db, newapi_db, agent_id)
+
+        # 2. 签发新（此时旧记录 revoked_at 已置位，ensure_agent_token 不会复用）
+        return await LlmNewapiUserMappingService.ensure_agent_token(
+            db, newapi_db, agent_id=agent_id, user_id=user_id,
+        )
+
+    @staticmethod
     def tier_to_quota(tier_name: str, features: dict | None = None) -> int:
         """将订阅等级转换为 new-api quota"""
         if features and 'newapi_quota' in features:
