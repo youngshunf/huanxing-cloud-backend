@@ -152,3 +152,60 @@ def test_issue_idempotent_returns_existing_no_raw(test_app, monkeypatch):
     assert data['reused'] is True
     assert data['raw_token_key'] is None
     assert data['token_key_prefix'] == 'hxOldOld'
+
+
+# ------------------------------------------------------------------
+# /revoke-credential
+# ------------------------------------------------------------------
+
+
+def test_revoke_happy_returns_revoked_true(test_app, monkeypatch):
+    """有未撤销 token → revoked=True，revoked_at 是 ISO 8601 字符串"""
+    fake_revoke = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        endpoint_module.llm_newapi_user_mapping_service,
+        'revoke_agent_token',
+        fake_revoke,
+    )
+
+    with TestClient(test_app) as client:
+        resp = client.post(
+            '/api/v1/hermes/internal/llm/revoke-credential',
+            headers=HEADERS_OK,
+            json={'agent_id': 'agt_x'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['agent_id'] == 'agt_x'
+    assert data['revoked'] is True
+    assert isinstance(data['revoked_at'], str) and len(data['revoked_at']) > 10
+
+    # service 收到正确参数
+    fake_revoke.assert_awaited_once()
+    args = fake_revoke.await_args.args
+    # revoke_agent_token(db, newapi_db, agent_id) — 第三个 positional 是 agent_id
+    assert args[2] == 'agt_x'
+
+
+def test_revoke_when_not_exists_returns_revoked_false(test_app, monkeypatch):
+    """无未撤销/已撤销 → revoked=False，revoked_at=None"""
+    fake_revoke = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        endpoint_module.llm_newapi_user_mapping_service,
+        'revoke_agent_token',
+        fake_revoke,
+    )
+
+    with TestClient(test_app) as client:
+        resp = client.post(
+            '/api/v1/hermes/internal/llm/revoke-credential',
+            headers=HEADERS_OK,
+            json={'agent_id': 'agt_unknown'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['agent_id'] == 'agt_unknown'
+    assert data['revoked'] is False
+    assert data['revoked_at'] is None

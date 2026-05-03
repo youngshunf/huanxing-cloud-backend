@@ -67,3 +67,30 @@ async def issue_credential(
             'issued_at': _tz.now().isoformat(),
         }
     )
+
+
+class RevokeCredentialPayload(BaseModel):
+    agent_id: str = Field(..., min_length=1, max_length=64)
+
+
+@router.post(
+    '/revoke-credential',
+    summary='Hermes runtime: 撤销 Agent 当前 newapi 凭证（§09 §5）',
+    dependencies=[Depends(require_runtime_internal_token)],
+)
+async def revoke_credential(
+    db: CurrentSession,
+    newapi_db: NewApiSession,
+    payload: RevokeCredentialPayload,
+) -> ResponseModel:
+    """撤销 Agent 当前未撤销的 token。幂等：已撤销/不存在 → revoked=False。"""
+    revoked = await llm_newapi_user_mapping_service.revoke_agent_token(
+        db, newapi_db, payload.agent_id,
+    )
+    return response_base.success(
+        data={
+            'agent_id': payload.agent_id,
+            'revoked': revoked,
+            'revoked_at': _tz.now().isoformat() if revoked else None,
+        }
+    )
