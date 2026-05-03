@@ -348,3 +348,81 @@ async def test_rotate_agent_token_revokes_old_then_creates_new(
     assert result['raw_token_key'] == fake_raw_token_key
     assert result['newapi_token_id'] == 30002
     assert result['reused'] is False
+
+
+# ---------- get_usage_summary_by_agent tests ----------
+
+
+@pytest.mark.asyncio
+async def test_get_usage_summary_by_agent_resolves_token_id_then_calls_dao(
+    fake_agent_id, fake_newapi_token_id,
+):
+    """先按 agent_id 反查 hermes_agent_llm_token，拿 newapi_token_id 后调 dao"""
+    record = MagicMock()
+    record.agent_id = fake_agent_id
+    record.newapi_token_id = fake_newapi_token_id
+
+    db = _make_db_returning(record)
+    newapi_db = AsyncMock()
+
+    fake_rows = [
+        {
+            'model_name': 'anthropic/claude-sonnet-4.5',
+            'prompt_tokens': 1280,
+            'completion_tokens': 640,
+            'quota': 1920,
+            'request_count': 5,
+        },
+    ]
+
+    from backend.app.llm.service import llm_newapi_user_mapping_service as svc_mod
+    with patch.object(
+        svc_mod.newapi_direct_dao,
+        'get_usage_summary_by_token',
+        new=AsyncMock(return_value=fake_rows),
+    ) as mocked:
+        result = await LlmNewapiUserMappingService.get_usage_summary_by_agent(
+            db, newapi_db,
+            agent_id=fake_agent_id,
+            start_time=1714724000,
+            end_time=1714810400,
+        )
+
+        mocked.assert_awaited_once_with(
+            newapi_db, fake_newapi_token_id, 1714724000, 1714810400,
+        )
+
+    assert result == {
+        'agent_id': fake_agent_id,
+        'period': [1714724000, 1714810400],
+        'by_model': fake_rows,
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_usage_summary_by_agent_returns_empty_when_no_record(
+    fake_agent_id,
+):
+    """无 hermes_agent_llm_token 记录 → 返回空 by_model，不调 dao"""
+    db = _make_db_returning(None)
+    newapi_db = AsyncMock()
+
+    from backend.app.llm.service import llm_newapi_user_mapping_service as svc_mod
+    with patch.object(
+        svc_mod.newapi_direct_dao,
+        'get_usage_summary_by_token',
+        new=AsyncMock(),
+    ) as mocked:
+        result = await LlmNewapiUserMappingService.get_usage_summary_by_agent(
+            db, newapi_db,
+            agent_id=fake_agent_id,
+            start_time=0,
+            end_time=1,
+        )
+        mocked.assert_not_awaited()
+
+    assert result == {
+        'agent_id': fake_agent_id,
+        'period': [0, 1],
+        'by_model': [],
+    }

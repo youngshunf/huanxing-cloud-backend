@@ -428,6 +428,39 @@ class LlmNewapiUserMappingService:
         )
 
     @staticmethod
+    async def get_usage_summary_by_agent(
+        db: AsyncSession,
+        newapi_db: AsyncSession,
+        agent_id: str,
+        start_time: int,
+        end_time: int,
+    ) -> dict:
+        """per-Agent 用量明细（§09 §2.2）。
+
+        包括已撤销记录（历史用量保留），按 newapi_token_id 反查 logs 表。
+        """
+        stmt = select(HermesAgentLlmToken).where(
+            HermesAgentLlmToken.agent_id == agent_id,
+        )
+        result = await db.execute(stmt)
+        record = result.scalar_one_or_none()
+        if not record:
+            return {
+                'agent_id': agent_id,
+                'period': [start_time, end_time],
+                'by_model': [],
+            }
+
+        rows = await newapi_direct_dao.get_usage_summary_by_token(
+            newapi_db, record.newapi_token_id, start_time, end_time,
+        )
+        return {
+            'agent_id': agent_id,
+            'period': [start_time, end_time],
+            'by_model': rows,
+        }
+
+    @staticmethod
     def tier_to_quota(tier_name: str, features: dict | None = None) -> int:
         """将订阅等级转换为 new-api quota"""
         if features and 'newapi_quota' in features:
