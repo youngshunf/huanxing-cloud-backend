@@ -2,6 +2,7 @@
 CREATE TABLE "public"."marketplace_app" (
   "id" bigserial PRIMARY KEY,
   "app_id" varchar(100) COLLATE "pg_catalog"."default" NOT NULL,
+  "app_type" varchar(20) COLLATE "pg_catalog"."default" NOT NULL DEFAULT 'agent_template',
   "name" varchar(200) COLLATE "pg_catalog"."default" NOT NULL,
   "description" text COLLATE "pg_catalog"."default",
   "icon_url" varchar(500) COLLATE "pg_catalog"."default",
@@ -25,9 +26,11 @@ CREATE TABLE "public"."marketplace_app" (
 CREATE INDEX "idx_marketplace_app_author_id" ON "public"."marketplace_app" ("author_id");
 CREATE INDEX "idx_marketplace_app_pricing_type" ON "public"."marketplace_app" ("pricing_type");
 CREATE INDEX "idx_marketplace_app_download_count" ON "public"."marketplace_app" ("download_count" DESC);
+CREATE INDEX "idx_marketplace_app_app_type" ON "public"."marketplace_app" ("app_type");
 
 COMMENT ON COLUMN "public"."marketplace_app"."id" IS '主键 ID';
 COMMENT ON COLUMN "public"."marketplace_app"."app_id" IS '应用唯一标识';
+COMMENT ON COLUMN "public"."marketplace_app"."app_type" IS '应用类型 (agent_template:Agent模板:blue/skill_pack:技能包:cyan/sop_pack:SOP包:purple)';
 COMMENT ON COLUMN "public"."marketplace_app"."name" IS '应用名称';
 COMMENT ON COLUMN "public"."marketplace_app"."description" IS '应用描述';
 COMMENT ON COLUMN "public"."marketplace_app"."icon_url" IS '应用图标URL';
