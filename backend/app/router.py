@@ -1,4 +1,4 @@
-from backend.app.hermes.api.router import v1 as hermes_v1, app as hermes_app
+from backend.app.hermes.api.router import v1 as hermes_v1, app as hermes_app, internal as hermes_internal
 from backend.app.hasn.api.router import v1 as hasn_v1, app as hasn_app, agent as hasn_agent, open_api as hasn_open, ws as hasn_ws
 from fastapi import APIRouter
 from backend.app.admin.api.router import v1 as admin_v1, client as admin_client
@@ -54,6 +54,7 @@ router.include_router(hasn_ws)            # HASN WebSocket 端点
 # Hermes（后台管理 CRUD；用户端 /hermes/app/agents 后续手写编排 API）
 router.include_router(hermes_v1)
 router.include_router(hermes_app)
+router.include_router(hermes_internal)    # runtime ↔ backend 内部 service token 调用（X-Internal-Token）
 
 # 移动端 App API (M1: /api/v1/app/...)
 router.include_router(mobile_app_v1_router)  # 移动端用户端 API (owner_api_keys/current 等)

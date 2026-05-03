@@ -10,6 +10,9 @@ from backend.app.hermes.api.v1.admin.hermes_agent_operation import router as adm
 from backend.app.hermes.api.v1.admin.hermes_agent_llm_token import router as admin_hermes_agent_llm_token_router
 from backend.app.hermes.api.v1.app.agents import router as app_agents_router
 
+# --- runtime ↔ backend 内部 service token 调用（X-Internal-Token） ---
+from backend.app.hermes.api.v1.internal.llm_credential import router as internal_llm_credential_router
+
 # ========================================
 # 管理端 API（JWT + RBAC）
 # 路径前缀: /api/v1/hermes/
@@ -31,3 +34,18 @@ v1.include_router(admin_hermes_agent_llm_token_router, prefix='/hermes/agent/llm
 # ========================================
 app = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hermes/app', tags=['Hermes 用户端'])
 app.include_router(app_agents_router, prefix='/agents', tags=['Hermes Agent'])
+
+
+# ========================================
+# Internal API（runtime ↔ backend 单向 service token，仅 X-Internal-Token，不暴露浏览器）
+# 路径前缀: /api/v1/hermes/internal
+# ========================================
+internal = APIRouter(
+    prefix=f'{settings.FASTAPI_API_V1_PATH}/hermes/internal',
+    tags=['Hermes Internal (runtime ↔ backend)'],
+)
+internal.include_router(
+    internal_llm_credential_router,
+    prefix='/llm',
+    tags=['Hermes Internal LLM 凭证'],
+)
