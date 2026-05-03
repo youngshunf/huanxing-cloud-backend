@@ -7,6 +7,7 @@ from backend.app.hermes.api.v1.admin.hermes_agent import router as admin_hermes_
 from backend.app.hermes.api.v1.admin.hermes_agent_runtime_state import router as admin_hermes_agent_runtime_state_router
 from backend.app.hermes.api.v1.admin.hermes_agent_channel_binding import router as admin_hermes_agent_channel_binding_router
 from backend.app.hermes.api.v1.admin.hermes_agent_operation import router as admin_hermes_agent_operation_router
+from backend.app.hermes.api.v1.admin.hermes_agent_llm_token import router as admin_hermes_agent_llm_token_router
 from backend.app.hermes.api.v1.app.agents import router as app_agents_router
 
 # ========================================
@@ -19,6 +20,7 @@ v1.include_router(admin_hermes_agent_router, prefix='/hermes-agents', tags=['Her
 v1.include_router(admin_hermes_agent_runtime_state_router, prefix='/hermes/agent/runtime/states', tags=['Hermes Agent Runtime 状态-Hermes Agent Runtime 状态'])
 v1.include_router(admin_hermes_agent_channel_binding_router, prefix='/hermes/agent/channel/bindings', tags=['Hermes Agent 渠道绑定-Hermes Agent 渠道绑定'])
 v1.include_router(admin_hermes_agent_operation_router, prefix='/hermes/agent/operations', tags=['Hermes Agent 操作记录-Hermes Agent 操作记录'])
+v1.include_router(admin_hermes_agent_llm_token_router, prefix='/hermes/agent/llm/tokens', tags=['Hermes Agent 级 LLM token 隔离记录-Hermes Agent 级 LLM token 隔离记录'])
 
 
 
