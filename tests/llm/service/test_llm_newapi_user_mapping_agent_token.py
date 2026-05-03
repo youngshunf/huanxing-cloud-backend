@@ -235,3 +235,68 @@ async def test_token_key_sha256_persisted_not_raw(
     # prefix 是前 8 字符
     assert record.token_key_prefix == fake_raw_token_key[:8]
     assert len(record.token_key_prefix) == 8
+
+
+# ---------- revoke_agent_token tests ----------
+
+
+def _patch_disable_newapi_token(return_value: bool = True):
+    from backend.app.llm.service import llm_newapi_user_mapping_service as svc_mod
+
+    return patch.object(
+        svc_mod.newapi_direct_dao,
+        'disable_newapi_token',
+        new=AsyncMock(return_value=return_value),
+    )
+
+
+@pytest.mark.asyncio
+async def test_revoke_agent_token_calls_disable_newapi_token_and_marks_revoked_at(
+    fake_agent_id, fake_newapi_token_id,
+):
+    """有未撤销记录 → 调 disable_newapi_token + UPDATE revoked_at = NOW()，返回 True"""
+    existing = MagicMock()
+    existing.agent_id = fake_agent_id
+    existing.newapi_token_id = fake_newapi_token_id
+    existing.token_key_prefix = 'hxAbCdEf'
+    existing.revoked_at = None
+
+    db = _make_db_returning(existing)
+    newapi_db = AsyncMock()
+
+    with _patch_disable_newapi_token(return_value=True):
+        from backend.app.llm.service import llm_newapi_user_mapping_service as svc_mod
+        ok = await LlmNewapiUserMappingService.revoke_agent_token(db, newapi_db, fake_agent_id)
+
+        # newapi 侧 UPDATE tokens SET status = 2
+        svc_mod.newapi_direct_dao.disable_newapi_token.assert_awaited_once_with(
+            newapi_db, fake_newapi_token_id,
+        )
+
+    assert ok is True
+
+    # huanxing 侧两次 execute：1 次 SELECT（查 existing） + 1 次 UPDATE
+    assert db.execute.await_count == 2
+    update_clause = db.execute.await_args_list[1].args[0]
+    update_sql = str(update_clause)
+    assert 'UPDATE' in update_sql.upper()
+    assert 'hermes_agent_llm_token' in update_sql
+
+    db.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_revoke_agent_token_returns_false_when_already_revoked_or_missing(
+    fake_agent_id,
+):
+    """无未撤销记录（已 revoked 或不存在）→ 不调 disable，返回 False，幂等"""
+    db = _make_db_returning(None)
+    newapi_db = AsyncMock()
+
+    with _patch_disable_newapi_token() as _:
+        from backend.app.llm.service import llm_newapi_user_mapping_service as svc_mod
+        ok = await LlmNewapiUserMappingService.revoke_agent_token(db, newapi_db, fake_agent_id)
+        svc_mod.newapi_direct_dao.disable_newapi_token.assert_not_awaited()
+
+    assert ok is False
+    db.flush.assert_not_awaited()

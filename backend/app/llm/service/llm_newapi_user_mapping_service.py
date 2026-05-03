@@ -359,6 +359,51 @@ class LlmNewapiUserMappingService:
         }
 
     @staticmethod
+    async def revoke_agent_token(
+        db: AsyncSession,
+        newapi_db: AsyncSession,
+        agent_id: str,
+    ) -> bool:
+        """撤销 Agent 当前 token（§09 §2.2）。
+
+        - 查 hermes_agent_llm_token 存在且 revoked_at IS NULL → 拿 newapi_token_id
+        - 调 newapi_direct_dao.disable_newapi_token(newapi_db, token_id) 软禁用
+        - UPDATE hermes_agent_llm_token SET revoked_at = NOW() WHERE agent_id = ?
+          AND revoked_at IS NULL
+        - 不存在或已撤销返回 False；成功撤销返回 True
+        """
+        stmt = select(HermesAgentLlmToken).where(
+            HermesAgentLlmToken.agent_id == agent_id,
+            HermesAgentLlmToken.revoked_at.is_(None),
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+        if not existing:
+            return False
+
+        # 1. 在 newapi 库软禁用 token（UPDATE tokens SET status = 2）
+        await newapi_direct_dao.disable_newapi_token(newapi_db, existing.newapi_token_id)
+
+        # 2. 在唤星库标记 revoked_at = NOW()（用 timezone.now() 与表 timestamptz 对齐）
+        from backend.utils.timezone import timezone as _tz
+        update_stmt = (
+            update(HermesAgentLlmToken)
+            .where(
+                HermesAgentLlmToken.agent_id == agent_id,
+                HermesAgentLlmToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=_tz.now())
+        )
+        await db.execute(update_stmt)
+        await db.flush()
+
+        log.info(
+            f'[NewApi] Agent {agent_id} token 已撤销：'
+            f'newapi_token_id={existing.newapi_token_id}, prefix={existing.token_key_prefix}'
+        )
+        return True
+
+    @staticmethod
     def tier_to_quota(tier_name: str, features: dict | None = None) -> int:
         """将订阅等级转换为 new-api quota"""
         if features and 'newapi_quota' in features:
