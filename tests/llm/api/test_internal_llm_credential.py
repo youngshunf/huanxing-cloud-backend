@@ -209,3 +209,62 @@ def test_revoke_when_not_exists_returns_revoked_false(test_app, monkeypatch):
     assert data['agent_id'] == 'agt_unknown'
     assert data['revoked'] is False
     assert data['revoked_at'] is None
+
+
+# ------------------------------------------------------------------
+# /rotate-credential
+# ------------------------------------------------------------------
+
+
+def test_rotate_revokes_old_returns_new_raw(test_app, monkeypatch):
+    """rotate 调 service.rotate_agent_token，返回新 raw_token_key + 新 newapi_token_id。
+
+    底层 service 已保证先 revoke 后 ensure（service 层单测覆盖）；
+    端点层只断言 endpoint 调用 rotate_agent_token 并把结果转 JSON。
+    """
+    new_raw = 'hxNewNewN' + 'B' * 39
+    fake_rotated = {
+        'agent_id': 'agt_x',
+        'newapi_user_id': 200001,
+        'newapi_token_id': 300002,  # 新 token id（不同于旧的 300001）
+        'token_key_prefix': new_raw[:8],
+        'raw_token_key': new_raw,
+        'reused': False,
+    }
+    fake_rotate = AsyncMock(return_value=fake_rotated)
+    monkeypatch.setattr(
+        endpoint_module.llm_newapi_user_mapping_service,
+        'rotate_agent_token',
+        fake_rotate,
+    )
+
+    with TestClient(test_app) as client:
+        resp = client.post(
+            '/api/v1/hermes/internal/llm/rotate-credential',
+            headers=HEADERS_OK,
+            json={'agent_id': 'agt_x', 'user_id': 42},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['agent_id'] == 'agt_x'
+    assert data['newapi_user_id'] == 200001
+    assert data['newapi_token_id'] == 300002
+    assert data['token_key_prefix'] == new_raw[:8]
+    assert data['raw_token_key'] == new_raw
+    assert isinstance(data['issued_at'], str) and len(data['issued_at']) > 10
+
+    fake_rotate.assert_awaited_once()
+    kwargs = fake_rotate.await_args.kwargs
+    assert kwargs['agent_id'] == 'agt_x'
+    assert kwargs['user_id'] == 42
+
+
+def test_rotate_without_internal_token_returns_401(test_app):
+    """rotate 也必须 X-Internal-Token 校验"""
+    with TestClient(test_app) as client:
+        resp = client.post(
+            '/api/v1/hermes/internal/llm/rotate-credential',
+            json={'agent_id': 'agt_x', 'user_id': 42},
+        )
+    assert resp.status_code == 401, resp.text

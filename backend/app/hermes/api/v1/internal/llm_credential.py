@@ -94,3 +94,39 @@ async def revoke_credential(
             'revoked_at': _tz.now().isoformat() if revoked else None,
         }
     )
+
+
+class RotateCredentialPayload(BaseModel):
+    agent_id: str = Field(..., min_length=1, max_length=64)
+    user_id: int = Field(..., ge=1)
+
+
+@router.post(
+    '/rotate-credential',
+    summary='Hermes runtime: 旋转 Agent newapi 凭证（先撤旧再签新，§09 §5）',
+    dependencies=[Depends(require_runtime_internal_token)],
+)
+async def rotate_credential(
+    db: CurrentSession,
+    newapi_db: NewApiSession,
+    payload: RotateCredentialPayload,
+) -> ResponseModel:
+    """旋转 Agent token：先撤销旧 token，再签发新 token。
+
+    raw_token_key 仅本接口返回；DB 只存 prefix + sha256。
+    """
+    issued = await llm_newapi_user_mapping_service.rotate_agent_token(
+        db, newapi_db,
+        agent_id=payload.agent_id,
+        user_id=payload.user_id,
+    )
+    return response_base.success(
+        data={
+            'agent_id': issued['agent_id'],
+            'newapi_user_id': issued['newapi_user_id'],
+            'newapi_token_id': issued['newapi_token_id'],
+            'token_key_prefix': issued['token_key_prefix'],
+            'raw_token_key': issued['raw_token_key'],
+            'issued_at': _tz.now().isoformat(),
+        }
+    )
