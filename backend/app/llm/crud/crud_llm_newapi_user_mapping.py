@@ -239,6 +239,58 @@ class CRUDNewApiDirect:
 
 
     @staticmethod
+    async def disable_newapi_token(db: AsyncSession, token_id: int) -> bool:
+        """软禁用 new-api token：UPDATE tokens SET status = 2 WHERE id = ?
+
+        不物理 DELETE，保留 logs 关联。返回是否真的更新了行。
+        """
+        result = await db.execute(
+            text('UPDATE tokens SET status = 2 WHERE id = :token_id'),
+            {'token_id': token_id},
+        )
+        return (result.rowcount or 0) > 0
+
+    @staticmethod
+    async def get_usage_summary_by_token(
+        db: AsyncSession,
+        token_id: int,
+        start_time: int,
+        end_time: int,
+    ) -> list[dict]:
+        """按 token_id 查询用量统计，GROUP BY model_name。
+
+        与 get_usage_summary（by user_id）同形，返回字段一致；
+        new-api logs 表已确认含 token_id bigint 列（information_schema 校验）。
+        """
+        result = await db.execute(
+            text("""
+                SELECT model_name,
+                       SUM(prompt_tokens) AS total_prompt_tokens,
+                       SUM(completion_tokens) AS total_completion_tokens,
+                       SUM(quota) AS total_quota,
+                       COUNT(*) AS request_count
+                FROM logs
+                WHERE token_id = :token_id
+                  AND created_at >= :start_time
+                  AND created_at < :end_time
+                  AND type = 2
+                GROUP BY model_name
+                ORDER BY total_quota DESC
+            """),
+            {'token_id': token_id, 'start_time': start_time, 'end_time': end_time},
+        )
+        return [
+            {
+                'model_name': row[0],
+                'prompt_tokens': row[1],
+                'completion_tokens': row[2],
+                'quota': row[3],
+                'request_count': row[4],
+            }
+            for row in result.fetchall()
+        ]
+
+    @staticmethod
     async def get_batch_users_quota(db: AsyncSession, newapi_user_ids: list[int]) -> dict[int, dict]:
         """批量查询多个 new-api 用户的 quota 信息，返回 {newapi_user_id: {...}}"""
         if not newapi_user_ids:
