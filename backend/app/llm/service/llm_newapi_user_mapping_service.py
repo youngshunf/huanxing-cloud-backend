@@ -10,11 +10,14 @@
 - newapi_db (new-api 库): users, tokens, logs 等 new-api 原生表
 """
 
+import hashlib
 import time
 from typing import Any, Sequence
 
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.hermes.model import HermesAgentLlmToken
 from backend.app.llm.crud.crud_llm_newapi_user_mapping import llm_newapi_user_mapping_dao, newapi_direct_dao
 from backend.app.llm.model import LlmNewapiUserMapping
 from backend.app.llm.schema.llm_newapi_user_mapping import (
@@ -269,6 +272,91 @@ class LlmNewapiUserMappingService:
         if not mapping:
             raise errors.NotFoundError(msg='用户未关联 LLM 服务')
         return f'sk-{mapping.newapi_token_key}'
+
+    # ========== Hermes Agent 级 LLM token 隔离（§09）==========
+
+    @staticmethod
+    async def ensure_agent_token(
+        db: AsyncSession,
+        newapi_db: AsyncSession,
+        agent_id: str,
+        user_id: int,
+        *,
+        model_allowlist: list[str] | None = None,
+        rate_limit_rps: int | None = None,
+        per_token_quota: int | None = None,
+        name: str = 'hermes-agent',
+    ) -> dict:
+        """为指定 Agent 签发独立 newapi token（§09 §2.2）。
+
+        db: 唤星库 session，写 hermes_agent_llm_token
+        newapi_db: new-api 库 session，写 users/tokens
+
+        幂等：同 agent_id 已有未撤销记录 → 直接返回，不再下发新 token；
+        raw_token_key 仅在首次签发时返回，DB 只存 prefix + sha256。
+        """
+        # 1. 确保父 user 在 newapi 已注册
+        mapping_info = await LlmNewapiUserMappingService.ensure_newapi_user(db, user_id)
+        newapi_user_id = mapping_info.newapi_user_id
+
+        # 2. 幂等：查现有未撤销记录
+        stmt = select(HermesAgentLlmToken).where(
+            HermesAgentLlmToken.agent_id == agent_id,
+            HermesAgentLlmToken.revoked_at.is_(None),
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+        if existing:
+            return {
+                'agent_id': agent_id,
+                'newapi_user_id': existing.newapi_user_id,
+                'newapi_token_id': existing.newapi_token_id,
+                'token_key_prefix': existing.token_key_prefix,
+                'raw_token_key': None,
+                'reused': True,
+            }
+
+        # 3. 新签：generate raw key + 在 newapi 库创建 token 行
+        raw_token_key = newapi_direct_dao.generate_token_key()
+        newapi_token_id = await newapi_direct_dao.create_newapi_token(
+            newapi_db,
+            user_id=newapi_user_id,
+            token_key=raw_token_key,
+            name=f'{name}:{agent_id}',
+        )
+
+        # 4. 写 hermes_agent_llm_token：只存 prefix + sha256，不存明文
+        token_key_prefix = raw_token_key[:8]
+        token_key_sha256 = hashlib.sha256(raw_token_key.encode()).hexdigest()
+
+        record = HermesAgentLlmToken(
+            agent_id=agent_id,
+            user_id=user_id,
+            newapi_user_id=newapi_user_id,
+            newapi_token_id=newapi_token_id,
+            token_key_prefix=token_key_prefix,
+            token_key_sha256=token_key_sha256,
+            model_allowlist=model_allowlist,
+            rate_limit_rps=rate_limit_rps,
+            per_token_quota_remaining=per_token_quota,
+            runtime_node_id=None,
+        )
+        db.add(record)
+        await db.flush()
+
+        log.info(
+            f'[NewApi] Agent {agent_id} token 已签发：'
+            f'newapi_token_id={newapi_token_id}, prefix={token_key_prefix}'
+        )
+
+        return {
+            'agent_id': agent_id,
+            'newapi_user_id': newapi_user_id,
+            'newapi_token_id': newapi_token_id,
+            'token_key_prefix': token_key_prefix,
+            'raw_token_key': raw_token_key,
+            'reused': False,
+        }
 
     @staticmethod
     def tier_to_quota(tier_name: str, features: dict | None = None) -> int:
