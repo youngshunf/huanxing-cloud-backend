@@ -351,6 +351,35 @@ async def test_create_agent_install_credential_failure_triggers_rollback(monkeyp
     assert 'delete_agent' in call_names
 
 
+@pytest.mark.asyncio
+async def test_create_agent_runtime_ensure_failure_marks_agent_error_and_skips_subsequent_steps():
+    """ensure_agent 抛 HermesRuntimeError → 后续步骤(apply_template/token/install)
+    全部不执行，本地 record status='error'，主异常被 propagate 出去（§5.6 case 4）。"""
+    from backend.app.hermes.service.hermes_runtime_client import HermesRuntimeError
+
+    class _EnsureFailingRuntime(_FullRuntimeClient):
+        async def ensure_agent(self, payload, trace_id=None):
+            self.calls.append(('ensure_agent', payload))
+            raise HermesRuntimeError(
+                error='runtime_unavailable', details='connect timeout', action='retry later'
+            )
+
+    db = _FullSession()
+    runtime = _EnsureFailingRuntime()
+    service = HermesAgentAppService(runtime_client=runtime, id_factory=lambda: 'agt_eof')
+
+    with pytest.raises(HermesRuntimeError) as exc_info:
+        await service.create_agent(db=db, user_id=1001, payload=_full_payload(), trace_id='trace-eof')
+
+    assert exc_info.value.error == 'runtime_unavailable'
+    call_names = [c[0] for c in runtime.calls]
+    assert 'apply_template' not in call_names
+    assert 'install_credential' not in call_names
+    assert db.hermes_agents
+    assert db.hermes_agents[0].status == 'error'
+    assert db.hermes_agents[0].last_error_code == 'runtime_unavailable'
+
+
 # ----- §5.3 delete_agent reverse cleanup -----
 
 
