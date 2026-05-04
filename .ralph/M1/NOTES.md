@@ -1,4 +1,22 @@
-# M1 NOTES — last updated: 2026-05-04T13:30Z
+# M1 NOTES — last updated: 2026-05-04T14:10Z
+
+## Iteration 2 (2026-05-04)
+- 完成：§5.2 (a) BYOK fast-fail + (b) `_resolve_template` helper
+  - `create_agent` 入口加 byok 校验：`payload.llm_mode == 'byok'` → `RequestError`
+  - 新 `HermesAgentAppService._resolve_template(db, template_id)`：JOIN
+    `marketplace_app + marketplace_app_version`，filter `app_type='agent_template'`
+    + `is_latest=True`；同时支持 InMemorySession stub（hasattr 分支）
+- 验收项进度：5.1 [5/5] / 5.2 [2/5 a+b 完成] / 5.3 [0/?] / 5.4 [0/?] / 5.5 [0/?] / 5.6 [14/10 含早期实现] / 5.7 [0/2]
+- 卡点：无
+- 测试 baseline：50 → 56 → 63（含 backend/tests/hermes/ 的 7 个旧测全绿）
+- commit：`8795b99 feat(hermes): create_agent BYOK fast-fail + _resolve_template helper`
+- 下轮第一件事：§5.2 (c)+(d) 把 `_resolve_template` 调用 + `apply_template` +
+  `ensure_agent_token` + `install_credential` 接进 `create_agent` 主流程。
+  顺序：ensure_agent → apply_template → ensure_agent_token → install_credential
+  → start_gateway(可选)。
+  需要 hold 住的兼容性：现有 7 个 `backend/tests/hermes/` 测试用 FakeRuntimeClient
+  不带 4 个新方法，所以 mock 时要加 stub or 在测试里把 `_resolve_template`
+  monkeypatch 掉（否则会去查 marketplace 表）。
 
 ## Iteration 1 (2026-05-04)
 - 完成：§5.1 全部 5/5 验收项落地
