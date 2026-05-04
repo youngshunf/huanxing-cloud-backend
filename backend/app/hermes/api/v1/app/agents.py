@@ -11,18 +11,23 @@ from backend.app.hermes.service.hermes_runtime_client import HermesRuntimeError
 from backend.common.response.response_code import CustomResponse
 from backend.common.response.response_schema import ResponseModel, response_base
 from backend.common.security.jwt import DependsJwtAuth
-from backend.database.db import CurrentSession, CurrentSessionTransaction
+from backend.database.db import (
+    CurrentSession,
+    CurrentSessionTransaction,
+    NewApiSessionTransaction,
+)
 
 router = APIRouter()
 
 
 class CreateAgentPayload(BaseModel):
     agent_name: str = Field(..., min_length=1, max_length=40)
-    template: str = Field('assistant', pattern='^(assistant|office|creator|custom)$')
+    template: str = Field('assistant', pattern=r'^[a-zA-Z0-9_-]{1,64}$')
     timezone: str = Field('Asia/Shanghai')
     soul: str | None = None
     user_profile: str | None = None
     auto_start_gateway: bool = True
+    llm_mode: str = Field('platform', pattern='^(platform|byok)$')
 
 
 class UpdateAgentPayload(BaseModel):
@@ -62,10 +67,19 @@ async def list_agents(
 
 
 @router.post('', summary='创建 Agent', dependencies=[DependsJwtAuth])
-async def create_agent(request: Request, db: CurrentSessionTransaction, payload: CreateAgentPayload) -> ResponseModel:
+async def create_agent(
+    request: Request,
+    db: CurrentSessionTransaction,
+    newapi_db: NewApiSessionTransaction,
+    payload: CreateAgentPayload,
+) -> ResponseModel:
     try:
         data = await hermes_agent_app_service.create_agent(
-            db, user_id=request.user.id, payload=payload, trace_id=_trace_id(request)
+            db,
+            user_id=request.user.id,
+            payload=payload,
+            trace_id=_trace_id(request),
+            newapi_db=newapi_db,
         )
         return response_base.success(data=data)
     except HermesRuntimeError as exc:
