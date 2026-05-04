@@ -9,6 +9,7 @@ from backend.app.hermes.api.v1.admin.hermes_agent_channel_binding import router 
 from backend.app.hermes.api.v1.admin.hermes_agent_operation import router as admin_hermes_agent_operation_router
 from backend.app.hermes.api.v1.admin.hermes_agent_llm_token import router as admin_hermes_agent_llm_token_router
 from backend.app.hermes.api.v1.app.agents import router as app_agents_router
+from backend.app.hermes.api.v1.app.templates import router as app_templates_router
 
 # --- runtime ↔ backend 内部 service token 调用（X-Internal-Token） ---
 from backend.app.hermes.api.v1.internal.llm_credential import router as internal_llm_credential_router
@@ -34,6 +35,7 @@ v1.include_router(admin_hermes_agent_llm_token_router, prefix='/hermes/agent/llm
 # ========================================
 app = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hermes/app', tags=['Hermes 用户端'])
 app.include_router(app_agents_router, prefix='/agents', tags=['Hermes Agent'])
+app.include_router(app_templates_router, prefix='/templates', tags=['Hermes Agent Templates'])
 
 
 # ========================================
