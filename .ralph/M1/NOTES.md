@@ -1,4 +1,33 @@
-# M1 NOTES — last updated: 2026-05-04T14:10Z
+# M1 NOTES — last updated: 2026-05-04T14:30Z
+
+## Iteration 3 (2026-05-04)
+- 完成：§5.2 (c) 把 `_resolve_template` + `runtime.apply_template` 接进 `create_agent` 主流程
+  - create_agent 现在在 ensure_agent_name 之后立即 resolve template；写入
+    `agent.template = template['app_id']`
+  - ensure_agent 成功后立即调 `runtime.apply_template`，把 backend 查到的
+    `package_url + file_hash + render_context` 推给 runtime
+  - `_agent_card` 加 `template + template_version` 字段
+  - 兼容性维护：`backend/tests/hermes/` FakeRuntimeClient 补 `apply_template`
+    方法 + InMemorySession fixture 默认 seed 'assistant' 模板，7 个旧测全绿
+- 验收项进度：5.1 [5/5] / 5.2 [3/5 a+b+c] / 5.3 [0/?] / 5.4 [0/?] / 5.5 [0/?] / 5.6 [21/10 含早期] / 5.7 [0/2]
+- 卡点：无
+- 测试 baseline：63 → 77（tests/ 56 + backend/tests/hermes/ 7 + 其它 backend/tests 14）
+- commit：`8a487af refactor(hermes): create_agent wires _resolve_template + runtime.apply_template`
+- 已知偏差（不破坏 §6 hard rules）：
+  - `hermes_agent` 表当前没有 `template_version` 列；MVP 只在响应 card 暴露
+    （内存层），不写 DB。如要持久化，未来加迁移
+  - service.create_agent 暂时**没**调用 `ensure_agent_token` / `install_credential`，
+    deletion 的反向清理同样未接通
+- 下轮第一件事：§5.2 (d) plumb `newapi_db` 到 `create_agent` 然后串接
+  `ensure_agent_token` + `runtime.install_credential`
+  - 需要修：endpoint `agents.py:create_agent` 加 `newapi_db: NewApiSession` 参数
+  - 需要修：service 签名加 `newapi_db: AsyncSession | None = None` （None 时
+    跳过 token 步骤，保持 backend/tests/hermes 旧测兼容；endpoint 必传）
+  - service 在 `apply_template` 之后调 `LlmNewapiUserMappingService.ensure_agent_token(
+    db, newapi_db, agent_id=..., user_id=...)`，拿 `raw_token_key` → 拼 `sk-{raw}`
+    → 调 `runtime.install_credential(profile_id, {token_key, base_url, default_model})`
+  - install_credential 失败要回滚：`revoke_agent_token` + `runtime.delete_agent`，
+    都 swallow（PROMPT.md §5.2 step 失败处理 + Hard rule §6.9）
 
 ## Iteration 2 (2026-05-04)
 - 完成：§5.2 (a) BYOK fast-fail + (b) `_resolve_template` helper
