@@ -16,6 +16,8 @@ from backend.app.hermes.model import (
     HermesAgentRuntimeState,
 )
 from backend.app.hermes.service.hermes_runtime_client import HermesRuntimeClient, HermesRuntimeError
+from backend.app.marketplace.model.marketplace_app import MarketplaceApp
+from backend.app.marketplace.model.marketplace_app_version import MarketplaceAppVersion
 from backend.common.exception import errors
 from backend.core.conf import settings
 from backend.utils.timezone import timezone
@@ -275,7 +277,88 @@ class HermesAgentAppService:
             'updated_at': _dt(getattr(item, 'updated_time', None)),
         }
 
+    async def _resolve_template(self, db: AsyncSession, template_id: str) -> dict[str, Any]:
+        """Look up an agent template by app_id, returning the version + package metadata
+        backend will hand to runtime.apply_template (PROMPT.md §5.2 step 2).
+
+        - Filters marketplace_app.app_type = 'agent_template' to keep skill/sop packs out.
+        - Picks the marketplace_app_version row with is_latest = TRUE.
+        - Raises errors.NotFoundError(msg='template_not_found') when nothing matches.
+        """
+        if not template_id:
+            raise errors.NotFoundError(msg='template_not_found')
+        if hasattr(db, 'marketplace_apps'):
+            app = next(
+                (
+                    item for item in db.marketplace_apps
+                    if item.app_id == template_id and getattr(item, 'app_type', 'agent_template') == 'agent_template'
+                ),
+                None,
+            )
+            if not app:
+                raise errors.NotFoundError(msg='template_not_found')
+            version = next(
+                (
+                    item for item in getattr(db, 'marketplace_app_versions', [])
+                    if item.app_id == template_id and getattr(item, 'is_latest', False)
+                ),
+                None,
+            )
+        else:
+            stmt = (
+                sa.select(
+                    MarketplaceApp.app_id,
+                    MarketplaceApp.name,
+                    MarketplaceApp.description,
+                    MarketplaceApp.emoji,
+                    MarketplaceApp.icon_url,
+                    MarketplaceApp.skill_dependencies,
+                    MarketplaceAppVersion.version,
+                    MarketplaceAppVersion.package_url,
+                    MarketplaceAppVersion.file_hash,
+                )
+                .join(
+                    MarketplaceAppVersion,
+                    MarketplaceAppVersion.app_id == MarketplaceApp.app_id,
+                )
+                .where(
+                    MarketplaceApp.app_id == template_id,
+                    sa.text("marketplace_app.app_type = 'agent_template'"),
+                    MarketplaceAppVersion.is_latest.is_(True),
+                )
+                .limit(1)
+            )
+            row = (await db.execute(stmt)).mappings().first()
+            if not row:
+                raise errors.NotFoundError(msg='template_not_found')
+            return {
+                'app_id': row['app_id'],
+                'name': row['name'],
+                'description': row['description'],
+                'emoji': row['emoji'],
+                'icon_url': row['icon_url'],
+                'skill_dependencies': row['skill_dependencies'],
+                'version': row['version'],
+                'package_url': row['package_url'],
+                'file_hash': row['file_hash'],
+            }
+        if not version:
+            raise errors.NotFoundError(msg='template_not_found')
+        return {
+            'app_id': app.app_id,
+            'name': app.name,
+            'description': getattr(app, 'description', None),
+            'emoji': getattr(app, 'emoji', None),
+            'icon_url': getattr(app, 'icon_url', None),
+            'skill_dependencies': getattr(app, 'skill_dependencies', None),
+            'version': version.version,
+            'package_url': getattr(version, 'package_url', None),
+            'file_hash': getattr(version, 'file_hash', None),
+        }
+
     async def create_agent(self, db: AsyncSession, *, user_id: int, payload: Any, trace_id: str | None = None) -> dict[str, Any]:
+        if getattr(payload, 'llm_mode', 'platform') == 'byok':
+            raise errors.RequestError(msg='MVP 暂不支持 BYOK 模式，请使用 platform 模式')
         agent_id = self.id_factory()
         now = _now()
         await self._ensure_agent_name_available(db, user_id=user_id, agent_name=payload.agent_name)
