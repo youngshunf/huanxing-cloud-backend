@@ -1,4 +1,23 @@
-# M1 NOTES — last updated: 2026-05-04T14:30Z
+# M1 NOTES — last updated: 2026-05-04T14:55Z
+
+## Iteration 4 (2026-05-04)
+- 完成：§5.2 (d) ensure_agent_token + install_credential 串接 + (e) 失败回滚链
+  - service.create_agent 加 `newapi_db` 可选参数；endpoint 注入 `NewApiSessionTransaction`
+  - 在 apply_template 后调 `ensure_agent_token` → `install_credential(sk-{raw})`
+  - install_credential 失败 → 顺序调 revoke_agent_token + runtime.delete_agent
+    （皆 swallow 不被回滚链覆盖主异常，hard rule §6.9）
+  - CreateAgentPayload.template regex 放宽到 `[a-zA-Z0-9_-]{1,64}` + 加 llm_mode 字段
+  - 2 个新 service-level 测试（happy + rollback）
+- 验收项进度：5.1 [5/5] / 5.2 [5/5 全部] / 5.3 [0/?] / 5.4 [0/?] / 5.5 [0/?] / 5.6 [23/10 含早期] / 5.7 [0/2]
+- 卡点：无
+- 测试 baseline：65 passed (tests/ + backend/tests/hermes/)；§5.7 跑 `pytest tests/ -q`
+  得 58 passed
+- commit：`7a502e1 feat(hermes): create_agent 接通 ensure_agent_token + install_credential`
+- 下轮第一件事：§5.3 `delete_agent` 反向 6 步清理
+  - 当前 `delete_agent` 只 stop_gateway + 标 deleted_time
+  - 需补：runtime.uninstall_credential + revoke_agent_token + runtime.delete_agent
+  - 同样需要 newapi_db plumbing 到 endpoint + service
+  - 每步 swallow（gateway 可能本来就停、credential 可能没装、token 可能没签发）
 
 ## Iteration 3 (2026-05-04)
 - 完成：§5.2 (c) 把 `_resolve_template` + `runtime.apply_template` 接进 `create_agent` 主流程
