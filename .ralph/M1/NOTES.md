@@ -1,4 +1,23 @@
-# M1 NOTES — last updated: 2026-05-04T14:55Z
+# M1 NOTES — last updated: 2026-05-04T15:15Z
+
+## Iteration 5 (2026-05-04)
+- 完成：§5.3 delete_agent 反向 6 步清理
+  - 重写 service.delete_agent：stop_gateway → uninstall_credential →
+    revoke_agent_token → runtime.delete_agent → local record(deleted_time=now)
+  - 每个 runtime/token 调用包裹 try/except 全 swallow（PROMPT.md §5.3 节意图）
+  - endpoint delete_agent 加 NewApiSessionTransaction 注入
+  - service.delete_agent 加 `newapi_db: AsyncSession | None = None` 兼容旧调用
+- 验收项进度：5.1 [5/5] / 5.2 [5/5] / 5.3 [✓] / 5.4 [0/?] / 5.5 [0/?] / 5.6 [26/10 含早期] / 5.7 [0/2]
+- 卡点：无
+- 测试 baseline：68 passed (tests/ + backend/tests/hermes/)
+- commit：`bb8986c refactor(hermes): delete_agent reverse cleanup`
+- 下轮第一件事：§5.4 新建 `backend/app/hermes/api/v1/app/templates.py`：
+  - `GET /api/v1/hermes/app/templates` JOIN marketplace_app + marketplace_app_version
+    (app_type='agent_template' AND is_latest=true)
+  - 返回过滤敏感字段：只返 `[{app_id, name, description, emoji, icon_url, version}]`，
+    不暴露 package_url / file_hash 给前端
+  - 注册到 `backend/app/hermes/api/router.py` 的 `/api/v1/hermes/app/` 前缀下
+  - 测试：marketplace 有数据返 N 条；空时返 []
 
 ## Iteration 4 (2026-05-04)
 - 完成：§5.2 (d) ensure_agent_token + install_credential 串接 + (e) 失败回滚链
