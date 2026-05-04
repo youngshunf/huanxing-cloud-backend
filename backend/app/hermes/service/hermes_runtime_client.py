@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json as jsonlib
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -171,3 +173,86 @@ class HermesRuntimeClient:
 
     async def get_run_events(self, runtime_profile_id: str, run_id: str, trace_id: str | None = None) -> Any:
         return await self._request('GET', f'/runtime/v1/agents/{runtime_profile_id}/runs/{run_id}/events', trace_id=trace_id)
+
+    async def apply_template(
+        self,
+        runtime_profile_id: str,
+        payload: dict[str, Any],
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            'POST',
+            f'/runtime/v1/agents/{runtime_profile_id}/template/apply',
+            json=payload,
+            trace_id=trace_id,
+        )
+
+    async def get_template_status(
+        self,
+        runtime_profile_id: str,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            'GET',
+            f'/runtime/v1/agents/{runtime_profile_id}/template/status',
+            trace_id=trace_id,
+        )
+
+    async def install_credential(
+        self,
+        runtime_profile_id: str,
+        payload: dict[str, Any],
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            'POST',
+            f'/runtime/v1/agents/{runtime_profile_id}/credential/install',
+            json=payload,
+            trace_id=trace_id,
+        )
+
+    async def uninstall_credential(
+        self,
+        runtime_profile_id: str,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            'DELETE',
+            f'/runtime/v1/agents/{runtime_profile_id}/credential',
+            trace_id=trace_id,
+        )
+
+    async def chat_completions_stream(
+        self,
+        runtime_profile_id: str,
+        payload: dict[str, Any],
+        trace_id: str | None = None,
+    ) -> AsyncIterator[bytes]:
+        if not self.base_url:
+            err_payload = jsonlib.dumps({'error': 'runtime_unavailable'})
+            yield f'event: error\ndata: {err_payload}\n\n'.encode()
+            return
+        body = dict(payload)
+        body['stream'] = True
+        url = f'{self.base_url}/runtime/v1/agents/{runtime_profile_id}/chat/completions'
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                async with client.stream(
+                    'POST', url, headers=self._headers(trace_id), json=body
+                ) as response:
+                    if response.status_code >= 400:
+                        text = await response.aread()
+                        try:
+                            data = jsonlib.loads(text or b'{}')
+                            error_code = str(data.get('error') or 'runtime_error') if isinstance(data, dict) else 'runtime_error'
+                        except ValueError:
+                            error_code = 'runtime_error'
+                        err_payload = jsonlib.dumps({'error': error_code, 'status_code': response.status_code})
+                        yield f'event: error\ndata: {err_payload}\n\n'.encode()
+                        return
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            yield chunk
+        except httpx.HTTPError as exc:
+            err_payload = jsonlib.dumps({'error': 'runtime_unavailable', 'details': str(exc)})
+            yield f'event: error\ndata: {err_payload}\n\n'.encode()
