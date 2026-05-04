@@ -1,4 +1,35 @@
-# M1 NOTES — last updated: 2026-05-04T15:55Z
+# M1 NOTES — last updated: 2026-05-04T16:15Z — **M1 COMPLETE**
+
+## Iteration 8 (2026-05-04) — M1 完成判定
+
+§9 全部 √：
+
+| 验收 | 状态 | 主要 commits |
+|---|---|---|
+| §5.1 4 runtime methods + SSE stream | ✅ | 82b832f |
+| §5.2 create_agent 9 步编排 (a/b/c/d/e) | ✅ | 8795b99 / 8a487af / 7a502e1 |
+| §5.3 delete_agent 反向 6 步清理 | ✅ | bb8986c |
+| §5.4 GET /templates list endpoint | ✅ | d541035 |
+| §5.5 chat completions SSE 透传 | ✅ | f66ff64 |
+| §5.6 10 个 service-level case | ✅ | 199c6c3 (补 ensure_fail case) |
+| §5.7 `pytest tests/ -q` 0 failed + 干净 | ✅ | 67 passed |
+
+§5.6 case ↔ test mapping：
+1. create happy → `test_create_agent_with_newapi_db_calls_ensure_agent_token_and_installs_credential`
+2. byok rejection → `test_create_agent_rejects_byok_mode_with_request_error`
+3. template_not_found → `test_resolve_template_raises_when_app_missing` (+3 类似)
+4. runtime ensure fails → `test_create_agent_runtime_ensure_failure_marks_agent_error_and_skips_subsequent_steps`
+5. install_credential fails 回滚 → `test_create_agent_install_credential_failure_triggers_rollback`
+6. delete happy → `test_delete_agent_reverse_cleanup_calls_all_steps_in_order`
+7. delete stop_gateway fails 不阻断 → `test_delete_agent_swallows_stop_gateway_failure_and_continues_cleanup`
+8. templates list with-data → `test_list_templates_returns_filtered_payload_excluding_secrets`
+9. templates list empty → `test_list_templates_returns_empty_array_when_marketplace_has_no_templates`
+10. chat SSE streaming → `test_chat_completions_stream_true_returns_text_event_stream`
+
+下游：runtime 仓 M2 已 done（前置）；website M3 现在可以基于：
+- `GET /api/v1/hermes/app/templates` 选模板
+- `POST /api/v1/hermes/app/agents` 创建 agent（含 byok=400 + template fast-fail 行为）
+- `POST /api/v1/hermes/app/agents/{id}/chat/completions {stream:true}` 得 text/event-stream
 
 ## Iteration 7 (2026-05-04)
 - 完成：§5.5 chat completions SSE 流式透传
