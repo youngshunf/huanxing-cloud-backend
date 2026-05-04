@@ -1,4 +1,23 @@
-# M1 NOTES — last updated: 2026-05-04T15:35Z
+# M1 NOTES — last updated: 2026-05-04T15:55Z
+
+## Iteration 7 (2026-05-04)
+- 完成：§5.5 chat completions SSE 流式透传
+  - service.stream_chat_completions：async generator，透传
+    runtime_client.chat_completions_stream chunks，finally 写审计 op
+  - endpoint hermes_chat_completions：payload.stream=True 返
+    StreamingResponse(media_type='text/event-stream')；False 保持向后兼容
+  - HermesRuntimeError 异常 → yield 'event: error' SSE 帧（非 500）
+- 验收项进度：5.1 [5/5] / 5.2 [5/5] / 5.3 [✓] / 5.4 [✓] / 5.5 [✓] / 5.6 [31/10 含早期] / 5.7 [0/2]
+- 卡点：无
+- 测试 baseline：70 → 73 passed (tests/ + backend/tests/hermes/)
+- commit：`f66ff64 feat(hermes): chat/completions SSE 流式透传`
+- 下轮第一件事：§5.7 跑两条验收命令确认 0 failed + working tree 干净，并对照 §5.6
+  把 10 个 service 级 case 清单与已有测试做 mapping 决定是否需要补
+  - 已有覆盖：byok rejection / template_not_found / template lookup / create
+    happy / install_credential rollback / delete happy / delete stop_gateway-fails /
+    templates list with-data / templates list empty / chat SSE streaming
+  - 比对 §5.6 清单：基本对齐 10 case，可能缺 'create_agent runtime ensure
+    fails' 单测，下轮补一条覆盖
 
 ## Iteration 6 (2026-05-04)
 - 完成：§5.4 GET /api/v1/hermes/app/templates list endpoint
