@@ -4,6 +4,7 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Path, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.app.hermes.service.hermes_agent_app_service import hermes_agent_app_service
@@ -241,7 +242,32 @@ async def workspace_status(request: Request, db: CurrentSession, agent_id: str) 
 
 
 @router.post('/{agent_id}/chat/completions', summary='Web Chat', dependencies=[DependsJwtAuth])
-async def hermes_chat_completions(request: Request, db: CurrentSessionTransaction, agent_id: str, payload: dict[str, Any]) -> ResponseModel:
+async def hermes_chat_completions(
+    request: Request,
+    db: CurrentSessionTransaction,
+    agent_id: str,
+    payload: dict[str, Any],
+):
+    """OpenAI-compat chat completion. payload.stream=True → SSE 流式（M1 §5.5）；
+    否则保持 ResponseModel 一次性返回（向后兼容）。
+    """
+    if payload.get('stream') is True:
+        async def _gen():
+            try:
+                async for chunk in hermes_agent_app_service.stream_chat_completions(
+                    db, user_id=request.user.id, agent_id=agent_id, payload=payload,
+                    trace_id=_trace_id(request),
+                ):
+                    yield chunk
+            except HermesRuntimeError as exc:
+                import json as _json
+                yield (
+                    'event: error\ndata: '
+                    + _json.dumps(exc.to_response_data())
+                    + '\n\n'
+                ).encode()
+        return StreamingResponse(_gen(), media_type='text/event-stream')
+
     try:
         return response_base.success(data=await hermes_agent_app_service.chat_completions(db, user_id=request.user.id, agent_id=agent_id, payload=payload, trace_id=_trace_id(request)))
     except HermesRuntimeError as exc:

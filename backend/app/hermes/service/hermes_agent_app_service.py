@@ -807,6 +807,41 @@ class HermesAgentAppService:
             pass
         return _safe_json(data)
 
+    async def stream_chat_completions(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        agent_id: str,
+        payload: dict[str, Any],
+        trace_id: str | None = None,
+    ):
+        """SSE async generator: 透传 runtime SSE chunks 给浏览器（M1 §5.5）。
+
+        endpoint 用 StreamingResponse 包装返回。每个 chunk 是 raw bytes
+        (`b'data: {...}\\n\\n'` 或 `b'event: error\\n...'`)，不再二次 JSON encode。
+        审计 record_operation 在结束后写一次（success / failed by frame）。
+        """
+        profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
+        had_error_frame = False
+        try:
+            async for chunk in self.runtime_client.chat_completions_stream(
+                profile_id, payload, trace_id=trace_id,
+            ):
+                if chunk.startswith(b'event: error'):
+                    had_error_frame = True
+                yield chunk
+        finally:
+            await self._record_operation(
+                db,
+                user_id=user_id,
+                agent_id=agent_id,
+                operation_type='chat',
+                operation_status='failed' if had_error_frame else 'succeeded',
+                trace_id=trace_id,
+                request_summary={'stream': True},
+            )
+
     async def create_run(self, db: AsyncSession, *, user_id: int, agent_id: str, payload: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:
         profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
         data = await self.runtime_client.create_run(profile_id, payload, trace_id=trace_id)
