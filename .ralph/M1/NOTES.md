@@ -1,4 +1,27 @@
-# M1 NOTES — last updated: 2026-05-04T15:15Z
+# M1 NOTES — last updated: 2026-05-04T15:35Z
+
+## Iteration 6 (2026-05-04)
+- 完成：§5.4 GET /api/v1/hermes/app/templates list endpoint
+  - 新文件 `backend/app/hermes/api/v1/app/templates.py`
+  - JOIN marketplace_app + marketplace_app_version, filter
+    app_type='agent_template' AND is_latest=true
+  - 返过滤后 6 字段，敏感字段 (package_url/file_hash/skill_dependencies/app_type)
+    不暴露给浏览器
+  - 沿用 DependsJwtAuth (agents.py 范式)
+  - 注册到 `backend/app/hermes/api/router.py` 的 /api/v1/hermes/app/templates
+  - 2 个 endpoint 单测（with-data + empty）via FastAPI TestClient + dep override
+- 验收项进度：5.1 [5/5] / 5.2 [5/5] / 5.3 [✓] / 5.4 [✓] / 5.5 [0/?] / 5.6 [28/10 含早期] / 5.7 [0/2]
+- 卡点：无
+- 测试 baseline：68 → 70 passed
+- commit：`d541035 feat(hermes): GET /api/v1/hermes/app/templates list endpoint`
+- 下轮第一件事：§5.5 chat completions SSE endpoint 改造
+  - 现有 `backend/app/hermes/api/v1/app/agents.py` 的 chat_completions endpoint
+    （搜 `/{agent_id}/chat/completions`）当前直接返 dict
+  - 改造：检查 payload `stream` 字段。stream=true → `StreamingResponse(
+    media_type='text/event-stream')` 包 `runtime_client.chat_completions_stream(...)`
+  - stream=false 保持原行为不动（向后兼容）
+  - 测试：mock runtime stream yield 多 chunk → endpoint 响应 content-type
+    text/event-stream + body 是 chunk 拼接
 
 ## Iteration 5 (2026-05-04)
 - 完成：§5.3 delete_agent 反向 6 步清理
