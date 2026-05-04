@@ -349,3 +349,142 @@ async def test_create_agent_install_credential_failure_triggers_rollback(monkeyp
     assert revoke_calls == ['agt_rb']
     call_names = [c[0] for c in runtime.calls]
     assert 'delete_agent' in call_names
+
+
+# ----- §5.3 delete_agent reverse cleanup -----
+
+
+class _DeleteRuntimeClient(_FullRuntimeClient):
+    def __init__(self, *, stop_gateway_fail: bool = False, runtime_delete_fail: bool = False) -> None:
+        super().__init__()
+        self.stop_gateway_fail = stop_gateway_fail
+        self.runtime_delete_fail = runtime_delete_fail
+
+    async def stop_gateway(self, runtime_profile_id, trace_id=None):
+        self.calls.append(('stop_gateway', runtime_profile_id))
+        if self.stop_gateway_fail:
+            from backend.app.hermes.service.hermes_runtime_client import HermesRuntimeError
+            raise HermesRuntimeError(error='gateway_already_stopped', details='not running')
+        return {'status': 'stopped'}
+
+    async def uninstall_credential(self, runtime_profile_id, trace_id=None):
+        self.calls.append(('uninstall_credential', runtime_profile_id))
+        return {'removed': True}
+
+    async def delete_agent(self, runtime_profile_id, trace_id=None):
+        self.calls.append(('delete_agent', runtime_profile_id))
+        if self.runtime_delete_fail:
+            from backend.app.hermes.service.hermes_runtime_client import HermesRuntimeError
+            raise HermesRuntimeError(error='profile_not_found', status_code=404)
+        return {'deleted': True}
+
+
+async def _seed_existing_agent(db: _FullSession, agent_id: str = 'agt_del') -> str:
+    """Helper：直接在 InMemorySession 里建一个 'created' 状态的 agent stub，
+    避开 create_agent 全流程，专测 delete_agent。
+    """
+    agent = SimpleNamespace(
+        agent_id=agent_id,
+        user_id=1001,
+        agent_name='福仔删除测试',
+        template='assistant',
+        runtime_profile_id=f'rtp_{agent_id}',
+        runtime_id='hermes-runtime-local',
+        profile_name=f'rtp_{agent_id}',
+        status='running',
+        gateway_status='running',
+        workspace_status='active',
+        sandbox_status='ready',
+        deleted_time=None,
+        last_error_code=None,
+        last_error_message=None,
+        last_active_at=None,
+        last_runtime_sync_at=None,
+        timezone='Asia/Shanghai',
+        llm_mode='platform',
+        llm_provider='openai_compatible',
+        llm_model='openai/gpt-5.5',
+        created_time=datetime(2026, 5, 1, tzinfo=timezone.utc),
+        updated_time=datetime(2026, 5, 1, tzinfo=timezone.utc),
+    )
+    db.hermes_agents.append(agent)
+    return agent_id
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_reverse_cleanup_calls_all_steps_in_order(monkeypatch):
+    revoke_calls: list[str] = []
+
+    async def _fake_revoke(db, newapi_db, agent_id):
+        revoke_calls.append(agent_id)
+        return True
+
+    from backend.app.hermes.service import hermes_agent_app_service as svc_mod
+    monkeypatch.setattr(
+        svc_mod.LlmNewapiUserMappingService, 'revoke_agent_token', staticmethod(_fake_revoke)
+    )
+
+    db = _FullSession()
+    newapi_db = _FullSession()
+    runtime = _DeleteRuntimeClient()
+    service = HermesAgentAppService(runtime_client=runtime, id_factory=lambda: 'agt_del')
+    await _seed_existing_agent(db)
+
+    result = await service.delete_agent(
+        db=db, user_id=1001, agent_id='agt_del', trace_id='trace-del', newapi_db=newapi_db,
+    )
+
+    assert result['status'] == 'deleted'
+    call_names = [c[0] for c in runtime.calls]
+    # 顺序：stop_gateway → uninstall_credential → delete_agent
+    assert call_names.index('stop_gateway') < call_names.index('uninstall_credential')
+    assert call_names.index('uninstall_credential') < call_names.index('delete_agent')
+    assert revoke_calls == ['agt_del']
+    assert db.hermes_agents[0].deleted_time is not None
+    assert db.hermes_agents[0].gateway_status == 'stopped'
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_swallows_stop_gateway_failure_and_continues_cleanup(monkeypatch):
+    revoke_calls: list[str] = []
+
+    async def _fake_revoke(db, newapi_db, agent_id):
+        revoke_calls.append(agent_id)
+        return True
+
+    from backend.app.hermes.service import hermes_agent_app_service as svc_mod
+    monkeypatch.setattr(
+        svc_mod.LlmNewapiUserMappingService, 'revoke_agent_token', staticmethod(_fake_revoke)
+    )
+
+    db = _FullSession()
+    newapi_db = _FullSession()
+    runtime = _DeleteRuntimeClient(stop_gateway_fail=True)
+    service = HermesAgentAppService(runtime_client=runtime, id_factory=lambda: 'agt_del')
+    await _seed_existing_agent(db)
+
+    result = await service.delete_agent(
+        db=db, user_id=1001, agent_id='agt_del', trace_id='trace-del', newapi_db=newapi_db,
+    )
+
+    # stop_gateway 失败不阻断；后续步骤仍执行
+    assert result['status'] == 'deleted'
+    assert revoke_calls == ['agt_del']
+    assert 'delete_agent' in [c[0] for c in runtime.calls]
+    assert db.hermes_agents[0].deleted_time is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_without_newapi_db_skips_token_revocation():
+    """endpoint 兼容路径（旧调用方未传 newapi_db）不应崩溃。"""
+    db = _FullSession()
+    runtime = _DeleteRuntimeClient()
+    service = HermesAgentAppService(runtime_client=runtime, id_factory=lambda: 'agt_del')
+    await _seed_existing_agent(db)
+
+    result = await service.delete_agent(
+        db=db, user_id=1001, agent_id='agt_del', trace_id='trace-del'
+    )
+    assert result['status'] == 'deleted'
+    # 没传 newapi_db → revoke_agent_token 不被调（service 没去 import 失败）
+    assert db.hermes_agents[0].deleted_time is not None

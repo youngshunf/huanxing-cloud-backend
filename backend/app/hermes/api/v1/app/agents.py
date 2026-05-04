@@ -107,9 +107,20 @@ async def update_agent(
 
 
 @router.delete('/{agent_id}', summary='删除 Agent', dependencies=[DependsJwtAuth])
-async def delete_agent(request: Request, db: CurrentSessionTransaction, agent_id: Annotated[str, Path()]) -> ResponseModel:
+async def delete_agent(
+    request: Request,
+    db: CurrentSessionTransaction,
+    newapi_db: NewApiSessionTransaction,
+    agent_id: Annotated[str, Path()],
+) -> ResponseModel:
     try:
-        data = await hermes_agent_app_service.delete_agent(db, user_id=request.user.id, agent_id=agent_id, trace_id=_trace_id(request))
+        data = await hermes_agent_app_service.delete_agent(
+            db,
+            user_id=request.user.id,
+            agent_id=agent_id,
+            trace_id=_trace_id(request),
+            newapi_db=newapi_db,
+        )
         return response_base.success(data=data)
     except HermesRuntimeError as exc:
         return _runtime_fail(exc, msg='Agent 删除失败')

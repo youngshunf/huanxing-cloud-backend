@@ -615,27 +615,69 @@ class HermesAgentAppService:
         await db.flush()
         return await self.get_agent_detail(db, user_id=user_id, agent_id=agent_id)
 
-    async def delete_agent(self, db: AsyncSession, *, user_id: int, agent_id: str, trace_id: str | None = None) -> dict[str, Any]:
+    async def delete_agent(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        agent_id: str,
+        trace_id: str | None = None,
+        newapi_db: AsyncSession | None = None,
+    ) -> dict[str, Any]:
+        """Reverse cleanup（PROMPT.md §5.3）：
+        stop_gateway → uninstall_credential → revoke_agent_token → runtime.delete_agent
+        → local record(deleted_time=now)。每一步 runtime/token 调用 swallow，因为：
+        - gateway 可能本来就停
+        - credential 可能没装（apply_template 之前就失败的 agent）
+        - token 可能没签发（newapi_db 不可用时）
+        - runtime profile 可能已不在
+        本地 record 写不动属真错误，仍然抛。
+        """
         agent = await self._get_owned_agent(db, user_id=user_id, agent_id=agent_id)
         agent.status = 'deleting'
         agent.updated_time = _now()
-        try:
-            if agent.runtime_profile_id:
-                await self.runtime_client.stop_gateway(agent.runtime_profile_id, trace_id=trace_id)
-            agent.status = 'deleted'
-            agent.deleted_time = _now()
-            agent.gateway_status = 'stopped'
-            agent.updated_time = _now()
-            await self._record_operation(db, user_id=user_id, agent_id=agent_id, operation_type='delete_agent', operation_status='succeeded', trace_id=trace_id)
-            await db.flush()
-            return {'agent_id': agent.agent_id, 'status': agent.status}
-        except HermesRuntimeError as exc:
-            agent.status = 'error'
-            agent.last_error_code = exc.error
-            agent.last_error_message = exc.details
-            await self._record_operation(db, user_id=user_id, agent_id=agent_id, operation_type='delete_agent', operation_status='failed', trace_id=trace_id, error=exc)
-            await db.flush()
-            raise
+
+        runtime_profile_id = agent.runtime_profile_id
+        # 1. stop gateway
+        if runtime_profile_id:
+            try:
+                await self.runtime_client.stop_gateway(runtime_profile_id, trace_id=trace_id)
+            except HermesRuntimeError:
+                pass
+        # 2. uninstall credential
+        if runtime_profile_id:
+            try:
+                await self.runtime_client.uninstall_credential(runtime_profile_id, trace_id=trace_id)
+            except HermesRuntimeError:
+                pass
+        # 3. revoke agent token (only when newapi_db plumbed through)
+        if newapi_db is not None:
+            try:
+                await LlmNewapiUserMappingService.revoke_agent_token(db, newapi_db, agent_id)
+            except Exception:
+                pass
+        # 4. runtime.delete_agent
+        if runtime_profile_id:
+            try:
+                await self.runtime_client.delete_agent(runtime_profile_id, trace_id=trace_id)
+            except HermesRuntimeError:
+                pass
+
+        # 5. local record finalize
+        agent.status = 'deleted'
+        agent.deleted_time = _now()
+        agent.gateway_status = 'stopped'
+        agent.updated_time = _now()
+        await self._record_operation(
+            db,
+            user_id=user_id,
+            agent_id=agent_id,
+            operation_type='delete_agent',
+            operation_status='succeeded',
+            trace_id=trace_id,
+        )
+        await db.flush()
+        return {'agent_id': agent.agent_id, 'status': agent.status}
 
     async def runtime_profile_id(self, db: AsyncSession, *, user_id: int, agent_id: str) -> str:
         agent = await self._get_owned_agent(db, user_id=user_id, agent_id=agent_id)
