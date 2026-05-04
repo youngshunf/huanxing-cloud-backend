@@ -196,7 +196,14 @@ class HermesAgentAppService:
         await db.flush()
         return op
 
-    def _agent_card(self, agent: Any, state: Any | None = None, channels: list[Any] | None = None) -> dict[str, Any]:
+    def _agent_card(
+        self,
+        agent: Any,
+        state: Any | None = None,
+        channels: list[Any] | None = None,
+        *,
+        template_version: str | None = None,
+    ) -> dict[str, Any]:
         channels = channels or []
         return {
             'agent_id': agent.agent_id,
@@ -208,6 +215,8 @@ class HermesAgentAppService:
             'workspace_status': agent.workspace_status,
             'llm_mode': agent.llm_mode,
             'llm_model': agent.llm_model,
+            'template': agent.template,
+            'template_version': template_version,
             'channel_summary': [
                 {
                     'channel': item.channel,
@@ -362,6 +371,8 @@ class HermesAgentAppService:
         agent_id = self.id_factory()
         now = _now()
         await self._ensure_agent_name_available(db, user_id=user_id, agent_name=payload.agent_name)
+        template_id = payload.template or 'assistant'
+        template = await self._resolve_template(db, template_id)
         llm_model = getattr(settings, 'HUANXING_HERMES_PLATFORM_LLM_MODEL', None) or getattr(
             settings, 'HERMES_PLATFORM_LLM_MODEL', 'openai/gpt-5.5'
         )
@@ -370,7 +381,7 @@ class HermesAgentAppService:
             agent_id=agent_id,
             user_id=user_id,
             agent_name=payload.agent_name,
-            template=payload.template or 'assistant',
+            template=template['app_id'],
             timezone=payload.timezone or 'Asia/Shanghai',
             status='creating',
             llm_mode='platform',
@@ -417,6 +428,25 @@ class HermesAgentAppService:
             agent.workspace_status = runtime.get('workspace_status') or 'ready'
             agent.sandbox_status = 'ready'
             agent.last_runtime_sync_at = _now()
+
+            apply_payload: dict[str, Any] = {
+                'template_id': template['app_id'],
+                'template_version': template['version'],
+                'package_url': template.get('package_url'),
+                'file_hash': template.get('file_hash'),
+                'render_context': {
+                    'agent_name': payload.agent_name,
+                    'owner_user_id': str(user_id),
+                    'locale': getattr(payload, 'locale', None) or 'zh-CN',
+                    'timezone': payload.timezone or 'Asia/Shanghai',
+                    'now': _now().isoformat(),
+                },
+            }
+            if getattr(payload, 'soul', None):
+                apply_payload['soul_append'] = payload.soul
+            if getattr(payload, 'user_profile', None):
+                apply_payload['user_append'] = payload.user_profile
+            await self.runtime_client.apply_template(runtime_profile_id, apply_payload, trace_id=trace_id)
 
             if payload.soul is not None:
                 await self.runtime_client.put_soul(runtime_profile_id, payload.soul, trace_id=trace_id)
@@ -469,7 +499,7 @@ class HermesAgentAppService:
                 started_at=started_at,
             )
             await db.flush()
-            return self._agent_card(agent, state, [])
+            return self._agent_card(agent, state, [], template_version=template['version'])
         except HermesRuntimeError as exc:
             agent.status = 'error'
             agent.last_error_code = exc.error

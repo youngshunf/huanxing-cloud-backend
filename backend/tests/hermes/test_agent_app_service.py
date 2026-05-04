@@ -67,6 +67,15 @@ class FakeRuntimeClient:
             'updated_at': '2026-04-29T10:00:00+08:00',
         }
 
+    async def apply_template(self, runtime_profile_id, payload, trace_id=None):
+        self.calls.append(('apply_template', runtime_profile_id, payload))
+        return {
+            'status': 'rendered',
+            'template_id': payload.get('template_id'),
+            'template_version': payload.get('template_version'),
+            'rendered_at': '2026-04-29T10:00:00+08:00',
+        }
+
     async def put_soul(self, runtime_profile_id, content, trace_id=None):
         self.calls.append(('put_soul', runtime_profile_id, content))
         return {'kind': 'soul', 'updated_at': '2026-04-29T10:00:01+08:00', 'requires_gateway_restart': False}
@@ -136,12 +145,39 @@ async def db_session(monkeypatch):
     monkeypatch.setattr(service_mod, 'HermesAgentChannelBinding', HermesAgentChannelBindingStub, raising=True)
     monkeypatch.setattr(service_mod, 'HermesAgentOperation', HermesAgentOperationStub, raising=True)
 
+    class _MarketplaceAppFixture:
+        def __init__(self, **kw):
+            for k, v in kw.items():
+                setattr(self, k, v)
+
     class InMemorySession:
         def __init__(self):
             self.hermes_agents = []
             self.runtime_states = []
             self.channel_bindings = []
             self.operations = []
+            # M1 §5.2: seed default 'assistant' template so create_agent's
+            # _resolve_template call resolves without hitting a real DB.
+            self.marketplace_apps = [
+                _MarketplaceAppFixture(
+                    app_id='assistant',
+                    app_type='agent_template',
+                    name='通用助理',
+                    description='Default M1 assistant template',
+                    emoji='🤖',
+                    icon_url=None,
+                    skill_dependencies=None,
+                )
+            ]
+            self.marketplace_app_versions = [
+                _MarketplaceAppFixture(
+                    app_id='assistant',
+                    version='v1.0.0',
+                    package_url='https://cdn.example.com/assistant-v1.0.0.tar.gz',
+                    file_hash='sha256:fake-stub-hash',
+                    is_latest=True,
+                )
+            ]
             self._ids = {}
 
         def add(self, obj):
