@@ -156,6 +156,9 @@ async def db_session(monkeypatch):
             self.runtime_states = []
             self.channel_bindings = []
             self.operations = []
+            self.users = [
+                SimpleNamespace(id=1001, nickname='星主', phone='13800138000'),
+            ]
             # M1 §5.2: seed default 'assistant' template so create_agent's
             # _resolve_template call resolves without hitting a real DB.
             self.marketplace_apps = [
@@ -219,6 +222,9 @@ async def test_create_multiple_agents_for_one_user_saves_runtime_profile_and_use
     assert first['status'] == 'running'
     assert 'runtime_profile_id' not in first
     assert 'profile_path' not in first
+    first_template_payload = next(call[2] for call in runtime.calls if call[0] == 'apply_template' and call[1] == 'rtp_agt_a')
+    assert first_template_payload['render_context']['nickname'] == '星主'
+    assert first_template_payload['render_context']['phone'] == '13800138000'
     assert ('put_soul', 'rtp_agt_a', '# SOUL') in runtime.calls
     assert ('put_user_profile', 'rtp_agt_a', '# USER') in runtime.calls
     assert ('start_gateway', 'rtp_agt_a', None) in runtime.calls

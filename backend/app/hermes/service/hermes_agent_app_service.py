@@ -17,6 +17,7 @@ from backend.app.hermes.model import (
 )
 from backend.app.hermes.service.hermes_runtime_client import HermesRuntimeClient, HermesRuntimeError
 from backend.app.llm.service.llm_newapi_user_mapping_service import LlmNewapiUserMappingService
+from backend.app.admin.model.user import User
 from backend.app.marketplace.model.marketplace_app import MarketplaceApp
 from backend.app.marketplace.model.marketplace_app_version import MarketplaceAppVersion
 from backend.common.exception import errors
@@ -438,6 +439,17 @@ class HermesAgentAppService:
             agent.sandbox_status = 'ready'
             agent.last_runtime_sync_at = _now()
 
+            # 查 owner user 拿 nickname/phone（hub 模板里 USER.md / SOUL.md / MEMORY.md 用到）
+            if hasattr(db, 'users'):
+                user_row = next((u for u in db.users if getattr(u, 'id', None) == user_id), None)
+            elif hasattr(db, 'execute'):
+                user_result = await db.execute(sa.select(User).where(User.id == user_id))
+                user_row = user_result.scalar_one_or_none()
+            else:
+                user_row = None
+            user_nickname = (getattr(user_row, 'nickname', None) if user_row else None) or payload.agent_name
+            user_phone = (getattr(user_row, 'phone', None) if user_row else None) or ''
+
             apply_payload: dict[str, Any] = {
                 'template_id': template['app_id'],
                 'template_version': template['version'],
@@ -448,7 +460,11 @@ class HermesAgentAppService:
                     'owner_user_id': str(user_id),
                     'locale': getattr(payload, 'locale', None) or 'zh-CN',
                     'timezone': payload.timezone or 'Asia/Shanghai',
-                    'now': _now().isoformat(),
+                    'now': now.isoformat(),
+                    # 以下字段对齐 hub 仓 _base/owner/USER.md.template + 各模板 SOUL.md
+                    'createdAt': now.isoformat(),
+                    'nickname': user_nickname,
+                    'phone': user_phone,
                 },
             }
             if getattr(payload, 'soul', None):
@@ -595,6 +611,24 @@ class HermesAgentAppService:
         agent = await self._get_owned_agent(db, user_id=user_id, agent_id=agent_id)
         state = await self._get_runtime_state(db, agent_id)
         channels = await self._get_channels(db, user_id=user_id, agent_id=agent_id)
+        # 实时刷 runtime 真实 gateway 状态，避免 DB 缓存导致 UI 显示 fake 绿色
+        if getattr(agent, 'runtime_profile_id', None):
+            try:
+                data = await self.runtime_client.get_gateway_status(agent.runtime_profile_id)
+                runtime_status = data.get('status', agent.gateway_status)
+                agent.gateway_status = runtime_status
+                agent.status = 'running' if runtime_status == 'running' else 'created'
+                if state is not None:
+                    state.gateway_status = runtime_status
+                    state.api_server_reachable = bool(data.get('api_server_reachable', runtime_status == 'running'))
+                    state.last_health_at = _now()
+            except HermesRuntimeError:
+                # runtime 不可达：诚实标 unknown，让前端显示出错状态而非 fake 绿色
+                agent.gateway_status = 'unknown'
+                agent.status = 'error'
+                if state is not None:
+                    state.gateway_status = 'unknown'
+                    state.api_server_reachable = False
         return self._agent_detail(agent, state, channels)
 
     async def update_agent(self, db: AsyncSession, *, user_id: int, agent_id: str, payload: Any, trace_id: str | None = None) -> dict[str, Any]:
@@ -795,6 +829,12 @@ class HermesAgentAppService:
         item.metadata_json = _safe_json(metadata)
         item.bound_account_display = metadata.get('account_display') or metadata.get('open_id') or item.bound_account_display
         await db.flush()
+
+    async def chat_history(self, db: AsyncSession, *, user_id: int, agent_id: str, trace_id: str | None = None) -> dict[str, Any]:
+        """读 hermes-agent sessions/ 下最新对话，给前端进入 chat 页时 rehydrate。"""
+        profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)
+        data = await self.runtime_client.get_chat_history(profile_id, trace_id=trace_id)
+        return _safe_json(data)
 
     async def chat_completions(self, db: AsyncSession, *, user_id: int, agent_id: str, payload: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:
         profile_id = await self.runtime_profile_id(db, user_id=user_id, agent_id=agent_id)

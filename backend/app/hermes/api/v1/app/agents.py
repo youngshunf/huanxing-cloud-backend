@@ -241,6 +241,14 @@ async def workspace_status(request: Request, db: CurrentSession, agent_id: str) 
         return _runtime_fail(exc)
 
 
+@router.get('/{agent_id}/chat/history', summary='Web Chat 历史', dependencies=[DependsJwtAuth])
+async def hermes_chat_history(request: Request, db: CurrentSession, agent_id: str) -> ResponseModel:
+    try:
+        return response_base.success(data=await hermes_agent_app_service.chat_history(db, user_id=request.user.id, agent_id=agent_id, trace_id=_trace_id(request)))
+    except HermesRuntimeError as exc:
+        return _runtime_fail(exc)
+
+
 @router.post('/{agent_id}/chat/completions', summary='Web Chat', dependencies=[DependsJwtAuth])
 async def hermes_chat_completions(
     request: Request,

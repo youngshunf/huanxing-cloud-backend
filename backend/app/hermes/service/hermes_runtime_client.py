@@ -168,6 +168,9 @@ class HermesRuntimeClient:
     async def chat_completions(self, runtime_profile_id: str, payload: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:
         return await self._request('POST', f'/runtime/v1/agents/{runtime_profile_id}/chat/completions', json=payload, trace_id=trace_id)
 
+    async def get_chat_history(self, runtime_profile_id: str, trace_id: str | None = None) -> dict[str, Any]:
+        return await self._request('GET', f'/runtime/v1/agents/{runtime_profile_id}/chat/history', trace_id=trace_id)
+
     async def create_run(self, runtime_profile_id: str, payload: dict[str, Any], trace_id: str | None = None) -> dict[str, Any]:
         return await self._request('POST', f'/runtime/v1/agents/{runtime_profile_id}/runs', json=payload, trace_id=trace_id)
 
