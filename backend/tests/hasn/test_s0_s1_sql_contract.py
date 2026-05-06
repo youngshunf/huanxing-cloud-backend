@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import importlib
 
 import yaml
 
@@ -177,3 +178,10 @@ def test_no_hasn_sql_added_outside_hasn_sql_dir():
         if path.is_file()
     ]
     assert leaked == []
+
+
+def test_hasn_h2_alembic_revision_chains_to_h1_contacts_revision():
+    h1 = importlib.import_module("backend.alembic.versions.20260424_h1_hasn_contacts_peer_owner")
+    h2 = importlib.import_module("backend.alembic.versions.20260425_h2_agent_runtime_binding_phase1")
+
+    assert h2.down_revision == h1.revision
