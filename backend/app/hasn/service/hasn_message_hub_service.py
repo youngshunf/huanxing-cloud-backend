@@ -596,11 +596,10 @@ class HasnMessageHubService:
                 owner_id=recipient.owner_id,
                 agent_hasn_id=recipient.hasn_id,
             )
-            if runtime is None:
-                raise errors.RequestError(msg='AgentUnreachable: NoRuntimeBinding')
-            if not runtime.is_reachable:
-                raise errors.RequestError(msg=f'AgentUnreachable: {runtime.unreachable_reason}')
-            dispatch_status = 'dispatched'
+            if runtime is None or not runtime.is_reachable:
+                dispatch_status = 'runtime_unavailable'
+            else:
+                dispatch_status = 'dispatched'
 
         primary_kind = 'agent_inbox' if recipient.entity_type == 'agent' else 'human_inbox'
         primary = await self.gateway.store_inbox_message(
@@ -652,6 +651,17 @@ class HasnMessageHubService:
         await self.fanout.push(recipient.hasn_id, payload)
         if owner_copy:
             await self.fanout.push(recipient.owner_id, _message_received_payload(owner_copy, recipient, envelope))
+
+        if recipient.entity_type == 'agent' and dispatch_status == 'runtime_unavailable':
+            await self.gateway.store_suppressed(
+                db,
+                source_message=primary,
+                reason='runtime_unavailable',
+                dispatch_status=dispatch_status,
+                runtime_summary=runtime,
+            )
+            suppressed_created = True
+            warnings.append(_RUNTIME_UNAVAILABLE_WARNING)
 
         if recipient.entity_type == 'agent' and dispatch_status == 'dispatched' and runtime:
             try:

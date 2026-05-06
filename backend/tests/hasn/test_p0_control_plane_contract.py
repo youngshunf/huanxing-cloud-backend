@@ -117,7 +117,7 @@ class FailingRuntimeDispatcher:
 
 
 @pytest.mark.asyncio
-async def test_unbound_agent_is_rejected_before_any_inbox_or_suppressed_write() -> None:
+async def test_runtime_unavailable_agent_delivery_keeps_inbox_reachable() -> None:
     gateway = GateAwareInMemoryGateway(recipients={'a_agent': Recipient('a_agent', 'agent', 'h_owner')})
     fanout = RecordingFanout()
     service = HasnMessageHubService(
@@ -127,18 +127,28 @@ async def test_unbound_agent_is_rejected_before_any_inbox_or_suppressed_write() 
         side_effect_dispatcher=NoopServerSideEffectDispatcher(),
     )
 
-    with pytest.raises(errors.RequestError, match='AgentUnreachable'):
-        await service.send(
-            None,
-            MessageHubSendRequest(
-                owner_id='h_sender',
-                envelope={'conversation_id': '00000000-0000-0000-0000-000000000101', 'to_id': 'a_agent'},
-            ),
-        )
+    response = await service.send(
+        None,
+        MessageHubSendRequest(
+            owner_id='h_sender',
+            envelope={'conversation_id': '00000000-0000-0000-0000-000000000101', 'to_id': 'a_agent'},
+        ),
+    )
 
-    assert gateway.messages == []
-    assert gateway.suppressed == []
-    assert fanout.pushes == []
+    assert response.delivery_status == 'delivered'
+    assert response.dispatch_status == 'runtime_unavailable'
+    assert response.owner_copy_created is True
+    assert response.suppressed_inbox_created is True
+    assert [warning.name for warning in response.warnings] == ['ERR_RUNTIME_UNAVAILABLE_NON_BLOCKING']
+    assert [(message.inbox_kind, message.dispatch_status) for message in gateway.messages] == [
+        ('agent_inbox', 'runtime_unavailable'),
+        ('owner_copy', 'runtime_unavailable'),
+    ]
+    assert [(target, payload['method']) for target, payload in fanout.pushes] == [
+        ('a_agent', 'hasn.message.received'),
+        ('h_owner', 'hasn.message.received'),
+        ('h_owner', 'hasn.runtime.warning'),
+    ]
 
 
 @pytest.mark.asyncio

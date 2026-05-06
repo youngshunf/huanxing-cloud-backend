@@ -15,7 +15,6 @@ from backend.app.hasn.service.hasn_message_hub_service import (
     RuntimeSummary,
     StoredMessage,
 )
-from backend.common.exception import errors
 
 pytestmark = pytest.mark.asyncio
 
@@ -145,30 +144,41 @@ def _service(gateway: InMemoryS4Gateway, fanout: MultiNodeFanout, runtime=None, 
     )
 
 
-async def test_unbound_agent_is_rejected_before_agent_inbox_or_suppressed_inbox() -> None:
+async def test_runtime_unavailable_agent_still_reaches_agent_owner_and_suppressed_inboxes() -> None:
     gateway = InMemoryS4Gateway(
         recipients={'a_agent': Recipient('a_agent', 'agent', 'h_owner', 'agent')},
     )
     fanout = MultiNodeFanout(online_nodes={'h_owner': ['node-a', 'node-b']})
     service = _service(gateway, fanout)
 
-    with pytest.raises(errors.RequestError, match='AgentUnreachable: NoRuntimeBinding'):
-        await service.send(
-            None,
-            MessageHubSendRequest(
-                owner_id='h_sender',
-                envelope={
-                    'conversation_id': CONVERSATION_ID,
-                    'from_id': 'h_sender',
-                    'to_id': 'a_agent',
-                    'content': {'text': 'hello agent'},
-                },
-            ),
-        )
+    response = await service.send(
+        None,
+        MessageHubSendRequest(
+            owner_id='h_sender',
+            envelope={
+                'conversation_id': CONVERSATION_ID,
+                'from_id': 'h_sender',
+                'to_id': 'a_agent',
+                'content': {'text': 'hello agent'},
+            },
+        ),
+    )
 
-    assert gateway.messages == []
-    assert gateway.suppressed == []
-    assert fanout.pushes == []
+    assert response.delivery_status == 'delivered'
+    assert response.dispatch_status == 'runtime_unavailable'
+    assert response.owner_copy_created is True
+    assert response.suppressed_inbox_created is True
+    assert [warning.name for warning in response.warnings] == ['ERR_RUNTIME_UNAVAILABLE_NON_BLOCKING']
+    assert [(m.inbox_kind, m.owner_id, m.hasn_id, m.dispatch_status) for m in gateway.messages] == [
+        ('agent_inbox', 'h_owner', 'a_agent', 'runtime_unavailable'),
+        ('owner_copy', 'h_owner', 'h_owner', 'runtime_unavailable'),
+    ]
+    assert [m.inbox_kind for m in gateway.suppressed] == ['agent_inbox']
+    assert [(target, payload['method']) for target, payload in fanout.pushes] == [
+        ('a_agent', 'hasn.message.received'),
+        ('h_owner', 'hasn.message.received'),
+        ('h_owner', 'hasn.runtime.warning'),
+    ]
 
 
 async def test_owner_inbox_fanout_targets_owner_multi_node_route_without_runtime() -> None:
