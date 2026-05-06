@@ -5,9 +5,11 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 import pytest
+from starlette_context.middleware import ContextMiddleware
+from starlette_context.plugins import RequestIdPlugin
 
 from backend.app.hasn.api.v1 import message_hub as message_hub_api
 from backend.app.hasn.api.v1 import onboarding as onboarding_api
@@ -29,6 +31,7 @@ from backend.app.hasn.service.hasn_onboarding_service import (
     SMS_CODE_PREFIX,
 )
 from backend.app.hasn.service.hasn_sync_service import HasnSyncService
+from backend.common.exception.exception_handler import register_exception
 from backend.database.db import get_db, get_db_transaction
 
 
@@ -120,6 +123,10 @@ class FakeOnboardingGateway:
 class InMemorySyncGateway:
     reports: list[dict[str, Any]] = field(default_factory=list)
     client_events: list[Any] = field(default_factory=list)
+    owner_user_ids: dict[str, int] = field(default_factory=lambda: {"h_p0_owner": 7})
+
+    async def owns_owner(self, _db: Any, *, owner_id: str, user_id: int) -> bool:
+        return self.owner_user_ids.get(owner_id) == user_id
 
     async def save_runtime_report(self, _db: Any, report: dict[str, Any]) -> None:
         self.reports.append(report)
@@ -237,6 +244,8 @@ class FailingRuntimeDispatcher:
 
 def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app = FastAPI()
+    app.add_middleware(ContextMiddleware, plugins=[RequestIdPlugin(validate=True)])
+    register_exception(app)
     app.include_router(onboarding_api.router, prefix="/api/v1/hasn")
     app.include_router(sync_api.router, prefix="/api/v1/hasn")
     app.include_router(message_hub_api.router, prefix="/api/v1/hasn")
@@ -246,6 +255,9 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
 
     app.dependency_overrides[get_db] = fake_db
     app.dependency_overrides[get_db_transaction] = fake_db
+    app.dependency_overrides[sync_api.DependsJwtAuth.dependency] = _fake_jwt_user(7)
+    app.dependency_overrides[message_hub_api.DependsJwtAuth.dependency] = _fake_jwt_user(7)
+    app.dependency_overrides[onboarding_api.DependsJwtAuth.dependency] = _fake_jwt_user(7)
     monkeypatch.setattr(onboarding_api, "jwt_decode", lambda _token: SimpleNamespace(id=7))
 
     async def fake_token_creator(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
@@ -260,7 +272,11 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
         token_creator=fake_token_creator,
     )
     monkeypatch.setattr(onboarding_api, "hasn_phone_auth_service", phone_auth)
-    monkeypatch.setattr(onboarding_api, "hasn_onboarding_service", HasnOnboardingService(gateway=FakeOnboardingGateway()))
+    monkeypatch.setattr(
+        onboarding_api,
+        "hasn_onboarding_service",
+        HasnOnboardingService(gateway=FakeOnboardingGateway()),
+    )
 
     sync_gateway = InMemorySyncGateway()
     monkeypatch.setattr(sync_api, "hasn_sync_service", HasnSyncService(gateway=sync_gateway))
@@ -299,7 +315,34 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     return app
 
 
-def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_and_inbox(monkeypatch: pytest.MonkeyPatch) -> None:
+def make_sync_auth_app(monkeypatch: pytest.MonkeyPatch, user_id: int = 7) -> tuple[FastAPI, InMemorySyncGateway]:
+    app = FastAPI()
+    app.add_middleware(ContextMiddleware, plugins=[RequestIdPlugin(validate=True)])
+    register_exception(app)
+    app.include_router(sync_api.router, prefix="/api/v1/hasn")
+
+    async def fake_db():
+        yield FakeDb()
+
+    app.dependency_overrides[get_db] = fake_db
+    app.dependency_overrides[get_db_transaction] = fake_db
+    app.dependency_overrides[sync_api.DependsJwtAuth.dependency] = _fake_jwt_user(user_id)
+
+    sync_gateway = InMemorySyncGateway()
+    monkeypatch.setattr(sync_api, "hasn_sync_service", HasnSyncService(gateway=sync_gateway))
+    return app, sync_gateway
+
+
+def _fake_jwt_user(user_id: int):
+    async def fake_jwt(request: Request) -> None:
+        request.scope["user"] = SimpleNamespace(id=user_id)
+
+    return fake_jwt
+
+
+def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_and_inbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = TestClient(make_app(monkeypatch))
     auth = {"Authorization": "Bearer jwt-p0-real-http"}
 
@@ -366,7 +409,13 @@ def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_an
     human_message = client.post(
         "/api/v1/hasn/messages/send",
         headers=auth,
-        json={"owner_id": "h_p0_owner", "envelope": {"conversation_id": "00000000-0000-0000-0000-000000000201", "to_id": "h_p0_owner"}},
+        json={
+            "owner_id": "h_p0_owner",
+            "envelope": {
+                "conversation_id": "00000000-0000-0000-0000-000000000201",
+                "to_id": "h_p0_owner",
+            },
+        },
     )
     assert human_message.status_code == 200
     assert human_message.json()["delivery_status"] == "delivered"
@@ -375,7 +424,13 @@ def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_an
     agent_message = client.post(
         "/api/v1/hasn/messages/send",
         headers=auth,
-        json={"owner_id": "h_sender", "envelope": {"conversation_id": "00000000-0000-0000-0000-000000000202", "to_id": "a_p0_default"}},
+        json={
+            "owner_id": "h_sender",
+            "envelope": {
+                "conversation_id": "00000000-0000-0000-0000-000000000202",
+                "to_id": "a_p0_default",
+            },
+        },
     )
     assert agent_message.status_code == 200
     assert agent_message.json()["delivery_status"] == "delivered"
@@ -394,3 +449,66 @@ def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_an
     assert "agent_inbox" in inbox_kinds
     assert "owner_copy" in inbox_kinds
     assert "suppressed_inbox" in inbox_kinds
+
+
+def test_sync_pull_rejects_owner_not_bound_to_authenticated_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, _sync_gateway = make_sync_auth_app(monkeypatch, user_id=7)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/hasn/sync/pull",
+        headers={"Authorization": "Bearer jwt-p0-owner-mismatch"},
+        json={"owner_id": "h_other_owner", "cursor": "owner:h_other_owner:0"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_sync_push_rejects_owner_not_bound_to_authenticated_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, sync_gateway = make_sync_auth_app(monkeypatch, user_id=7)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/hasn/sync/push",
+        headers={"Authorization": "Bearer jwt-p0-owner-mismatch"},
+        json={
+            "owner_id": "h_other_owner",
+            "node_id": "n_p0_desktop",
+            "events": [
+                {
+                    "client_event_id": "ce_unauthorized",
+                    "event_type": "node.session",
+                    "payload": {"status": "ready"},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 403
+    assert sync_gateway.client_events == []
+
+
+def test_runtime_report_rejects_owner_not_bound_to_authenticated_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, sync_gateway = make_sync_auth_app(monkeypatch, user_id=7)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/hasn/runtime/report",
+        headers={"Authorization": "Bearer jwt-p0-owner-mismatch"},
+        json={
+            "owner_id": "h_other_owner",
+            "node_id": "n_p0_desktop",
+            "runtime_summaries": [
+                {
+                    "agent_id": "a_other_agent",
+                    "binding_id": "bind_other",
+                    "runtime_type": "hermes",
+                    "status": "online",
+                    "summary_json": {"capability": "dispatch"},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 403
+    assert sync_gateway.reports == []

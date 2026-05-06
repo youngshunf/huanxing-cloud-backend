@@ -15,6 +15,7 @@ from typing import Any, Protocol
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.hasn.model import HasnHumans
 from backend.app.hasn.schema.hasn_message_hub import ErrorObject
 from backend.app.hasn.schema.hasn_sync import (
     ClientEvent,
@@ -58,9 +59,22 @@ class SyncGateway(Protocol):
     async def pull_events(
         self, db: AsyncSession, *, owner_id: str, after_revision: int, limit: int
     ) -> list[SyncEventRecord]: ...
+    async def owns_owner(self, db: AsyncSession, *, owner_id: str, user_id: int) -> bool: ...
 
 
 class SqlAlchemySyncGateway:
+    async def owns_owner(self, db: AsyncSession, *, owner_id: str, user_id: int) -> bool:
+        result = await db.execute(
+            sa.select(HasnHumans.id)
+            .where(
+                HasnHumans.hasn_id == owner_id,
+                HasnHumans.user_id == user_id,
+                HasnHumans.status == 'active',
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def save_runtime_report(self, db: AsyncSession, report: dict[str, Any]) -> None:
         summary_json = json.dumps(report['summary_json'], ensure_ascii=False, sort_keys=True, default=str)
         await db.execute(
@@ -213,7 +227,13 @@ class SqlAlchemySyncGateway:
         payload: dict[str, Any],
     ) -> None:
         revision_result = await db.execute(
-            sa.text('SELECT COALESCE(MAX(revision), 0) + 1 AS revision FROM public.hasn_sync_events WHERE owner_id = :owner_id'),
+            sa.text(
+                '''
+                SELECT COALESCE(MAX(revision), 0) + 1 AS revision
+                FROM public.hasn_sync_events
+                WHERE owner_id = :owner_id
+                '''
+            ),
             {'owner_id': owner_id},
         )
         revision = int(revision_result.mappings().one()['revision'])
@@ -264,7 +284,8 @@ class SqlAlchemySyncGateway:
 class HasnSyncService:
     gateway: SyncGateway = field(default_factory=SqlAlchemySyncGateway)
 
-    async def pull(self, db: AsyncSession, request: SyncPullRequest) -> SyncPullResponse:
+    async def pull(self, db: AsyncSession, request: SyncPullRequest, *, user_id: int | None = None) -> SyncPullResponse:
+        await self._assert_owner_access(db, owner_id=request.owner_id, user_id=user_id)
         after_revision = _parse_owner_cursor(request.cursor)
         events = await self.gateway.pull_events(
             db,
@@ -281,7 +302,8 @@ class HasnSyncService:
             has_more=has_more,
         )
 
-    async def push(self, db: AsyncSession, request: SyncPushRequest) -> SyncPushResponse:
+    async def push(self, db: AsyncSession, request: SyncPushRequest, *, user_id: int | None = None) -> SyncPushResponse:
+        await self._assert_owner_access(db, owner_id=request.owner_id, user_id=user_id)
         rejected: list[ErrorObject] = []
         node_id = request.node_id or 'unknown'
         for event in request.events:
@@ -299,8 +321,9 @@ class HasnSyncService:
         )
 
     async def report_runtime(
-        self, db: AsyncSession, request: RuntimeReportRequest
+        self, db: AsyncSession, request: RuntimeReportRequest, *, user_id: int | None = None
     ) -> RuntimeReportResponse:
+        await self._assert_owner_access(db, owner_id=request.owner_id, user_id=user_id)
         for summary in request.runtime_summaries:
             if _contains_private_runtime_key(summary.summary_json):
                 raise errors.RequestError(msg=_PRIVATE_METADATA_ERROR.name, data=_PRIVATE_METADATA_ERROR.model_dump())
@@ -329,6 +352,15 @@ class HasnSyncService:
             rejected=[],
             next_cursor=_owner_cursor(request.owner_id, 0),
         )
+
+    async def _assert_owner_access(self, db: AsyncSession, *, owner_id: str, user_id: int | None) -> None:
+        if user_id is None:
+            return
+        owns_owner = getattr(self.gateway, 'owns_owner', None)
+        if owns_owner is None:
+            raise errors.AuthorizationError(msg='ERR_HASN_OWNER_ACCESS_DENIED')
+        if not await owns_owner(db, owner_id=owner_id, user_id=user_id):
+            raise errors.AuthorizationError(msg='ERR_HASN_OWNER_ACCESS_DENIED')
 
 
 def _parse_owner_cursor(cursor: str | None) -> int:
