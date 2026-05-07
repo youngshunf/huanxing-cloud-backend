@@ -191,7 +191,7 @@ class WsRuntimeDispatcher:
         from backend.app.hasn.service.ws_router import ws_router
 
         dispatch_payload = {
-            'hasn': 'hasn/2.0',
+            'hasn': 'hasn/0.2',
             'method': 'hasn.runtime.dispatch',
             'params': {
                 'agent_id': target_agent_id,
@@ -824,7 +824,7 @@ def _message_received_payload(
     message: StoredMessage, recipient: Recipient, envelope: dict[str, Any]
 ) -> dict[str, Any]:
     return {
-        'hasn': 'hasn/2.0',
+        'hasn': 'hasn/0.2',
         'method': 'hasn.message.received',
         'params': {
             'to_id': message.hasn_id,
@@ -861,7 +861,7 @@ def _runtime_warning_payload(message: StoredMessage, envelope: dict[str, Any]) -
         else _RUNTIME_UNAVAILABLE_WARNING
     )
     return {
-        'hasn': 'hasn/2.0',
+        'hasn': 'hasn/0.2',
         'method': 'hasn.runtime.warning',
         'params': {
             'owner_id': message.owner_id,

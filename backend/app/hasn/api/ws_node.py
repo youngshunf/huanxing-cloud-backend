@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 # 协议版本
-HASN_PROTOCOL = 'hasn/2.0'
+HASN_PROTOCOL = 'hasn/0.2'
 
 
 def _frame(method: str, params: dict) -> dict:
@@ -126,7 +126,7 @@ async def hasn_node_websocket(
             'node_type': node_type,
             'capacity': capacity,
             'server_time': timezone.now().isoformat(),
-            'supported_versions': ['hasn/2.0'],
+            'supported_versions': ['hasn/0.2'],
             'extensions': [
                 'capability', 'discovery', 'trade',
                 'screening', 'health', 'constellation', 'bridge',

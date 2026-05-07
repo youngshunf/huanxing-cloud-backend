@@ -581,7 +581,7 @@ async def route_message(
             },
         }
         payload = {
-            'hasn': 'hasn/2.0',
+            'hasn': 'hasn/0.2',
             'method': 'hasn.message.received',
             'params': {
                 'to_id': to_id,
@@ -712,7 +712,7 @@ async def route_message(
     }
 
     payload = {
-        'hasn': 'hasn/2.0',
+        'hasn': 'hasn/0.2',
         'method': 'hasn.message.received',
         'params': {
             'to_id': to_id,
