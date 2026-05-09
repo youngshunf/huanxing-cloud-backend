@@ -126,16 +126,18 @@ ws = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn', tags=['HASN WebSoc
 
 ws.include_router(ws_node_router)
 
-# --- 用户端业务 API（联系人 + 认证） ---
+# --- 用户端业务 API（联系人 + 认证 + 搜索） ---
 from backend.app.hasn.api.v1.app.contacts import router as app_contacts_router
 from backend.app.hasn.api.v1.app.hasn_auth_api import router as app_hasn_auth_router
 from backend.app.hasn.api.v1.app.hasn_api_keys import router as app_hasn_api_keys_router
 from backend.app.hasn.api.v1.app.hasn_nodes import router as app_hasn_nodes_router
 from backend.app.hasn.api.v1.app.hasn_owner_api_keys import router as app_hasn_owner_api_keys_router
+from backend.app.hasn.api.v1.app.search import router as app_users_search_router
 from backend.app.hasn.api.v1.node_control import router as node_control_router
 
 app.include_router(app_contacts_router, tags=['联系人管理'])
 app.include_router(app_hasn_auth_router, tags=['HASN认证'])
+app.include_router(app_users_search_router, tags=['HASN Users'])
 
 # --- IM 业务 API ---
 from backend.app.hasn.api.v1.app.hasn_im import router as app_hasn_im_router

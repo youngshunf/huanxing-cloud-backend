@@ -47,5 +47,29 @@ class CRUDHasnHumans(CRUDPlus[HasnHumans]):
             select(HasnHumans).where(HasnHumans.user_id == user_id)
         )).scalars().first()
 
+    @staticmethod
+    async def search_by_name(
+        db: AsyncSession,
+        prefix: str,
+        limit: int = 20,
+        exclude_hasn_id: str | None = None,
+    ) -> Sequence[HasnHumans]:
+        """按昵称前缀（case-insensitive）模糊匹配 active 用户。
+
+        排除调用方自己；仅返回 status='active'，避免命中 suspended/deleted。
+        排序按 name 字典序，limit 兜底防止超大返回。
+        """
+        from sqlalchemy import func
+
+        stmt = (
+            select(HasnHumans)
+            .where(func.lower(HasnHumans.name).like(f"{prefix.lower()}%"))
+            .where(HasnHumans.status == 'active')
+        )
+        if exclude_hasn_id:
+            stmt = stmt.where(HasnHumans.hasn_id != exclude_hasn_id)
+        stmt = stmt.order_by(HasnHumans.name).limit(limit)
+        return (await db.execute(stmt)).scalars().all()
+
 
 hasn_humans_dao: CRUDHasnHumans = CRUDHasnHumans(HasnHumans)
