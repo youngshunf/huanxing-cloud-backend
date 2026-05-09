@@ -71,10 +71,24 @@ class CRUDHasnContacts(CRUDPlus[HasnContacts]):
 
     @staticmethod
     async def get_pending_requests(db: AsyncSession, peer_id: str, limit: int = 20) -> list[HasnContacts]:
-        """获取收到的待处理好友请求"""
+        """获取收到的待处理好友请求 (我作为 peer_id 被加方)"""
         return (await db.execute(
             select(HasnContacts)
             .where(HasnContacts.peer_id == peer_id)
+            .where(HasnContacts.status == 'pending')
+            .where(HasnContacts.relation_type == 'social')
+            .order_by(HasnContacts.created_time.desc())
+            .limit(limit)
+        )).scalars().all()
+
+    @staticmethod
+    async def get_sent_pending_requests(
+        db: AsyncSession, owner_id: str, limit: int = 20,
+    ) -> list[HasnContacts]:
+        """获取自己已发出但还没被对方处理的好友请求 (我作为 owner_id 发起方)"""
+        return (await db.execute(
+            select(HasnContacts)
+            .where(HasnContacts.owner_id == owner_id)
             .where(HasnContacts.status == 'pending')
             .where(HasnContacts.relation_type == 'social')
             .order_by(HasnContacts.created_time.desc())

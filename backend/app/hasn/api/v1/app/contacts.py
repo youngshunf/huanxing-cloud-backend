@@ -96,22 +96,63 @@ async def send_contact_request(
 async def list_pending_requests(
     db: CurrentSession,
     auth: dict = Depends(hasn_auth),
+    direction: str = Query('received', description='received=收到的, sent=自己发出的'),
 ) -> ResponseModel:
+    """获取待处理好友请求列表。
+
+    - direction=received (默认): 我收到的待处理请求, 每条带 from_peer (发起方)
+    - direction=sent: 我已发出但对方还没处理的请求, 每条带 target (目标方)
+    """
+    if direction not in ('received', 'sent'):
+        raise HTTPException(status_code=422, detail="direction 必须是 received 或 sent")
+
     hasn_id = auth.get("effective_id", auth["hasn_id"])
-    requests = await hasn_contacts_dao.get_pending_requests(db, hasn_id)
+
+    if direction == 'received':
+        requests = await hasn_contacts_dao.get_pending_requests(db, hasn_id)
+        items = []
+        for req in requests:
+            sender = await hasn_humans_dao.get_by_hasn_id(db, req.owner_id)
+            if sender:
+                from_peer = HasnContactPeerOut(
+                    hasn_id=sender.hasn_id, star_id=sender.star_id,
+                    name=sender.name, type='human',
+                )
+            else:
+                # peer_id 解析失败用 stub 占位, 不抛 500 (INV-15)
+                from_peer = HasnContactPeerOut(
+                    hasn_id=req.owner_id, star_id='', name='', type='human',
+                )
+            items.append(HasnContactRequestOut(
+                request_id=req.id,
+                status=req.status,
+                from_peer=from_peer,
+                message=req.request_message or '',
+            ))
+        return response_base.success(data=[i.model_dump() for i in items])
+
+    # direction == 'sent'
+    requests = await hasn_contacts_dao.get_sent_pending_requests(db, hasn_id)
     items = []
     for req in requests:
-        sender = await hasn_humans_dao.get_by_hasn_id(db, req.owner_id)
-        from_peer = None
-        if sender:
-            from_peer = HasnContactPeerOut(
-                hasn_id=sender.hasn_id, star_id=sender.star_id,
-                name=sender.name, type='human',
+        peer_info = await hasn_humans_dao.get_by_hasn_id(db, req.peer_id)
+        peer_type = 'human'
+        if not peer_info:
+            peer_info = await hasn_agents_dao.get_by_hasn_id(db, req.peer_id)
+            peer_type = 'agent' if peer_info else 'human'
+        if peer_info:
+            target = HasnContactPeerOut(
+                hasn_id=peer_info.hasn_id, star_id=peer_info.star_id,
+                name=peer_info.name, type=peer_type,
+            )
+        else:
+            target = HasnContactPeerOut(
+                hasn_id=req.peer_id, star_id='', name='', type='human',
             )
         items.append(HasnContactRequestOut(
             request_id=req.id,
             status=req.status,
-            from_peer=from_peer,
+            target=target,
             message=req.request_message or '',
         ))
     return response_base.success(data=[i.model_dump() for i in items])
