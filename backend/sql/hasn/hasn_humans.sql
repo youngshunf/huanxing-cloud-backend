@@ -7,8 +7,10 @@ CREATE TABLE "public"."hasn_humans" (
   "star_id"        varchar(30) NOT NULL,
   "user_id"        int8 NOT NULL,
   "name"           varchar(50) NOT NULL,
+  "nickname"       varchar(50),
   "bio"            text,
   "avatar_url"     varchar(500),
+  "avatar"         varchar(500),
   "status"         varchar(20) NOT NULL DEFAULT 'active',
   "contact_policy" jsonb NOT NULL DEFAULT '{}',
   "timezone"       varchar(50) DEFAULT 'Asia/Shanghai',
@@ -32,9 +34,11 @@ COMMENT ON COLUMN "public"."hasn_humans"."id" IS '主键 ID';
 COMMENT ON COLUMN "public"."hasn_humans"."hasn_id" IS 'HASN 唯一标识 (h_{uuid})';
 COMMENT ON COLUMN "public"."hasn_humans"."star_id" IS '唤星号 (数字号或自定义号)';
 COMMENT ON COLUMN "public"."hasn_humans"."user_id" IS '关联唤星平台用户 ID';
-COMMENT ON COLUMN "public"."hasn_humans"."name" IS '显示名称';
+COMMENT ON COLUMN "public"."hasn_humans"."name" IS '[deprecated] 显示名称（迁移期保留，新代码请用 nickname）';
+COMMENT ON COLUMN "public"."hasn_humans"."nickname" IS '昵称（与 sys_user.nickname 对齐）';
 COMMENT ON COLUMN "public"."hasn_humans"."bio" IS '个人简介';
-COMMENT ON COLUMN "public"."hasn_humans"."avatar_url" IS '头像 URL';
+COMMENT ON COLUMN "public"."hasn_humans"."avatar_url" IS '[deprecated] 头像 URL（迁移期保留，新代码请用 avatar）';
+COMMENT ON COLUMN "public"."hasn_humans"."avatar" IS '头像（与 sys_user.avatar 对齐）';
 COMMENT ON COLUMN "public"."hasn_humans"."status" IS '状态 (active:正常:green/suspended:已暂停:orange/deleted:已注销:red)';
 COMMENT ON COLUMN "public"."hasn_humans"."contact_policy" IS '联系人策略 (JSONB)';
 COMMENT ON COLUMN "public"."hasn_humans"."timezone" IS '时区';
