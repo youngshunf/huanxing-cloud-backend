@@ -200,6 +200,34 @@ async def test_firecrawl_does_not_retry_non_retryable_4xx() -> None:
     assert exc_info.value.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_firecrawl_extract_treats_top_level_data_as_structured_payload() -> None:
+    async def sender(method: str, url: str, payload: dict, headers: dict, timeout: float):
+        return {
+            'status_code': 200,
+            'json': {
+                'success': True,
+                'data': {
+                    'company_name': 'IANA',
+                    'emails': ['iana@iana.org'],
+                    'phones': ['+1-424-254-5300'],
+                    'website': 'https://www.iana.org',
+                },
+            },
+        }
+
+    client = FirecrawlClient(sender=sender, sleep=lambda _: None)
+    result = await client.extract_leads(['https://www.iana.org/contact'], 'lead_v1', 'lead_extract_v1')
+
+    assert result['structured_payload'] == {
+        'company_name': 'IANA',
+        'emails': ['iana@iana.org'],
+        'phones': ['+1-424-254-5300'],
+        'website': 'https://www.iana.org',
+    }
+    assert result['raw_payload'] == result['structured_payload']
+
+
 def test_audit_payload_rejects_plaintext_pii_but_allows_hashes() -> None:
     assert_audit_payload_safe({'target_emails_sha256': ['a' * 64], 'total_count': 1})
 

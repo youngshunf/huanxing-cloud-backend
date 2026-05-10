@@ -124,6 +124,9 @@ class FirecrawlClient:
     def _normalize_response(self, body: dict[str, Any], *, extract_mode: str, attempt_count: int) -> dict[str, Any]:
         data = body.get('data') if isinstance(body.get('data'), dict) else body
         metadata = data.get('metadata') if isinstance(data.get('metadata'), dict) else {}
+        structured_payload = data.get('json') or data.get('extract') or data.get('structured_payload')
+        if structured_payload is None and extract_mode == 'extract':
+            structured_payload = data
         return {
             'source_url': data.get('url') or metadata.get('sourceURL'),
             'title': data.get('title') or metadata.get('title'),
@@ -131,7 +134,7 @@ class FirecrawlClient:
             'raw_html': data.get('html'),
             'raw_text': data.get('text'),
             'raw_payload': data,
-            'structured_payload': data.get('json') or data.get('extract') or data.get('structured_payload'),
+            'structured_payload': structured_payload,
             'llm_confidence': data.get('confidence'),
             'extract_mode': extract_mode,
             'attempt_count': attempt_count,
