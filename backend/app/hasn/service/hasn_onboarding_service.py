@@ -299,9 +299,38 @@ class HasnPhoneAuthService:
             pending_intent_id=request.pending_intent_id,
             hasn_onboarding=True,
         )
+
+        # PR7: ensure newapi user + token so the daemon receives per-owner
+        # LLM credentials with the login response. This mirrors the admin
+        # `/auth/phone-login` flow so the hasn daemon path is functionally
+        # equivalent — one set of LLM credentials per owner, shared by all
+        # of that owner's agents via per-profile `.env` files.
+        from backend.app.llm.service.llm_newapi_user_mapping_service import (
+            llm_newapi_user_mapping_service,
+        )
+        from backend.core.conf import settings
+
+        llm_token: str | None = None
+        llm_base_url: str | None = settings.LLM_API_BASE_URL
+        try:
+            mapping = await llm_newapi_user_mapping_service.ensure_newapi_user(
+                db,
+                user.id,
+                username=user.phone or user.username,
+                nickname=user.nickname or '',
+            )
+            llm_token = f'sk-{mapping.newapi_token_key}'
+        except Exception as exc:  # noqa: BLE001 — surface real failure, no fake fallback
+            raise errors.ServerError(msg=f'LLM 服务初始化失败: {exc}') from exc
+
         return PhoneVerifyResponse(
             access_token=access_token.access_token,
             expires_in_sec=self.token_expire_seconds,
+            llm_token=llm_token,
+            llm_base_url=llm_base_url,
+            # 默认从全局 settings 拉；后续支持 user 表 llm_model 列时
+            # 改成 `getattr(user, 'llm_model', None) or settings.LLM_DEFAULT_MODEL`
+            llm_model=settings.LLM_DEFAULT_MODEL,
         )
 
 
@@ -346,6 +375,9 @@ class HasnOnboardingService:
                 agent_id=agent.hasn_id,
                 owner_id=human.hasn_id,
                 hasn_id=agent.hasn_id,
+                # PR1.5: 透传 hasn_agents.star_id 给 daemon，避免 daemon 用
+                # hasn_id 顶替 star_id 写本地导致绑定时报 empty。
+                star_id=getattr(agent, 'star_id', '') or '',
                 display_name=getattr(agent, 'name', None),
             ),
             sandbox=sandbox,

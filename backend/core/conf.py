@@ -315,6 +315,12 @@ class Settings(BaseSettings):
     LLM_ENCRYPTION_KEY: str | None = None
     # LLM API 网关 URL
     LLM_API_BASE_URL: str | None = None
+    # 默认 LLM 模型 — 透传给 hasn-node daemon 的 phone/verify 响应
+    # `llm_model` 字段，由 daemon 写入每个 hermes profile 的
+    # `config.yaml::model.default`。Vendor 可通过 .env 覆盖
+    # （例如 `LLM_DEFAULT_MODEL='qwen-max'`）。后续若要按用户级别
+    # 区分模型，可在 user 表加 `llm_model` 列让该值优先覆盖。
+    LLM_DEFAULT_MODEL: str = 'gpt-5.5'
     # LiteLLM 调试模式（生产环境建议关闭）
     LITELLM_DEBUG: bool = False
 

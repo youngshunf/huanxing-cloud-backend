@@ -32,6 +32,16 @@ class PhoneVerifyResponse(SchemaBase):
     access_token: str = Field(description='HASN session access token')
     token_type: Literal['Bearer'] = Field(default='Bearer', description='Token 类型')
     expires_in_sec: int = Field(ge=1, description='访问令牌有效秒数')
+    # PR7: per-owner LLM credentials (newapi key + base URL). The daemon
+    # writes these into each Hermes profile's `.env` file via
+    # `PUT /runtime/v1/profiles/{id}/llm` so all of an owner's agents
+    # share one set of LLM credentials.
+    llm_token: str | None = Field(default=None, description='LLM API Token (sk-…) returned per owner')
+    llm_base_url: str | None = Field(default=None, description='LLM API Base URL for the gateway')
+    # 默认 LLM 模型名（如 "gpt-5.5", "qwen-max"）。daemon 把它写入每个 hermes
+    # profile 的 config.yaml `model.default`。后续支持按用户级别区分模型时
+    # 直接改 service 注入逻辑，daemon 端无需变更。
+    llm_model: str | None = Field(default=None, description='默认 LLM 模型名，写入 hermes profile config')
 
 
 class NodeClaim(SchemaBase):
@@ -69,6 +79,10 @@ class AgentSummary(SchemaBase):
     agent_id: str = Field(description='默认 Agent ID')
     owner_id: str = Field(description='Owner HASN ID')
     hasn_id: str = Field(description='默认 Agent HASN ID')
+    # PR1.5: daemon 端把 backend 返回的 hasn_id 错误塞进本地 star_id 字段，
+    # 导致绑定按钮报 "agent star_id is empty"。修复：onboarding/ensure 把
+    # hasn_agents 表中的 star_id 字段透传，daemon 用真实 star_id 写本地。
+    star_id: str = Field(description='默认 Agent 唤星号 (e.g. 100001#star)')
     display_name: str | None = Field(default=None, description='默认 Agent 显示名称')
 
 
