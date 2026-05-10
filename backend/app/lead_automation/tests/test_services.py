@@ -26,7 +26,7 @@ def test_normalize_phone_outputs_e164_for_cn_us_and_rejects_invalid() -> None:
     assert normalize_phone('abc', country_hint='CN') is None
 
 
-def test_cleaner_prefers_structured_payload_and_requires_email_and_phone_by_default() -> None:
+def test_cleaner_prefers_structured_payload_and_accepts_email_or_phone_by_default() -> None:
     cleaned = clean_raw_record(
         {
             'structured_payload': {
@@ -51,14 +51,18 @@ def test_cleaner_prefers_structured_payload_and_requires_email_and_phone_by_defa
 
 
 @pytest.mark.parametrize(
-    ('structured_payload', 'expected_reason'),
+    ('structured_payload', 'accepted', 'expected_reason'),
     [
-        ({'company_name': 'Only Email Inc', 'emails': ['sales@only-email.test']}, 'missing_phone'),
-        ({'company_name': 'Only Phone Inc', 'phones': ['138 1234 5678']}, 'missing_email'),
-        ({'company_name': 'No Contact Inc'}, 'missing_both'),
+        ({'company_name': 'Only Email Inc', 'emails': ['sales@only-email.test']}, True, None),
+        ({'company_name': 'Only Phone Inc', 'phones': ['138 1234 5678']}, True, None),
+        ({'company_name': 'No Contact Inc'}, False, 'missing_both'),
     ],
 )
-def test_cleaner_rejected_reason_requires_both_email_and_phone(structured_payload: dict, expected_reason: str) -> None:
+def test_cleaner_accepts_email_or_phone_and_rejects_only_when_both_missing(
+    structured_payload: dict,
+    accepted: bool,
+    expected_reason: str | None,
+) -> None:
     cleaned = clean_raw_record(
         {
             'structured_payload': structured_payload,
@@ -70,7 +74,7 @@ def test_cleaner_rejected_reason_requires_both_email_and_phone(structured_payloa
         country_hint='CN',
     )
 
-    assert cleaned.accepted is False
+    assert cleaned.accepted is accepted
     assert cleaned.rejected_reason == expected_reason
 
 
