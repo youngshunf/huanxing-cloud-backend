@@ -96,11 +96,9 @@ async def test_register_hasn_agent_idempotent_skips_insert_on_existing() -> None
     class _ExistingAgent:
         hasn_id = 'a_existing'
         node_id = 'node_old'
-        name = '测试 Agent'
         display_name = '测试 Agent'
         agent_name = 'test_agent'
         type = 'desktop'
-        avatar_url = None
         avatar = None
 
     db = AsyncMock()

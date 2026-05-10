@@ -381,10 +381,8 @@ async def register_hasn_identity(
         hasn_id=hasn_id,
         star_id=star_id,
         user_id=user_id,
-        name=name,
         nickname=name,
         bio=bio,
-        avatar_url=avatar_url,
         avatar=avatar_url,
         status='active',
         contact_policy={
@@ -461,19 +459,13 @@ async def register_hasn_agent(
         if node_id and existing_agent.node_id != node_id:
             existing_agent.node_id = node_id
             updated = True
-        if display_name and (
-            existing_agent.name != display_name or existing_agent.display_name != display_name
-        ):
-            existing_agent.name = display_name
+        if display_name and existing_agent.display_name != display_name:
             existing_agent.display_name = display_name
             updated = True
         if agent_type and existing_agent.type != agent_type:
             existing_agent.type = agent_type
             updated = True
-        if avatar_url and (
-            existing_agent.avatar_url != avatar_url or existing_agent.avatar != avatar_url
-        ):
-            existing_agent.avatar_url = avatar_url
+        if avatar_url and existing_agent.avatar != avatar_url:
             existing_agent.avatar = avatar_url
             updated = True
         if updated:
@@ -493,7 +485,6 @@ async def register_hasn_agent(
         hasn_id=agent_hasn_id,
         star_id=agent_star_id,
         owner_id=owner_hasn_id,
-        name=display_name,
         display_name=display_name,
         agent_name=agent_name,
         type=agent_type,
@@ -501,7 +492,6 @@ async def register_hasn_agent(
         role=role or 'specialist',
         description=description,
         capabilities=capabilities,
-        avatar_url=avatar_url,
         avatar=avatar_url,
         api_key_hash=agent_key_hash,
         status='active',
@@ -726,7 +716,7 @@ async def hasn_auth_from_jwt(request: Request) -> dict[str, Any]:
         'hasn_id': human.hasn_id,
         'star_id': human.star_id,
         'user_id': user_id,
-        'name': human.name,
+        'nickname': human.nickname,
         'auth_type': 'jwt',
     }
 

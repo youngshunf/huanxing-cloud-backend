@@ -8,13 +8,11 @@ CREATE TABLE "public"."hasn_agents" (
   "hasn_id"        varchar(40) NOT NULL,
   "star_id"        varchar(40) NOT NULL,
   "owner_id"       varchar(40) NOT NULL,
-  "name"           varchar(50) NOT NULL,
-  "display_name"   varchar(100),
+  "display_name"   varchar(100) NOT NULL,
   "agent_name"     varchar(30) NOT NULL,
   "description"    text,
   "bio"            text,
   "profile_json"   jsonb NOT NULL DEFAULT '{}',
-  "avatar_url"     varchar(500),
   "avatar"         varchar(500),
   "type"           varchar(20) NOT NULL DEFAULT 'cloud',
   "role"           varchar(20) NOT NULL DEFAULT 'primary',
@@ -50,13 +48,11 @@ COMMENT ON COLUMN "public"."hasn_agents"."id" IS '主键 ID';
 COMMENT ON COLUMN "public"."hasn_agents"."hasn_id" IS 'HASN Agent 唯一标识（格式: a_{uuid}）';
 COMMENT ON COLUMN "public"."hasn_agents"."star_id" IS 'Agent 唤星号（如: 100001#star）';
 COMMENT ON COLUMN "public"."hasn_agents"."owner_id" IS '所属 Human 的 hasn_id';
-COMMENT ON COLUMN "public"."hasn_agents"."name" IS '[deprecated] Agent 显示名（迁移期保留，新代码请用 display_name）';
 COMMENT ON COLUMN "public"."hasn_agents"."display_name" IS 'Agent 显示名（支持中文，对外展示）';
 COMMENT ON COLUMN "public"."hasn_agents"."agent_name" IS 'Agent 标识名';
 COMMENT ON COLUMN "public"."hasn_agents"."description" IS 'Agent 描述';
 COMMENT ON COLUMN "public"."hasn_agents"."bio" IS 'Agent Profile 简介（迁移期默认回填自 description）';
 COMMENT ON COLUMN "public"."hasn_agents"."profile_json" IS 'Agent Profile 扩展摘要（不得存 Runtime 私有本地态）';
-COMMENT ON COLUMN "public"."hasn_agents"."avatar_url" IS '[deprecated] 头像 URL（迁移期保留，新代码请用 avatar）';
 COMMENT ON COLUMN "public"."hasn_agents"."avatar" IS '头像（与 sys_user.avatar 对齐）';
 COMMENT ON COLUMN "public"."hasn_agents"."type" IS 'Agent 类型 (cloud:云端:blue/local:本地:green)';
 COMMENT ON COLUMN "public"."hasn_agents"."role" IS 'Agent 角色 (primary:主要:blue/specialist:专家:green/service:服务:orange)';

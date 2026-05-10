@@ -1,6 +1,5 @@
 from datetime import datetime
-from typing import Self
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field
 
 from backend.common.schema import SchemaBase
 
@@ -10,29 +9,14 @@ class HasnHumansSchemaBase(SchemaBase):
     hasn_id: str = Field(description='HASN 唯一标识 (h_{uuid})')
     star_id: str = Field(description='唤星号 (数字号或自定义号)')
     user_id: int = Field(description='关联唤星平台用户 ID')
-    name: str | None = Field(None, description='[deprecated] 显示名称（迁移期保留，请用 nickname）')
-    nickname: str | None = Field(None, description='昵称（与 sys_user.nickname 对齐）')
+    nickname: str = Field(description='昵称（与 sys_user.nickname 对齐）')
     bio: str | None = Field(None, description='个人简介')
-    avatar_url: str | None = Field(None, description='[deprecated] 头像 URL（迁移期保留，请用 avatar）')
     avatar: str | None = Field(None, description='头像（与 sys_user.avatar 对齐）')
     status: str = Field(description='状态 (active:正常:green/suspended:已暂停:orange/deleted:已注销:red)')
     contact_policy: dict = Field(description='联系人策略 (JSONB)')
     timezone: str | None = Field(None, description='时区')
     tags: str | None = Field(None, description='个人标签')
     stats: dict = Field(description='统计信息 (JSONB)')
-
-    @model_validator(mode='after')
-    def _sync_legacy_fields(self) -> Self:
-        # 迁移期双写：nickname↔name、avatar↔avatar_url 任一缺失时互相填充
-        if not self.nickname and self.name:
-            self.nickname = self.name
-        elif not self.name and self.nickname:
-            self.name = self.nickname
-        if not self.avatar and self.avatar_url:
-            self.avatar = self.avatar_url
-        elif not self.avatar_url and self.avatar:
-            self.avatar_url = self.avatar
-        return self
 
 
 class CreateHasnHumansParam(HasnHumansSchemaBase):

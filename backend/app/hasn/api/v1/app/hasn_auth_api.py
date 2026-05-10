@@ -79,9 +79,8 @@ async def api_register_hasn(
         'human': {
             'hasn_id': result['human'].hasn_id,
             'star_id': result['human'].star_id,
-            'name': result['human'].name,
-            'nickname': result['human'].nickname or result['human'].name,
-            'avatar': result['human'].avatar or result['human'].avatar_url,
+            'nickname': result['human'].nickname,
+            'avatar': result['human'].avatar,
         },
         'already_exists': result.get('already_exists', False),
     }
@@ -89,9 +88,8 @@ async def api_register_hasn(
         response_data['agent'] = {
             'hasn_id': result['agent'].hasn_id,
             'star_id': result['agent'].star_id,
-            'name': result['agent'].name,
-            'display_name': result['agent'].display_name or result['agent'].name,
-            'avatar': result['agent'].avatar or result['agent'].avatar_url,
+            'display_name': result['agent'].display_name,
+            'avatar': result['agent'].avatar,
         }
     if result.get('agent_key'):
         response_data['agent']['agent_key'] = result['agent_key']
@@ -137,9 +135,8 @@ async def api_register_agent(
     response_data = {
         'hasn_id': result['agent'].hasn_id,
         'star_id': result['agent'].star_id,
-        'name': result['agent'].name,
-        'display_name': result['agent'].display_name or result['agent'].name,
-        'avatar': result['agent'].avatar or result['agent'].avatar_url,
+        'display_name': result['agent'].display_name,
+        'avatar': result['agent'].avatar,
         'agent_name': result['agent'].agent_name,
         'already_exists': result.get('already_exists', False),
     }
@@ -236,11 +233,9 @@ async def api_get_me(
     return response_base.success(data={
         'hasn_id': human.hasn_id,
         'star_id': human.star_id,
-        'name': human.name,
-        'nickname': human.nickname or human.name,
+        'nickname': human.nickname,
         'bio': human.bio,
-        'avatar_url': human.avatar_url,
-        'avatar': human.avatar or human.avatar_url,
+        'avatar': human.avatar,
         'status': human.status,
         'contact_policy': human.contact_policy,
         'timezone': human.timezone,
@@ -322,13 +317,11 @@ async def api_list_agents(
         agents_data.append({
             'hasn_id': a.hasn_id,
             'star_id': a.star_id,
-            'name': a.name,
-            'display_name': a.display_name or a.name,
+            'display_name': a.display_name,
             'agent_name': a.agent_name,
             'type': a.type,
             'node_id': a.node_id,
-            'avatar_url': a.avatar_url,
-            'avatar': a.avatar or a.avatar_url,
+            'avatar': a.avatar,
             'role': a.role,
             'description': a.description,
             'capabilities': a.capabilities,
