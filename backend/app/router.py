@@ -1,5 +1,11 @@
 from backend.app.hermes.api.router import v1 as hermes_v1, app as hermes_app, internal as hermes_internal
 from backend.app.hasn.api.router import v1 as hasn_v1, app as hasn_app, agent as hasn_agent, open_api as hasn_open, ws as hasn_ws
+from backend.app.lead_automation.api.router import (
+    agent as lead_automation_agent,
+    app as lead_automation_app,
+    open_api as lead_automation_open,
+    v1 as lead_automation_v1,
+)
 from fastapi import APIRouter
 from backend.app.admin.api.router import v1 as admin_v1, client as admin_client
 from backend.app.llm.api.router import v1 as llm_v1, app as llm_app
@@ -20,6 +26,10 @@ router.include_router(task_v1)
 router.include_router(llm_v1)
 router.include_router(llm_app)
 router.include_router(openclaw_v1)  # Openclaw Gateway API
+router.include_router(lead_automation_v1)
+router.include_router(lead_automation_app)
+router.include_router(lead_automation_agent)
+router.include_router(lead_automation_open)
 
 router.include_router(projects_v1)
 router.include_router(user_tier_v1)

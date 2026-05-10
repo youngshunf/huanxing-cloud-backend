@@ -31,7 +31,7 @@ async def agent_list_{{ table_name }}s(
     x_user_id: Annotated[str, Header(description='用户 UUID')],
 ) -> ResponseModel:
     user_id = await resolve_user_id(db, x_user_id)
-    data = await {{ table_name }}_service.get_list(db=db, user_id=user_id)
+    data = await {{ table_name }}_service.get_list(db=db)
     return response_base.success(data=data)
 
 
@@ -46,7 +46,7 @@ async def agent_create_{{ table_name }}(
     x_user_id: Annotated[str, Header(description='用户 UUID')],
 ) -> ResponseModel:
     user_id = await resolve_user_id(db, x_user_id)
-    result = await {{ table_name }}_service.create(db=db, obj=obj, user_id=user_id)
+    result = await {{ table_name }}_service.create(db=db, obj=obj)
     return response_base.success(data=result)
 
 
@@ -82,7 +82,7 @@ async def agent_update_{{ table_name }}(
     {{ table_name }} = await {{ table_name }}_service.get(db=db, pk=pk)
     if {{ table_name }}.user_id != user_id:
         raise errors.ForbiddenError(msg='无权修改该{{ doc_comment }}')
-    count = await {{ table_name }}_service.update(db=db, pk=pk, obj=obj, user_id=user_id)
+    count = await {{ table_name }}_service.update(db=db, pk=pk, obj=obj)
     if count > 0:
         return response_base.success()
     return response_base.fail()

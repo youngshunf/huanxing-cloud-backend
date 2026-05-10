@@ -34,7 +34,7 @@ app.include_router(app_{{ table_name }}_router, prefix='/{{ table_name.replace('
 # ========================================
 open_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/{{ app_name }}/open'{% if tag %}, tags=['{{ tag }}公开']{% endif %})
 
-open_api.include_router(open_{{ table_name }}_router{% if tag %}, tags=['{{ tag }}公开-{{ doc_comment }}']{% endif %})
+open_api.include_router(open_{{ table_name }}_router, prefix='/{{ table_name.replace('_', '-') }}s'{% if tag %}, tags=['{{ tag }}公开-{{ doc_comment }}']{% endif %})
 {% endif %}
 
 {% if 'agent' in api_scopes %}

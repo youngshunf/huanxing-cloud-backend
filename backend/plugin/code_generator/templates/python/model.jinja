@@ -94,5 +94,5 @@ class {{ class_name }}({% if datetime_mixin %}Base{% else %}DataClassBase{% endi
         '{{ model.comment }}')
     {% else -%}
         None)
-    {%- endif -%}
+    {% endif %}
     {% endfor %}

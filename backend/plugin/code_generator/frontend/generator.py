@@ -379,7 +379,7 @@ class FrontendGenerator:
             'form_columns': [c for c in columns_meta if c['include_in_form']],
             'search_columns': [c for c in columns_meta if c['include_in_search']],
             'has_dict_fields': has_dict_fields,
-            'api_path': f'/api/v1/{app}/{module.replace("_", "/")}s',
+            'api_path': f'/api/v1/{app.replace("_", "-")}/{module.replace("_", "-")}s',
             'permission_prefix': table_info.name.replace('_', ':'),
             'ui_lib': codegen_config.ui_lib,
         }

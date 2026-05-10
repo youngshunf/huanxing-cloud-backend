@@ -6,8 +6,11 @@ import { requestClient } from '#/api/request';
 
 // Types
 export interface {{ class_name }} {
+  id: number;
 {% for col in columns %}
+{% if not col.is_primary_key %}
   {{ col.name }}{% if col.nullable %}?{% endif %}: {{ col.ts_type }};
+{% endif %}
 {% endfor %}
 }
 
@@ -39,7 +42,7 @@ export async function get{{ class_name }}Api(id: number): Promise<{{ class_name 
   return requestClient.get<{{ class_name }}>(`{{ api_path }}/${id}`);
 }
 
-export async function create{{ class_name }}Api(data: {{ class_name }}CreateParams): Promise<{{ class_name }}> {
+export async function create{{ class_name }}Api(data: any): Promise<{{ class_name }}> {
   return requestClient.post<{{ class_name }}>('{{ api_path }}', data);
 }
 

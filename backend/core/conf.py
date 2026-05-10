@@ -148,6 +148,7 @@ class Settings(BaseSettings):
         rf'^{FASTAPI_API_V1_PATH}/huanxing/agent/.*$',  # 唤星 Agent API（使用 X-Agent-Key 认证，不走 JWT）
         rf'^{FASTAPI_API_V1_PATH}/huanxing/user/.*$',  # 唤星用户级 API（使用 Owner Key 认证，不走 JWT）
         rf'^{FASTAPI_API_V1_PATH}/user_tier/agent/.*$',  # 订阅积分 Agent API（使用 X-Agent-Key 认证，不走 JWT）
+        rf'^{FASTAPI_API_V1_PATH}/lead-automation/agent/.*$',  # AI 自动获客 Agent API（使用 X-Agent-Key 认证，不走 JWT）
     ]
 
     # 用户安全
