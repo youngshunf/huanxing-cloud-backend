@@ -57,18 +57,21 @@ class CRUDHasnHumans(CRUDPlus[HasnHumans]):
         """按昵称前缀（case-insensitive）模糊匹配 active 用户。
 
         排除调用方自己；仅返回 status='active'，避免命中 suspended/deleted。
-        排序按 name 字典序，limit 兜底防止超大返回。
+        排序按 nickname 字典序，limit 兜底防止超大返回。
+
+        V002 迁移期：用 COALESCE(nickname, name) 兼容尚未回填 nickname 的旧行。
         """
         from sqlalchemy import func
 
+        display = func.coalesce(HasnHumans.nickname, HasnHumans.name)
         stmt = (
             select(HasnHumans)
-            .where(func.lower(HasnHumans.name).like(f"{prefix.lower()}%"))
+            .where(func.lower(display).like(f"{prefix.lower()}%"))
             .where(HasnHumans.status == 'active')
         )
         if exclude_hasn_id:
             stmt = stmt.where(HasnHumans.hasn_id != exclude_hasn_id)
-        stmt = stmt.order_by(HasnHumans.name).limit(limit)
+        stmt = stmt.order_by(display).limit(limit)
         return (await db.execute(stmt)).scalars().all()
 
 

@@ -80,6 +80,8 @@ async def api_register_hasn(
             'hasn_id': result['human'].hasn_id,
             'star_id': result['human'].star_id,
             'name': result['human'].name,
+            'nickname': result['human'].nickname or result['human'].name,
+            'avatar': result['human'].avatar or result['human'].avatar_url,
         },
         'already_exists': result.get('already_exists', False),
     }
@@ -88,6 +90,8 @@ async def api_register_hasn(
             'hasn_id': result['agent'].hasn_id,
             'star_id': result['agent'].star_id,
             'name': result['agent'].name,
+            'display_name': result['agent'].display_name or result['agent'].name,
+            'avatar': result['agent'].avatar or result['agent'].avatar_url,
         }
     if result.get('agent_key'):
         response_data['agent']['agent_key'] = result['agent_key']
@@ -134,6 +138,8 @@ async def api_register_agent(
         'hasn_id': result['agent'].hasn_id,
         'star_id': result['agent'].star_id,
         'name': result['agent'].name,
+        'display_name': result['agent'].display_name or result['agent'].name,
+        'avatar': result['agent'].avatar or result['agent'].avatar_url,
         'agent_name': result['agent'].agent_name,
         'already_exists': result.get('already_exists', False),
     }
@@ -231,8 +237,10 @@ async def api_get_me(
         'hasn_id': human.hasn_id,
         'star_id': human.star_id,
         'name': human.name,
+        'nickname': human.nickname or human.name,
         'bio': human.bio,
         'avatar_url': human.avatar_url,
+        'avatar': human.avatar or human.avatar_url,
         'status': human.status,
         'contact_policy': human.contact_policy,
         'timezone': human.timezone,
@@ -315,10 +323,12 @@ async def api_list_agents(
             'hasn_id': a.hasn_id,
             'star_id': a.star_id,
             'name': a.name,
+            'display_name': a.display_name or a.name,
             'agent_name': a.agent_name,
             'type': a.type,
             'node_id': a.node_id,
             'avatar_url': a.avatar_url,
+            'avatar': a.avatar or a.avatar_url,
             'role': a.role,
             'description': a.description,
             'capabilities': a.capabilities,
