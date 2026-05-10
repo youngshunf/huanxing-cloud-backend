@@ -34,6 +34,7 @@ class CrawledItem:
 
 class FirecrawlLike(Protocol):
     async def scrape_lead_json(self, url: str, schema_version: str, prompt_version: str) -> dict[str, Any]: ...
+    async def extract_leads(self, urls: list[str], schema_version: str, prompt_version: str) -> dict[str, Any]: ...
 
 
 class BaseProvider:
@@ -42,11 +43,12 @@ class BaseProvider:
     async def crawl(self, request: CrawlRequest, *, firecrawl_client: FirecrawlLike) -> list[CrawledItem]:
         url = self._keyword_to_url(request.keyword)
         options = request.config.get('firecrawl_options', {})
-        result = await firecrawl_client.scrape_lead_json(
-            url,
-            options.get('schema_version', 'lead_v1'),
-            options.get('prompt_version', 'lead_extract_v1'),
-        )
+        schema_version = options.get('schema_version', 'lead_v1')
+        prompt_version = options.get('prompt_version', 'lead_extract_v1')
+        if options.get('extract_mode') == 'extract':
+            result = await firecrawl_client.extract_leads([url], schema_version, prompt_version)
+        else:
+            result = await firecrawl_client.scrape_lead_json(url, schema_version, prompt_version)
         return [
             CrawledItem(
                 source_type=self.source_type,

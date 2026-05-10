@@ -156,7 +156,7 @@ class LeadAutomationBusinessService:
 
                 cleaned = clean_raw_record(
                     raw_dict,
-                    min_contact_fields=(job.request_config or {}).get('min_contact_fields', ['email', 'phone']),
+                    min_contact_fields=_contact_field_requirements(job.request_config or {}),
                     country_hint=(job.request_config or {}).get('country_hint', 'CN'),
                 )
                 raw_record.system_score = Decimal(str(cleaned.system_score))
@@ -612,6 +612,11 @@ def _raw_html_policy(raw_html: str | None, *, persist: bool, max_bytes: int, raw
         return raw_html, {}
     digest = _sha256(raw_html)
     return None, {'raw_html_sha256': digest, 'raw_html_object_key': f'lead_raw_html/{raw_record_id}-{digest}.html'}
+
+
+def _contact_field_requirements(config: dict[str, Any]) -> list[str]:
+    fields = config.get('required_contact_fields') or config.get('min_contact_fields') or ['email', 'phone']
+    return [str(field) for field in _as_list(fields) if str(field) in {'email', 'phone'}] or ['email', 'phone']
 
 
 def _mask_email(value: str | None) -> str | None:

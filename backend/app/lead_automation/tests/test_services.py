@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from backend.app.lead_automation.service.audit_service import AuditPayloadLeakError, assert_audit_payload_safe
-from backend.app.lead_automation.service.business_service import _mask_email, _mask_phone
+from backend.app.lead_automation.service.business_service import _contact_field_requirements, _mask_email, _mask_phone
 from backend.app.lead_automation.service.cleaner_service import clean_raw_record, normalize_email, normalize_phone
 from backend.app.lead_automation.service.dedupe_service import InMemoryLeadStore, upsert_lead
 from backend.app.lead_automation.service.export_service import build_csv_export
@@ -26,16 +26,16 @@ def test_normalize_phone_outputs_e164_for_cn_us_and_rejects_invalid() -> None:
     assert normalize_phone('abc', country_hint='CN') is None
 
 
-def test_cleaner_prefers_structured_payload_and_default_accepts_email_or_phone() -> None:
+def test_cleaner_prefers_structured_payload_and_requires_email_and_phone_by_default() -> None:
     cleaned = clean_raw_record(
         {
             'structured_payload': {
                 'company_name': 'Acme Ltd',
                 'emails': [' Sales.Team+cn@gmail.com '],
-                'phones': [],
+                'phones': ['138 1234 5678'],
                 'website': 'https://acme.example',
             },
-            'markdown': 'Contact Sales.Team+cn@gmail.com',
+            'markdown': 'Contact Sales.Team+cn@gmail.com 138 1234 5678',
             'source_url': 'https://acme.example/contact',
             'source_type': 'public_web',
         },
@@ -46,32 +46,38 @@ def test_cleaner_prefers_structured_payload_and_default_accepts_email_or_phone()
     assert cleaned.accepted is True
     assert cleaned.rejected_reason is None
     assert cleaned.email_normalized == 'salesteam@gmail.com'
-    assert cleaned.phone_normalized is None
+    assert cleaned.phone_normalized == '+8613812345678'
     assert cleaned.metadata['email_candidates'] == [' Sales.Team+cn@gmail.com ']
 
 
 @pytest.mark.parametrize(
-    ('min_fields', 'expected_reason'),
+    ('structured_payload', 'expected_reason'),
     [
-        (['email', 'phone'], 'missing_contact'),
-        (['email'], 'missing_email'),
-        (['phone'], 'missing_phone'),
+        ({'company_name': 'Only Email Inc', 'emails': ['sales@only-email.test']}, 'missing_phone'),
+        ({'company_name': 'Only Phone Inc', 'phones': ['138 1234 5678']}, 'missing_email'),
+        ({'company_name': 'No Contact Inc'}, 'missing_both'),
     ],
 )
-def test_cleaner_rejected_reason_follows_min_contact_fields(min_fields: list[str], expected_reason: str) -> None:
+def test_cleaner_rejected_reason_requires_both_email_and_phone(structured_payload: dict, expected_reason: str) -> None:
     cleaned = clean_raw_record(
         {
-            'structured_payload': {'company_name': 'No Contact Inc'},
+            'structured_payload': structured_payload,
             'markdown': 'No public contact here.',
             'source_url': 'https://nocontact.example',
             'source_type': 'public_web',
         },
-        min_contact_fields=min_fields,
+        min_contact_fields=['email', 'phone'],
         country_hint='CN',
     )
 
     assert cleaned.accepted is False
     assert cleaned.rejected_reason == expected_reason
+
+
+def test_business_config_accepts_required_contact_fields_alias() -> None:
+    assert _contact_field_requirements({'required_contact_fields': ['email']}) == ['email']
+    assert _contact_field_requirements({'min_contact_fields': ['phone']}) == ['phone']
+    assert _contact_field_requirements({}) == ['email', 'phone']
 
 
 def test_scoring_is_deterministic_and_rewards_traceable_contact_data() -> None:
@@ -101,7 +107,7 @@ def test_dedupe_uses_email_phone_domain_order_and_scope_isolation() -> None:
     store = InMemoryLeadStore()
     first = clean_raw_record(
         {
-            'structured_payload': {'company_name': 'Same Co', 'emails': ['sales@example.org']},
+            'structured_payload': {'company_name': 'Same Co', 'emails': ['sales@example.org'], 'phones': ['(415) 555-2671']},
             'source_url': 'https://example.org/contact',
             'source_type': 'public_web',
         },
@@ -112,7 +118,12 @@ def test_dedupe_uses_email_phone_domain_order_and_scope_isolation() -> None:
 
     second = clean_raw_record(
         {
-            'structured_payload': {'company_name': 'Same Co other', 'phones': ['(415) 555-2671'], 'website': 'https://example.org'},
+            'structured_payload': {
+                'company_name': 'Same Co other',
+                'emails': ['other@example.org'],
+                'phones': ['(415) 555-2672'],
+                'website': 'https://example.org',
+            },
             'source_url': 'https://example.org/about',
             'source_type': 'public_web',
         },
@@ -145,8 +156,8 @@ async def test_provider_returns_crawled_items_from_firecrawl_client() -> None:
             return {
                 'source_url': url,
                 'title': 'Public web result',
-                'markdown': 'sales@example.com',
-                'structured_payload': {'emails': ['sales@example.com']},
+                'markdown': 'sales@example.org (415) 555-2671',
+                'structured_payload': {'emails': ['sales@example.org'], 'phones': ['(415) 555-2671']},
                 'extract_mode': 'scrape_json',
                 'llm_schema_version': schema_version,
                 'llm_prompt_version': prompt_version,
@@ -161,7 +172,48 @@ async def test_provider_returns_crawled_items_from_firecrawl_client() -> None:
 
     assert len(items) == 1
     assert items[0].source_url == 'https://example.com'
-    assert items[0].structured_payload == {'emails': ['sales@example.com']}
+    assert items[0].structured_payload == {'emails': ['sales@example.org'], 'phones': ['(415) 555-2671']}
+
+
+@pytest.mark.asyncio
+async def test_provider_can_use_firecrawl_extract_mode_from_options() -> None:
+    calls: list[tuple[str, str | list[str], str, str]] = []
+
+    class FakeFirecrawl:
+        async def scrape_lead_json(self, url: str, schema_version: str, prompt_version: str):
+            calls.append(('scrape', url, schema_version, prompt_version))
+            return {}
+
+        async def extract_leads(self, urls: list[str], schema_version: str, prompt_version: str):
+            calls.append(('extract', urls, schema_version, prompt_version))
+            return {
+                'source_url': urls[0],
+                'structured_payload': {
+                    'company_name': 'IANA',
+                    'emails': ['iana@iana.org'],
+                    'phones': ['+1-424-254-5300'],
+                },
+                'extract_mode': 'extract',
+                'llm_schema_version': schema_version,
+                'llm_prompt_version': prompt_version,
+                'attempt_count': 1,
+            }
+
+    provider = get_provider('public_web')
+    items = await provider.crawl(
+        CrawlRequest(
+            job_id=1,
+            keyword='https://www.iana.org/contact',
+            source_type='public_web',
+            lead_scope='public',
+            config={'firecrawl_options': {'extract_mode': 'extract', 'schema_version': 'lead_v2', 'prompt_version': 'lead_prompt_v2'}},
+        ),
+        firecrawl_client=FakeFirecrawl(),
+    )
+
+    assert calls == [('extract', ['https://www.iana.org/contact'], 'lead_v2', 'lead_prompt_v2')]
+    assert items[0].extract_mode == 'extract'
+    assert items[0].structured_payload['emails'] == ['iana@iana.org']
 
 
 @pytest.mark.asyncio
@@ -180,6 +232,72 @@ async def test_firecrawl_retries_only_retryable_failures() -> None:
     assert result['markdown'] == 'ok'
     assert result['attempt_count'] == 2
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_firecrawl_sends_scrape_json_payload_and_bearer_token() -> None:
+    requests: list[tuple[str, str, dict, dict, float]] = []
+
+    async def sender(method: str, url: str, payload: dict, headers: dict, timeout: float):
+        requests.append((method, url, payload, headers, timeout))
+        return {
+            'status_code': 200,
+            'json': {
+                'data': {
+                    'url': 'https://www.iana.org/contact',
+                    'json': {'emails': ['iana@iana.org'], 'phones': ['+1-424-254-5300']},
+                },
+            },
+        }
+
+    client = FirecrawlClient(api_key='secret-token', timeout_seconds=12, sender=sender)
+    result = await client.scrape_lead_json('https://www.iana.org/contact', 'lead_v1', 'lead_extract_v1')
+
+    method, url, payload, headers, timeout = requests[0]
+    assert method == 'POST'
+    assert url == 'https://firecrawl.dcfuture.com.cn/v1/scrape'
+    assert headers['Authorization'] == 'Bearer secret-token'
+    assert timeout == 12
+    assert payload['formats'] == ['markdown', 'html', 'json']
+    assert payload['jsonOptions']['schema']['properties']['emails']['type'] == 'array'
+    assert 'lead_extract_v1' in payload['jsonOptions']['prompt']
+    assert result['structured_payload'] == {'emails': ['iana@iana.org'], 'phones': ['+1-424-254-5300']}
+
+
+@pytest.mark.asyncio
+async def test_firecrawl_retries_retryable_http_statuses_only() -> None:
+    calls = 0
+
+    async def sender(method: str, url: str, payload: dict, headers: dict, timeout: float):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {'status_code': 429, 'json': {'error': 'rate limited'}}
+        return {'status_code': 200, 'json': {'data': {'markdown': 'ok'}}}
+
+    client = FirecrawlClient(sender=sender, sleep=lambda _: None, jitter=lambda: 0, max_retries=2)
+    result = await client.scrape_markdown('https://example.com')
+
+    assert calls == 2
+    assert result['attempt_count'] == 2
+
+
+@pytest.mark.asyncio
+async def test_firecrawl_extract_sends_prompt_schema_payload() -> None:
+    requests: list[dict] = []
+
+    async def sender(method: str, url: str, payload: dict, headers: dict, timeout: float):
+        requests.append(payload)
+        return {'status_code': 200, 'json': {'data': {'emails': ['iana@iana.org'], 'phones': ['+1-424-254-5300']}}}
+
+    client = FirecrawlClient(sender=sender)
+    result = await client.extract_leads(['https://www.iana.org/contact'], 'lead_v1', 'lead_extract_v1')
+
+    assert requests[0]['urls'] == ['https://www.iana.org/contact']
+    assert requests[0]['schema']['properties']['phones']['items']['type'] == 'string'
+    assert 'lead_extract_v1' in requests[0]['prompt']
+    assert result['extract_mode'] == 'extract'
+    assert result['structured_payload'] == {'emails': ['iana@iana.org'], 'phones': ['+1-424-254-5300']}
 
 
 @pytest.mark.asyncio

@@ -171,14 +171,26 @@ def _extract_phone_candidates(text: str) -> list[str]:
 
 def _admission_rejection(*, min_fields: list[str], email_normalized: str | None, phone_normalized: str | None) -> str | None:
     allowed = set(min_fields or ['email', 'phone'])
+    if allowed == {'email', 'phone'}:
+        if email_normalized and phone_normalized:
+            return None
+        if email_normalized:
+            return 'missing_phone'
+        if phone_normalized:
+            return 'missing_email'
+        return 'missing_both'
+    if allowed == {'email'}:
+        if email_normalized:
+            return None
+        return 'missing_email'
+    if allowed == {'phone'}:
+        if phone_normalized:
+            return None
+        return 'missing_phone'
     if 'email' in allowed and email_normalized:
         return None
     if 'phone' in allowed and phone_normalized:
         return None
-    if allowed == {'email'}:
-        return 'missing_email'
-    if allowed == {'phone'}:
-        return 'missing_phone'
     return 'missing_contact'
 
 
