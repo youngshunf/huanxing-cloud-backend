@@ -62,6 +62,12 @@ class FirecrawlClient:
         result['llm_prompt_version'] = prompt_version
         return result
 
+    async def search(self, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
+        payload = {'query': query, 'limit': limit}
+        result = await self._post('/v1/search', payload, extract_mode='search')
+        raw_results = result.get('raw_payload') if isinstance(result.get('raw_payload'), list) else []
+        return [normalized for item in raw_results if (normalized := _normalize_search_result(item))]
+
     async def extract_leads(self, urls: list[str], schema_version: str, prompt_version: str) -> dict[str, Any]:
         payload = {'urls': urls, 'schema': lead_json_schema(), 'prompt': lead_prompt(prompt_version)}
         result = await self._post('/v1/extract', payload, extract_mode='extract')
@@ -122,7 +128,20 @@ class FirecrawlClient:
         return {'status_code': response.status_code, 'json': body}
 
     def _normalize_response(self, body: dict[str, Any], *, extract_mode: str, attempt_count: int) -> dict[str, Any]:
-        data = body.get('data') if isinstance(body.get('data'), dict) else body
+        data = body.get('data') if isinstance(body.get('data'), dict | list) else body
+        if isinstance(data, list):
+            return {
+                'source_url': None,
+                'title': None,
+                'markdown': None,
+                'raw_html': None,
+                'raw_text': None,
+                'raw_payload': data,
+                'structured_payload': None,
+                'llm_confidence': None,
+                'extract_mode': extract_mode,
+                'attempt_count': attempt_count,
+            }
         metadata = data.get('metadata') if isinstance(data.get('metadata'), dict) else {}
         structured_payload = data.get('json') or data.get('extract') or data.get('structured_payload')
         if structured_payload is None and extract_mode == 'extract':
@@ -159,3 +178,13 @@ def lead_json_schema() -> dict[str, Any]:
 
 def lead_prompt(prompt_version: str) -> str:
     return f'{prompt_version}: only extract business contact information explicitly visible on the page.'
+
+
+def _normalize_search_result(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    metadata = item.get('metadata') if isinstance(item.get('metadata'), dict) else {}
+    url = item.get('url') or item.get('sourceURL') or metadata.get('sourceURL')
+    if not url:
+        return None
+    return {'url': url, 'title': item.get('title') or metadata.get('title'), 'raw_payload': item}

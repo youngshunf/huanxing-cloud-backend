@@ -164,6 +164,9 @@ async def test_provider_returns_crawled_items_from_firecrawl_client() -> None:
                 'attempt_count': 1,
             }
 
+        async def search(self, query: str, *, limit: int = 5) -> list[dict]:
+            raise AssertionError('url keywords should not search')
+
     provider = get_provider('public_web')
     items = await provider.crawl(
         CrawlRequest(job_id=1, keyword='example.com', source_type='public_web', lead_scope='public'),
@@ -173,6 +176,54 @@ async def test_provider_returns_crawled_items_from_firecrawl_client() -> None:
     assert len(items) == 1
     assert items[0].source_url == 'https://example.com'
     assert items[0].structured_payload == {'emails': ['sales@example.org'], 'phones': ['(415) 555-2671']}
+
+
+@pytest.mark.asyncio
+async def test_provider_searches_keyword_then_scrapes_result_urls() -> None:
+    calls: list[tuple[str, str | int]] = []
+
+    class FakeFirecrawl:
+        async def search(self, query: str, *, limit: int = 5) -> list[dict]:
+            calls.append(('search', query))
+            calls.append(('limit', limit))
+            return [
+                {'url': 'https://acme.example/contact', 'title': 'Acme Contact'},
+                {'url': 'https://beta.example/contact', 'title': 'Beta Contact'},
+            ]
+
+        async def scrape_lead_json(self, url: str, schema_version: str, prompt_version: str):
+            calls.append(('scrape', url))
+            return {
+                'source_url': url,
+                'title': f'{url} title',
+                'markdown': 'sales@company.test (415) 555-2671',
+                'structured_payload': {'emails': ['sales@company.test'], 'phones': ['(415) 555-2671']},
+                'extract_mode': 'scrape_json',
+                'llm_schema_version': schema_version,
+                'llm_prompt_version': prompt_version,
+                'attempt_count': 1,
+            }
+
+    provider = get_provider('public_web')
+    items = await provider.crawl(
+        CrawlRequest(
+            job_id=1,
+            keyword='深圳 工业机器人 集成商 联系方式',
+            source_type='public_web',
+            lead_scope='public',
+            max_results=2,
+            config={'firecrawl_options': {'search_limit': 5}},
+        ),
+        firecrawl_client=FakeFirecrawl(),
+    )
+
+    assert calls == [
+        ('search', '深圳 工业机器人 集成商 联系方式'),
+        ('limit', 5),
+        ('scrape', 'https://acme.example/contact'),
+        ('scrape', 'https://beta.example/contact'),
+    ]
+    assert [item.source_url for item in items] == ['https://acme.example/contact', 'https://beta.example/contact']
 
 
 @pytest.mark.asyncio
@@ -198,6 +249,9 @@ async def test_provider_can_use_firecrawl_extract_mode_from_options() -> None:
                 'llm_prompt_version': prompt_version,
                 'attempt_count': 1,
             }
+
+        async def search(self, query: str, *, limit: int = 5) -> list[dict]:
+            raise AssertionError('url keywords should not search')
 
     provider = get_provider('public_web')
     items = await provider.crawl(
@@ -298,6 +352,44 @@ async def test_firecrawl_extract_sends_prompt_schema_payload() -> None:
     assert 'lead_extract_v1' in requests[0]['prompt']
     assert result['extract_mode'] == 'extract'
     assert result['structured_payload'] == {'emails': ['iana@iana.org'], 'phones': ['+1-424-254-5300']}
+
+
+@pytest.mark.asyncio
+async def test_firecrawl_search_sends_query_and_normalizes_result_urls() -> None:
+    requests: list[tuple[str, str, dict]] = []
+
+    async def sender(method: str, url: str, payload: dict, headers: dict, timeout: float):
+        requests.append((method, url, payload))
+        return {
+            'status_code': 200,
+            'json': {
+                'success': True,
+                'data': [
+                    {'url': 'https://acme.example/contact', 'title': 'Acme'},
+                    {'sourceURL': 'https://beta.example/contact', 'metadata': {'title': 'Beta'}},
+                    {'title': 'Missing URL'},
+                ],
+            },
+        }
+
+    client = FirecrawlClient(sender=sender)
+    results = await client.search('工业机器人 集成商 联系方式', limit=3)
+
+    assert requests == [
+        (
+            'POST',
+            'https://firecrawl.dcfuture.com.cn/v1/search',
+            {'query': '工业机器人 集成商 联系方式', 'limit': 3},
+        )
+    ]
+    assert results == [
+        {'url': 'https://acme.example/contact', 'title': 'Acme', 'raw_payload': {'url': 'https://acme.example/contact', 'title': 'Acme'}},
+        {
+            'url': 'https://beta.example/contact',
+            'title': 'Beta',
+            'raw_payload': {'sourceURL': 'https://beta.example/contact', 'metadata': {'title': 'Beta'}},
+        },
+    ]
 
 
 @pytest.mark.asyncio
