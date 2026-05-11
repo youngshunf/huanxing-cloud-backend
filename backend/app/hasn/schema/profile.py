@@ -16,6 +16,11 @@ class GetMergedProfile(SchemaBase):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # 关联键 — hasn-node daemon 本地 owners 通过 user_id 跟 sys_user /
+    # hasn_humans 对齐；缺这个字段则 daemon 无法把 cloud 数据反向定位
+    # 到自己的 OwnerScope。
+    user_id: int = Field(description='sys_user.id (BIGINT)')
+
     # hasn_humans 身份字段（只读）
     hasn_id: str = Field(description='HASN 唯一标识 (h_{uuid})')
     star_id: str = Field(description='唤星号 (注册后不可改)')

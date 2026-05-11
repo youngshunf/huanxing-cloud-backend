@@ -34,6 +34,7 @@ class HasnProfileService:
 
         return GetMergedProfile.model_validate(
             {
+                'user_id': user.id,
                 'hasn_id': human.hasn_id,
                 'star_id': human.star_id,
                 # 公开身份：以 hasn_humans 为准；缺失时回退 sys_user.nickname
