@@ -94,7 +94,7 @@ async def test_cloud_first_create_merges_template_defaults_and_returns_agent_sna
         request=CloudCreateAgentRequest(
             owner_id='h_owner',
             template_id='tpl_assistant',
-            agent_name='agent',
+            agent_name=None,
             display_name='云端 Agent',
             description='用户简介',
             avatar='https://cdn.example.com/user.png',
@@ -110,7 +110,7 @@ async def test_cloud_first_create_merges_template_defaults_and_returns_agent_sna
     expected_core_payload = {
         'owner_id': 'h_owner',
         'template_id': 'tpl_assistant',
-        'agent_name': 'agent',
+        'agent_name': 'tpl_assistant',
         'display_name': '云端 Agent',
         'description': '用户简介',
         'avatar': 'https://cdn.example.com/user.png',
@@ -150,7 +150,7 @@ async def test_cloud_first_create_uses_template_defaults_when_user_omits_optiona
         request=CloudCreateAgentRequest(
             owner_id='h_owner',
             template_id='tpl_assistant',
-            agent_name='agent',
+            agent_name=None,
             display_name='云端 Agent',
         ),
         user_id=100,

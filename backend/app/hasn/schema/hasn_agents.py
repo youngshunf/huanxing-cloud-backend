@@ -82,7 +82,7 @@ class CloudCreateAgentRequest(SchemaBase):
 
     owner_id: str = Field(description='Owner HASN ID')
     template_id: str | None = Field(None, description='模板 ID；空表示自定义')
-    agent_name: str = Field(description='Agent 英文/目录标识')
+    agent_name: str | None = Field(None, description='Agent 英文/目录标识；空则云端按显示名/模板生成')
     display_name: str = Field(description='Agent 显示名')
     description: str | None = Field(None, description='Agent 简介')
     avatar: str | None = Field(None, description='Agent 头像 URL')

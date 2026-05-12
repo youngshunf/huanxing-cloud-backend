@@ -1,4 +1,5 @@
 from typing import Any, Protocol, Sequence
+import re
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -163,7 +164,7 @@ def _merge_agent_create_payload(request: CloudCreateAgentRequest, template: Any 
     return {
         'owner_id': request.owner_id,
         'template_id': request.template_id,
-        'agent_name': request.agent_name,
+        'agent_name': _resolve_agent_slug(request, template),
         'display_name': request.display_name,
         'description': request.description or getattr(template, 'default_description', None) or getattr(template, 'description', None),
         'avatar': request.avatar or getattr(template, 'avatar', None),
@@ -176,6 +177,25 @@ def _merge_agent_create_payload(request: CloudCreateAgentRequest, template: Any 
         'role': request.role,
         'capabilities': request.capabilities,
     }
+
+
+_SLUG_RE = re.compile(r'^[a-z][a-z0-9_-]{0,63}$')
+
+
+def _resolve_agent_slug(request: CloudCreateAgentRequest, template: Any | None) -> str:
+    if request.agent_name and _SLUG_RE.match(request.agent_name):
+        return request.agent_name
+    for candidate in (
+        getattr(template, 'agent_name', None),
+        getattr(template, 'template_id', None),
+        request.template_id,
+    ):
+        if isinstance(candidate, str) and _SLUG_RE.match(candidate):
+            return candidate
+    slug = re.sub(r'[^a-z0-9_-]+', '-', request.display_name.lower()).strip('-_')[:64]
+    if slug and _SLUG_RE.match(slug):
+        return slug
+    return 'agent'
 
 
 def _agent_snapshot(agent: Any) -> AgentSnapshot:
