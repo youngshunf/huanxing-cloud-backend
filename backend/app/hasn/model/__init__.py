@@ -1,5 +1,6 @@
 from backend.app.hasn.model.hasn_humans import HasnHumans as HasnHumans
 from backend.app.hasn.model.hasn_agents import HasnAgents as HasnAgents
+from backend.app.hasn.model.hasn_agent_templates import HasnAgentTemplates as HasnAgentTemplates
 from backend.app.hasn.model.hasn_contacts import HasnContacts as HasnContacts
 from backend.app.hasn.model.hasn_conversations import HasnConversations as HasnConversations
 from backend.app.hasn.model.hasn_messages import HasnMessages as HasnMessages

@@ -418,9 +418,13 @@ async def register_hasn_agent(
     node_id: str | None = None,
     role: str = 'specialist',
     description: str | None = None,
-    capabilities: list | None = None,
+    capabilities: list | dict | None = None,
     created_via: str = 'client',
     avatar_url: str | None = None,
+    template_id: str | None = None,
+    skills: dict | list | None = None,
+    soul_md: str | None = None,
+    user_md: str | None = None,
 ) -> dict[str, Any]:
     """
     为已有 Human 注册新 Agent 的 HASN 身份
@@ -468,7 +472,20 @@ async def register_hasn_agent(
         if avatar_url and existing_agent.avatar != avatar_url:
             existing_agent.avatar = avatar_url
             updated = True
+        for attr, value in {
+            'description': description,
+            'capabilities': capabilities,
+            'template_id': template_id,
+            'skills': skills,
+            'soul_md': soul_md,
+            'user_md': user_md,
+        }.items():
+            if value is not None and hasattr(existing_agent, attr) and getattr(existing_agent, attr) != value:
+                setattr(existing_agent, attr, value)
+                updated = True
         if updated:
+            if hasattr(existing_agent, 'profile_revision'):
+                existing_agent.profile_revision = (existing_agent.profile_revision or 1) + 1
             await db.flush()
         return {
             'agent': existing_agent,
@@ -492,6 +509,12 @@ async def register_hasn_agent(
         role=role or 'specialist',
         description=description,
         capabilities=capabilities,
+        template_id=template_id,
+        skills=skills,
+        soul_md=soul_md,
+        user_md=user_md,
+        profile_source='cloud',
+        profile_revision=1,
         avatar=avatar_url,
         api_key_hash=agent_key_hash,
         status='active',

@@ -8,11 +8,15 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Request
 
 from backend.app.hasn.schema.hasn_agents import (
+    AgentSyncRequest,
+    AgentSyncResponse,
+    CloudCreateAgentRequest,
+    CloudCreateAgentResponse,
     CreateHasnAgentsParam,
     GetHasnAgentsDetail,
     UpdateHasnAgentsParam,
 )
-from backend.app.hasn.service.hasn_agents_service import hasn_agents_service
+from backend.app.hasn.service.hasn_agents_service import agent_profile_service, hasn_agents_service
 from backend.common.exception import errors
 from backend.common.pagination import DependsPagination, PageData
 from backend.common.response.response_schema import ResponseModel, ResponseSchemaModel, response_base
@@ -20,6 +24,39 @@ from backend.common.security.jwt import DependsJwtAuth
 from backend.database.db import CurrentSession, CurrentSessionTransaction
 
 router = APIRouter()
+
+
+@router.get(
+    '/sync',
+    summary='同步云端 HASN Agent Profile 快照',
+    dependencies=[DependsJwtAuth],
+)
+async def sync_my_hasn_agents(
+    request: Request,
+    db: CurrentSession,
+    owner_id: str,
+    after_revision: int | None = None,
+) -> ResponseSchemaModel[AgentSyncResponse]:
+    result = await agent_profile_service.sync_agents(
+        db=db,
+        request=AgentSyncRequest(owner_id=owner_id, after_revision=after_revision),
+        user_id=request.user.id,
+    )
+    return response_base.success(data=result)
+
+
+@router.post(
+    '/cloud-create',
+    summary='云端优先创建 HASN Agent Profile',
+    dependencies=[DependsJwtAuth],
+)
+async def cloud_create_my_hasn_agent(
+    request: Request,
+    db: CurrentSessionTransaction,
+    obj: CloudCreateAgentRequest,
+) -> ResponseSchemaModel[CloudCreateAgentResponse]:
+    result = await agent_profile_service.create_cloud_first(db=db, request=obj, user_id=request.user.id)
+    return response_base.success(data=result)
 
 
 @router.get(
