@@ -140,6 +140,7 @@ class MessageRecord:
     content_type: int = 1
     priority: str = 'normal'
     client_message_id: str | None = None
+    process_blocks: list[dict[str, Any]] = field(default_factory=list)
 
 
 class MessageHubGateway(Protocol):
@@ -292,6 +293,7 @@ class SqlAlchemyMessageHubGateway:
                     to_type,
                     content_type,
                     content,
+                    process_blocks,
                     msg_type,
                     status,
                     priority,
@@ -317,6 +319,7 @@ class SqlAlchemyMessageHubGateway:
                     :to_type,
                     :content_type,
                     CAST(:content AS jsonb),
+                    CAST(:process_blocks AS jsonb),
                     :msg_type,
                     1,
                     :priority,
@@ -346,6 +349,7 @@ class SqlAlchemyMessageHubGateway:
                 'to_type': _entity_type_int(record.to_id),
                 'content_type': record.content_type,
                 'content': json.dumps(record.content, ensure_ascii=False, sort_keys=True),
+                'process_blocks': json.dumps(record.process_blocks, ensure_ascii=False, sort_keys=True, default=str),
                 'msg_type': record.msg_type,
                 'priority': record.priority,
                 'runtime_type': record.runtime_summary.runtime_type if record.runtime_summary else None,
@@ -503,6 +507,7 @@ class SqlAlchemyMessageHubGateway:
                        conversation_id::text AS conversation_id,
                        owner_copy_of_message_id,
                        content,
+                       process_blocks,
                        context,
                        dispatch_status,
                        created_time
@@ -547,7 +552,8 @@ class SqlAlchemyMessageHubGateway:
                        s.dispatch_status,
                        s.created_time,
                        m.context,
-                       m.content
+                       m.content,
+                       m.process_blocks
                 FROM public.hasn_suppressed_messages s
                 LEFT JOIN public.hasn_messages m ON m.id = s.message_id
                 WHERE s.owner_id = :owner_id
@@ -611,6 +617,7 @@ class HasnMessageHubService:
                 from_id=sender_id,
                 to_id=recipient.hasn_id,
                 content=_content(envelope),
+                process_blocks=_process_blocks(envelope),
                 envelope=envelope,
                 inbox_kind=primary_kind,
                 dispatch_status=dispatch_status,
@@ -633,6 +640,7 @@ class HasnMessageHubService:
                     from_id=sender_id,
                     to_id=recipient.hasn_id,
                     content=_content(envelope),
+                    process_blocks=_process_blocks(envelope),
                     envelope=envelope,
                     inbox_kind='owner_copy',
                     dispatch_status=dispatch_status,
@@ -756,6 +764,15 @@ def _content(envelope: dict[str, Any]) -> dict[str, Any]:
     return content if isinstance(content, dict) else {'text': str(content)}
 
 
+def _process_blocks(envelope: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = envelope.get('process_blocks')
+    if raw is None:
+        raw = envelope.get('process')
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
 def _msg_type(envelope: dict[str, Any]) -> str:
     return str(envelope.get('msg_type') or envelope.get('type') or envelope.get('method') or 'message')[:30]
 
@@ -848,6 +865,7 @@ def _envelope_for_delivery(
             'hasn_id': message.hasn_id,
             'to_owner_id': recipient.owner_id,
             'dispatch_status': message.dispatch_status,
+            'process_blocks': _process_blocks(envelope),
         }
     )
     delivered.pop('node_role', None)
@@ -901,6 +919,20 @@ def _row_json(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _row_list(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+        except json.JSONDecodeError:
+            return []
+    return []
+
+
 def _row_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
@@ -914,6 +946,7 @@ def _inbox_item_from_message_row(row: dict[str, Any]) -> InboxItem:
         inbox_kind = 'owner_copy' if row.get('owner_copy_of_message_id') else _inbox_kind_for_hasn(row['hasn_id'])
     envelope = context.get('s4_envelope') or {'content': _row_json(row.get('content'))}
     envelope = copy.deepcopy(envelope)
+    envelope['process_blocks'] = _row_list(row.get('process_blocks'))
     envelope.update(
         {
             'message_id': str(row['id']),
@@ -940,6 +973,7 @@ def _inbox_item_from_suppressed_row(row: dict[str, Any]) -> InboxItem:
     context = _row_json(row.get('context'))
     envelope = context.get('s4_envelope') or {'content': _row_json(row.get('content'))}
     envelope = copy.deepcopy(envelope)
+    envelope['process_blocks'] = _row_list(row.get('process_blocks'))
     envelope.update(
         {
             'message_id': str(row['message_id']),

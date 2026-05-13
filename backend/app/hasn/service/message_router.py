@@ -438,6 +438,7 @@ async def persist_message(
     reply_to_id: int | None = None,
     local_id: str | None = None,
     context: dict | None = None,
+    process_blocks: list[dict[str, Any]] | None = None,
 ) -> HasnMessages:
     """持久化消息并更新会话"""
     now = timezone.now()
@@ -450,6 +451,7 @@ async def persist_message(
         to_type=_entity_type_int(to_id),
         content_type=content_type,
         content=content,
+        process_blocks=process_blocks or [],
         msg_type=msg_type,
         status=1,  # sent
         priority=priority,

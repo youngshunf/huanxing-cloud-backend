@@ -23,6 +23,7 @@ class HasnMessages(Base):
     to_type: Mapped[int] = mapped_column(sa.SMALLINT(), default=0, comment='接收方类型 (1:人类:blue/2:代理:green/3:系统:gray/4:群组:purple)')
     content_type: Mapped[int] = mapped_column(sa.SMALLINT(), default=0, comment='内容类型 (1:文本:blue/2:图片:green/3:文件:orange/4:语音:cyan/5:卡片:purple/6:能力请求:red/7:能力响应:gray)')
     content: Mapped[dict] = mapped_column(postgresql.JSONB(), default_factory=dict, comment='消息内容 (JSONB)')
+    process_blocks: Mapped[list] = mapped_column(postgresql.JSONB(), default_factory=list, comment='消息生成过程块（JSONB 数组，按产生顺序保存 stream_chunk/tool_call/status 等事件）')
     msg_type: Mapped[str] = mapped_column(sa.String(30), default='', comment='消息类型 (message:普通消息:blue/contact_request:好友请求:orange/contact_accept:接受好友:green/contact_reject:拒绝好友:red/group_invite:群邀请:purple/group_update:群变更:cyan/notification:通知:cyan/system:系统消息:gray)')
     status: Mapped[int] = mapped_column(sa.SMALLINT(), default=0, comment='消息状态 (1:已发送:blue/2:已送达:cyan/3:已读:green/4:已撤回:red)')
     priority: Mapped[str] = mapped_column(sa.String(10), default='', comment='优先级 (critical:紧急:red/high:高:orange/normal:普通:blue/low:低:gray)')
