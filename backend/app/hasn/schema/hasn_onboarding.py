@@ -84,6 +84,10 @@ class AgentSummary(SchemaBase):
     # hasn_agents 表中的 star_id 字段透传，daemon 用真实 star_id 写本地。
     star_id: str = Field(description='默认 Agent 唤星号 (e.g. 100001#star)')
     display_name: str | None = Field(default=None, description='默认 Agent 显示名称')
+    # Agent JWT 认证信息
+    access_token: str = Field(description='Agent JWT access token')
+    scopes: list[str] = Field(description='Agent 权限列表')
+    expire_time: str = Field(description='Token 过期时间 ISO8601 格式')
 
 
 class SandboxSummary(SchemaBase):

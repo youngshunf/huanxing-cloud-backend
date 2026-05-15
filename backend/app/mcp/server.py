@@ -7,11 +7,9 @@ import logging
 import json
 from typing import Any
 
-from mcp.server import Server
-from mcp.types import Tool, TextContent
-
-from backend.app.mcp.context import get_current_agent_context
+from backend.app.mcp.auth import AgentContext
 from backend.app.mcp.tools.registry import ToolRegistry
+from backend.app.mcp.tools.base import BaseTool
 from backend.app.mcp.tools.message import MessageSendTool, MessageListTool
 from backend.app.mcp.tools.contact import ContactListTool
 from backend.app.mcp.tools.app_tools import load_app_tools_for_agent, load_app_tools_for_owner
@@ -23,14 +21,10 @@ class HasnCloudMcpServer:
     """HASN 云端 MCP Server"""
 
     def __init__(self):
-        self.server = Server("hasn-cloud-mcp")
         self.tool_registry = ToolRegistry()
 
         # 注册内置工具
         self._register_builtin_tools()
-
-        # 注册 MCP handlers
-        self._register_handlers()
 
     def _register_builtin_tools(self):
         """注册内置工具"""
@@ -43,91 +37,113 @@ class HasnCloudMcpServer:
 
         logger.info(f"Registered {len(self.tool_registry.get_all_tools())} builtin tools")
 
-    def _register_handlers(self):
-        """注册 MCP handlers"""
+    async def list_tools(
+        self,
+        agent_context: AgentContext,
+        namespace: str | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        列出可用工具
 
-        @self.server.list_tools()
-        async def list_tools() -> list[Tool]:
-            """列出可用工具"""
-            try:
-                # 从请求上下文获取 AgentContext
-                agent_context = get_current_agent_context()
+        Args:
+            agent_context: Agent 上下文
+            namespace: 可选的命名空间过滤
 
-                # 动态加载 App Tools
-                await self._load_app_tools(agent_context)
+        Returns:
+            工具列表
+        """
+        try:
+            # 动态加载 App Tools
+            await self._load_app_tools(agent_context)
 
-                # 根据 Agent 权限过滤工具
-                available_tools = []
-                for tool in self.tool_registry.get_all_tools():
-                    if self._check_tool_permission(agent_context, tool):
-                        available_tools.append(tool.to_mcp_tool())
+            # 获取所有工具
+            if namespace:
+                tools = self.tool_registry.get_tools_by_namespace(namespace)
+            else:
+                tools = self.tool_registry.get_all_tools()
 
-                logger.info(
-                    f"Agent {agent_context.hasn_id} listed {len(available_tools)} tools"
+            # 根据 Agent 权限过滤工具
+            available_tools = []
+            for tool in tools:
+                if self._check_tool_permission(agent_context, tool):
+                    available_tools.append({
+                        "name": tool.name,
+                        "description": tool.description,
+                        "input_schema": tool.input_schema,
+                    })
+
+            logger.info(
+                f"Agent {agent_context.hasn_id} listed {len(available_tools)} tools"
+            )
+
+            return available_tools
+        except Exception as e:
+            logger.error(f"Error listing tools: {str(e)}", exc_info=True)
+            raise
+
+    async def call_tool(
+        self,
+        agent_context: AgentContext,
+        tool_name: str,
+        arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        调用工具
+
+        Args:
+            agent_context: Agent 上下文
+            tool_name: 工具名称
+            arguments: 工具参数
+
+        Returns:
+            工具执行结果
+        """
+        try:
+            logger.info(
+                f"Agent {agent_context.hasn_id} calling tool: {tool_name}"
+            )
+
+            # 查找工具
+            tool = self.tool_registry.get_tool(tool_name)
+            if not tool:
+                raise ValueError(f"Tool not found: {tool_name}")
+
+            # 检查权限
+            if not self._check_tool_permission(agent_context, tool):
+                raise PermissionError(
+                    f"Missing required scopes: {', '.join(tool.required_scopes)}"
                 )
 
-                return available_tools
-            except Exception as e:
-                logger.error(f"Error listing tools: {str(e)}", exc_info=True)
-                raise
+            # 执行工具
+            result = await tool.execute(agent_context, arguments)
 
-        @self.server.call_tool()
-        async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-            """调用工具"""
+            # 记录审计日志
+            await self._log_tool_call(
+                agent_context, tool_name, arguments, result, success=True
+            )
+
+            return result
+        except Exception as e:
+            logger.error(
+                f"Tool {tool_name} execution failed: {str(e)}",
+                exc_info=True
+            )
+
+            # 记录审计日志
             try:
-                agent_context = get_current_agent_context()
-
-                logger.info(
-                    f"Agent {agent_context.hasn_id} calling tool: {name}"
-                )
-
-                # 查找工具
-                tool = self.tool_registry.get_tool(name)
-                if not tool:
-                    raise ValueError(f"Tool not found: {name}")
-
-                # 检查权限
-                if not self._check_tool_permission(agent_context, tool):
-                    raise PermissionError(
-                        f"Missing required scopes: {', '.join(tool.required_scopes)}"
-                    )
-
-                # 执行工具
-                result = await tool.execute(agent_context, arguments)
-
-                # 记录审计日志
                 await self._log_tool_call(
-                    agent_context, name, arguments, result, success=True
+                    agent_context, tool_name, arguments, None,
+                    success=False, error=str(e)
                 )
+            except:
+                pass
 
-                return [
-                    TextContent(
-                        type="text",
-                        text=json.dumps(result, indent=2, ensure_ascii=False)
-                    )
-                ]
-            except Exception as e:
-                logger.error(
-                    f"Tool {name} execution failed: {str(e)}",
-                    exc_info=True
-                )
-
-                # 记录审计日志
-                try:
-                    agent_context = get_current_agent_context()
-                    await self._log_tool_call(
-                        agent_context, name, arguments, None,
-                        success=False, error=str(e)
-                    )
-                except:
-                    pass
-
-                raise
+            raise
 
     def _check_tool_permission(
         self,
-        agent_context: 'AgentContext',
-        tool: 'BaseTool'
+        agent_context: AgentContext,
+        tool: BaseTool
     ) -> bool:
         """检查 Agent 是否有权限调用该工具"""
         return all(
@@ -135,7 +151,7 @@ class HasnCloudMcpServer:
             for scope in tool.required_scopes
         )
 
-    async def _load_app_tools(self, agent_context: 'AgentContext'):
+    async def _load_app_tools(self, agent_context: AgentContext):
         """
         动态加载 App Tools
 
@@ -181,7 +197,7 @@ class HasnCloudMcpServer:
 
     async def _log_tool_call(
         self,
-        agent_context: 'AgentContext',
+        agent_context: AgentContext,
         tool_name: str,
         arguments: dict[str, Any],
         result: Any,
@@ -191,17 +207,17 @@ class HasnCloudMcpServer:
         """记录工具调用审计日志"""
         try:
             from backend.app.hasn.service.hasn_audit_log_service import HasnAuditLogService
-            from backend.common.database import get_db
+            from backend.database.db import async_db_session
 
-            async for db in get_db():
+            async with async_db_session() as db:
                 audit_service = HasnAuditLogService()
-                await audit_service.create_log(
+                await audit_service.append(
                     db=db,
-                    entity_type="mcp_tool_call",
-                    entity_id=tool_name,
-                    action="execute",
                     actor_type="agent",
                     actor_id=agent_context.hasn_id,
+                    action="mcp_tool_call",
+                    target_type="tool",
+                    target_id=tool_name,
                     details={
                         "tool_name": tool_name,
                         "arguments": arguments,
@@ -210,7 +226,6 @@ class HasnCloudMcpServer:
                         "success": success
                     }
                 )
-                break
         except Exception as e:
             logger.error(f"Failed to log tool call: {str(e)}")
 

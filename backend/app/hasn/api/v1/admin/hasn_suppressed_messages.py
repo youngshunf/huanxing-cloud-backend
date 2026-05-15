@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取HASN Runtime 抑制箱 / owner 可拉取消息详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取HASN Runtime 抑制箱 / owner 可拉取消息详情', dependencies=[DependsJwtAuth], name='admin_get_hasn_suppressed_messages')
 async def get_hasn_suppressed_messages(
     db: CurrentSession, pk: Annotated[int, Path(description='HASN Runtime 抑制箱 / owner 可拉取消息 ID')]
 ) -> ResponseSchemaModel[GetHasnSuppressedMessagesDetail]:
@@ -34,7 +34,7 @@ async def get_hasn_suppressed_messages(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hasn_suppressed_messagess_paginated')
 async def get_hasn_suppressed_messagess_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHasnSuppressedMessagesDetail]]:
     page_data = await hasn_suppressed_messages_service.get_list(db=db)
     return response_base.success(data=page_data)

@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取AI lead automation source configuration详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取AI lead automation source configuration详情', dependencies=[DependsJwtAuth], name='admin_get_lead_source_config')
 async def get_lead_source_config(
     db: CurrentSession, pk: Annotated[int, Path(description='AI lead automation source configuration ID')]
 ) -> ResponseSchemaModel[GetLeadSourceConfigDetail]:
@@ -34,7 +34,7 @@ async def get_lead_source_config(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_lead_source_configs_paginated')
 async def get_lead_source_configs_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetLeadSourceConfigDetail]]:
     page_data = await lead_source_config_service.get_list(db=db)
     return response_base.success(data=page_data)

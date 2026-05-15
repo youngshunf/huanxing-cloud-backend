@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取Valid deduplicated lead contact详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取Valid deduplicated lead contact详情', dependencies=[DependsJwtAuth], name='admin_get_lead_contact')
 async def get_lead_contact(
     db: CurrentSession, pk: Annotated[int, Path(description='Valid deduplicated lead contact ID')]
 ) -> ResponseSchemaModel[GetLeadContactDetail]:
@@ -34,7 +34,7 @@ async def get_lead_contact(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_lead_contacts_paginated')
 async def get_lead_contacts_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetLeadContactDetail]]:
     page_data = await lead_contact_service.get_list(db=db)
     return response_base.success(data=page_data)

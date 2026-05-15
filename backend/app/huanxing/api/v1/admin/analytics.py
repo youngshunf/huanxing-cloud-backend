@@ -15,7 +15,7 @@ router = APIRouter()
     summary='分析看板数据',
     description='返回唤星平台的综合分析数据',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_get_analytics')
 async def get_analytics(
     db: CurrentSession,
     days: Annotated[int, Query(description='趋势图天数', ge=7, le=90)] = 30,

@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取唤星用户详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取唤星用户详情', dependencies=[DependsJwtAuth], name='admin_get_huanxing_user')
 async def get_huanxing_user(
     db: CurrentSession, pk: Annotated[int, Path(description='唤星用户 ID')]
 ) -> ResponseSchemaModel[GetHuanxingUserDetail]:
@@ -34,7 +34,7 @@ async def get_huanxing_user(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_huanxing_users_paginated')
 async def get_huanxing_users_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHuanxingUserDetail]]:
     page_data = await huanxing_user_service.get_list(db=db)
     return response_base.success(data=page_data)

@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取Lead multi-source evidence列表',
     dependencies=[DependsPagination],
-)
+ name='open_get_lead_contact_sources')
 async def get_lead_contact_sources(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetLeadContactSourceDetail]]:
@@ -30,7 +30,7 @@ async def get_lead_contact_sources(
 @router.get(
     '/{pk}',
     summary='获取Lead multi-source evidence详情',
-)
+ name='open_get_lead_contact_source')
 async def get_lead_contact_source(
     db: CurrentSession,
     pk: Annotated[int, Path(description='Lead multi-source evidence ID')],

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from backend.common.dataclasses import UploadUrl
 from backend.common.exception import errors
 from backend.common.response.response_schema import ResponseSchemaModel, response_base
-from backend.common.security.agent_auth import DependsAgentAuth
+from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
 from backend.database.db import CurrentSession
 from backend.plugin.s3.crud.storage import s3_storage_dao
 from backend.plugin.s3.utils.file_ops import write_file
@@ -20,7 +20,7 @@ router = APIRouter()
     '/upload',
     summary='Agent 专用文件上传',
     description='Agent 调用进行 OSS 上传，需要携带 X-Agent-Key 请求头',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_upload_s3_files(
     db: CurrentSession, user_id: str, file: Annotated[UploadFile, File()]

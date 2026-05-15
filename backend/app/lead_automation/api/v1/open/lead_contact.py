@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取Valid deduplicated lead contact列表',
     dependencies=[DependsPagination],
-)
+ name='open_get_lead_contacts')
 async def get_lead_contacts(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetLeadContactDetail]]:
@@ -30,7 +30,7 @@ async def get_lead_contacts(
 @router.get(
     '/{pk}',
     summary='获取Valid deduplicated lead contact详情',
-)
+ name='open_get_lead_contact')
 async def get_lead_contact(
     db: CurrentSession,
     pk: Annotated[int, Path(description='Valid deduplicated lead contact ID')],

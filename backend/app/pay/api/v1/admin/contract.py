@@ -18,7 +18,7 @@ router = APIRouter()
     '',
     summary='分页获取签约列表（管理端）',
     dependencies=[DependsJwtAuth, DependsPagination],
-)
+ name='admin_get_contracts_paginated')
 async def get_contracts_paginated(
     db: CurrentSession,
     user_id: Annotated[int | None, Query(description='按用户筛选')] = None,
@@ -32,7 +32,7 @@ async def get_contracts_paginated(
     '/{pk}',
     summary='获取签约详情',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_get_contract_detail')
 async def get_contract_detail(
     db: CurrentSession,
     pk: Annotated[int, Path(description='签约 ID')],

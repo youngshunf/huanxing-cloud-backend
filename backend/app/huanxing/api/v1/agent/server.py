@@ -1,7 +1,7 @@
 """唤星 Agent 服务器上报 API
 
 路径前缀: /api/v1/huanxing/agent/servers
-认证方式: X-Agent-Key（DependsAgentAuth）
+认证方式: Agent JWT (DependsAgentJwtAuth)
 
 供 Guardian Agent 启动时注册服务器，并定期心跳上报状态。
 """
@@ -17,7 +17,7 @@ from backend.app.huanxing.schema.huanxing_server import (
 )
 from backend.app.huanxing.service.huanxing_server_service import huanxing_server_service
 from backend.common.response.response_schema import ResponseModel, ResponseSchemaModel, response_base
-from backend.common.security.agent_auth import DependsAgentAuth
+from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
 from backend.database.db import CurrentSessionTransaction
 
 router = APIRouter()
@@ -26,7 +26,7 @@ router = APIRouter()
 @router.post(
     '/register',
     summary='注册/更新服务器信息（Agent启动时调用）',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_register_server(
     db: CurrentSessionTransaction,
@@ -52,7 +52,7 @@ async def agent_register_server(
     '/{server_id}/heartbeat',
     summary='服务器心跳上报',
     description='Guardian 定期调用，上报服务器状态（Gateway状态、用户数、CPU/内存等）',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_heartbeat(
     db: CurrentSessionTransaction,

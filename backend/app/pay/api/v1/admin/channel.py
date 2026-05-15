@@ -22,7 +22,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取支付渠道详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取支付渠道详情', dependencies=[DependsJwtAuth], name='admin_get_pay_channel')
 async def get_pay_channel(
     db: CurrentSession, pk: Annotated[int, Path(description='支付渠道 ID')]
 ) -> ResponseSchemaModel[GetPayChannelDetail]:
@@ -34,7 +34,7 @@ async def get_pay_channel(
     '',
     summary='分页获取支付渠道',
     dependencies=[DependsJwtAuth, DependsPagination],
-)
+ name='admin_get_pay_channels_paginated')
 async def get_pay_channels_paginated(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetPayChannelDetail]]:

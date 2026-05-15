@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取Rejected, invalid, duplicate, or failed lead record列表',
     dependencies=[DependsPagination],
-)
+ name='open_get_lead_rejected_records')
 async def get_lead_rejected_records(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetLeadRejectedRecordDetail]]:
@@ -30,7 +30,7 @@ async def get_lead_rejected_records(
 @router.get(
     '/{pk}',
     summary='获取Rejected, invalid, duplicate, or failed lead record详情',
-)
+ name='open_get_lead_rejected_record')
 async def get_lead_rejected_record(
     db: CurrentSession,
     pk: Annotated[int, Path(description='Rejected, invalid, duplicate, or failed lead record ID')],

@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取HASN 服务端下行同步事件详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取HASN 服务端下行同步事件详情', dependencies=[DependsJwtAuth], name='admin_get_hasn_sync_events')
 async def get_hasn_sync_events(
     db: CurrentSession, pk: Annotated[int, Path(description='HASN 服务端下行同步事件 ID')]
 ) -> ResponseSchemaModel[GetHasnSyncEventsDetail]:
@@ -34,7 +34,7 @@ async def get_hasn_sync_events(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hasn_sync_eventss_paginated')
 async def get_hasn_sync_eventss_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHasnSyncEventsDetail]]:
     page_data = await hasn_sync_events_service.get_list(db=db)
     return response_base.success(data=page_data)

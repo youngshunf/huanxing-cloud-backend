@@ -36,7 +36,7 @@ async def list_audit_logs(
     )
 
 
-@router.post('/admin/archive-expired', summary='执行到期线索归档', dependencies=[DependsJwtAuth])
+@router.post('/admin/archive-expired', summary='执行到期线索归档', dependencies=[DependsJwtAuth], name='admin_archive_expired')
 async def archive_expired(db: CurrentSessionTransaction) -> ResponseModel:
     return response_base.success(data={'archived_count': await lead_automation_business_service.archive_expired(db)})
 

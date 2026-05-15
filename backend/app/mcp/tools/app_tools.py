@@ -56,11 +56,11 @@ class AppTool(BaseTool):
 
         通过应用平台的 Tool API 网关调用
         """
-        from backend.database.db_mysql import get_db
+        from backend.database.db import async_db_session
         from backend.app.app_platform.service.app_service import app_service
         from backend.app.app_platform.service.permission_validator import permission_validator
 
-        async with get_db() as db:
+        async with async_db_session() as db:
             # 验证权限
             await permission_validator.check_installation_scopes(
                 db=db,
@@ -96,12 +96,12 @@ async def load_app_tools_for_agent(
     Returns:
         App Tools 列表
     """
-    from backend.database.db_mysql import get_db
+    from backend.database.db import async_db_session
     from backend.app.app_platform.service.app_service import app_service
 
     tools = []
 
-    async with get_db() as db:
+    async with async_db_session() as db:
         # 获取该 Agent 的所有安装
         installations = await app_service.list_installations_for_target(
             db=db,
@@ -153,12 +153,12 @@ async def load_app_tools_for_owner(owner_id: str) -> list[AppTool]:
     Returns:
         App Tools 列表
     """
-    from backend.database.db_mysql import get_db
+    from backend.database.db import async_db_session
     from backend.app.app_platform.service.app_service import app_service
 
     tools = []
 
-    async with get_db() as db:
+    async with async_db_session() as db:
         # 获取该 Owner 的所有安装
         installations = await app_service.list_installations_for_target(
             db=db,

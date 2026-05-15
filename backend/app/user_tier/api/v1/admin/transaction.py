@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取积分交易记录详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取积分交易记录详情', dependencies=[DependsJwtAuth], name='admin_get_credit_transaction')
 async def get_credit_transaction(
     db: CurrentSession, pk: Annotated[int, Path(description='积分交易记录 ID')]
 ) -> ResponseSchemaModel[GetCreditTransactionDetail]:
@@ -34,7 +34,7 @@ async def get_credit_transaction(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_credit_transactions_paginated')
 async def get_credit_transactions_paginated(
     db: CurrentSession,
     user_keyword: Annotated[str | None, Query(description='用户昵称/手机号搜索')] = None,

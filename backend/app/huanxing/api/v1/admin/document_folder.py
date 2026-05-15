@@ -22,7 +22,7 @@ router = APIRouter()
     '',
     summary='目录列表（管理端）',
     dependencies=[DependsJwtAuth, DependsRBAC, DependsPagination],
-)
+ name='admin_get_folders')
 async def get_folders(
     db: CurrentSession,
     user_id: Annotated[int | None, Query(description='用户ID筛选')] = None,
@@ -35,7 +35,7 @@ async def get_folders(
     '/{pk}',
     summary='目录详情',
     dependencies=[DependsJwtAuth, DependsRBAC],
-)
+ name='admin_get_folder')
 async def get_folder(
     db: CurrentSession,
     pk: Annotated[int, Path(description='目录 ID')],
@@ -48,7 +48,7 @@ async def get_folder(
     '',
     summary='批量删除目录',
     dependencies=[DependsJwtAuth, DependsRBAC],
-)
+ name='admin_delete_folders')
 async def delete_folders(
     db: CurrentSessionTransaction,
     obj: DeleteFolderParam,

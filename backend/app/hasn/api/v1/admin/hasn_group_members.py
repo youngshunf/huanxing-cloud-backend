@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取HASN 群成员详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取HASN 群成员详情', dependencies=[DependsJwtAuth], name='admin_get_hasn_group_members')
 async def get_hasn_group_members(
     db: CurrentSession, pk: Annotated[int, Path(description='HASN 群成员 ID')]
 ) -> ResponseSchemaModel[GetHasnGroupMembersDetail]:
@@ -34,7 +34,7 @@ async def get_hasn_group_members(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hasn_group_memberss_paginated')
 async def get_hasn_group_memberss_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHasnGroupMembersDetail]]:
     page_data = await hasn_group_members_service.get_list(db=db)
     return response_base.success(data=page_data)

@@ -236,6 +236,13 @@ async def get_jwt_user(user_id: int) -> GetUserInfoWithRelationDetail:
         async with async_db_session() as db:
             current_user = await get_current_user(db, user_id)
             user = GetUserInfoWithRelationDetail.model_validate(current_user)
+
+            # 查询用户的 HASN ID
+            from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+            hasn_human = await hasn_humans_dao.get_by_user_id(db, user_id=user_id)
+            if hasn_human:
+                user.hasn_id = hasn_human.hasn_id
+
             await redis_client.setex(
                 f'{settings.JWT_USER_REDIS_PREFIX}:{user_id}',
                 settings.TOKEN_EXPIRE_SECONDS,

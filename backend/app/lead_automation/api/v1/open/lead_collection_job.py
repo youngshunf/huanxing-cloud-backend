@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取AI lead automation collection job列表',
     dependencies=[DependsPagination],
-)
+ name='open_get_lead_collection_jobs')
 async def get_lead_collection_jobs(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetLeadCollectionJobDetail]]:
@@ -30,7 +30,7 @@ async def get_lead_collection_jobs(
 @router.get(
     '/{pk}',
     summary='获取AI lead automation collection job详情',
-)
+ name='open_get_lead_collection_job')
 async def get_lead_collection_job(
     db: CurrentSession,
     pk: Annotated[int, Path(description='AI lead automation collection job ID')],

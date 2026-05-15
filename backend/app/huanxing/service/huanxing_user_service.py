@@ -143,25 +143,35 @@ class HuanxingUserService:
         return await huanxing_user_dao.update(db, existing.id, update_data)
 
     @staticmethod
-    async def ensure_owner_key(*, db: AsyncSession, user: HuanxingUser) -> str | None:
+    async def ensure_owner_key(
+        *,
+        db: AsyncSession,
+        user: HuanxingUser,
+        owner_user_id: int | None = None
+    ) -> str | None:
         """
         为唤星用户签发 HASN Owner API Key（幂等）。
 
         流程：
-        1. 从 sys_user.uuid 查找 sys_user.id
+        1. 获取 sys_user.id (从 owner_user_id 或通过 user.user_id UUID 查找)
         2. 确保 HASN Human 身份已注册
         3. 检查是否已有 active 的 Owner Key
         4. 如果没有，创建新的 Owner Key
 
         :param user: HuanxingUser 记录
+        :param owner_user_id: 可选的 sys_user.id，如果提供则跳过 UUID 查询
         :return: 明文 owner_api_key (hasn_ok_xxx)，已有 key 时返回 None
         """
-        from backend.common.security.agent_utils import resolve_user_id
         from backend.app.hasn.service.hasn_auth import register_hasn_identity
         from backend.app.hasn.service.hasn_api_key_service import hasn_api_key_service
 
         # 1. 获取 sys_user.id (int)
-        platform_user_id = await resolve_user_id(db, user.user_id)
+        if owner_user_id is not None:
+            platform_user_id = owner_user_id
+        else:
+            # 兼容旧方式：从 UUID 查询
+            from backend.common.security.agent_utils import resolve_user_id
+            platform_user_id = await resolve_user_id(db, user.user_id)
 
         # 2. 确保 HASN Human 身份存在
         hasn_result = await register_hasn_identity(

@@ -1,7 +1,7 @@
 """唤星 Agent 用户预检 API
 
 路径前缀: /api/v1/huanxing/agent/users
-认证方式: X-Agent-Key（DependsAgentAuth）
+认证方式: Agent JWT (DependsAgentJwtAuth)
 
 check-phone: 验证码校验通过后，检查该手机号在跨服务器的 Agent 分布情况。
 """
@@ -16,7 +16,7 @@ from backend.app.admin.model.user import User
 from backend.app.huanxing.crud.crud_huanxing_user import huanxing_user_dao
 from backend.app.user_tier.model.user_subscription import UserSubscription
 from backend.common.response.response_schema import ResponseModel, response_base
-from backend.common.security.agent_auth import DependsAgentAuth
+from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
 from backend.database.db import CurrentSession
 
 router = APIRouter()
@@ -26,7 +26,7 @@ router = APIRouter()
     '/check-phone',
     summary='按手机号查询用户 Agent 分布',
     description='验证码通过后调用，查该手机号在所有服务器的 Agent 情况和订阅限制',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def check_phone(
     db: CurrentSession,

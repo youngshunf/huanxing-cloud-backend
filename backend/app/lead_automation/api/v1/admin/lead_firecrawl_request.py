@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取Firecrawl request audit for AI lead automation详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取Firecrawl request audit for AI lead automation详情', dependencies=[DependsJwtAuth], name='admin_get_lead_firecrawl_request')
 async def get_lead_firecrawl_request(
     db: CurrentSession, pk: Annotated[int, Path(description='Firecrawl request audit for AI lead automation ID')]
 ) -> ResponseSchemaModel[GetLeadFirecrawlRequestDetail]:
@@ -34,7 +34,7 @@ async def get_lead_firecrawl_request(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_lead_firecrawl_requests_paginated')
 async def get_lead_firecrawl_requests_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetLeadFirecrawlRequestDetail]]:
     page_data = await lead_firecrawl_request_service.get_list(db=db)
     return response_base.success(data=page_data)

@@ -18,7 +18,7 @@ router = APIRouter()
     '',
     summary='分页获取回调日志',
     dependencies=[DependsJwtAuth, DependsPagination],
-)
+ name='admin_get_notify_logs_paginated')
 async def get_notify_logs_paginated(
     db: CurrentSession,
     order_no: Annotated[str | None, Query(description='按订单号筛选')] = None,

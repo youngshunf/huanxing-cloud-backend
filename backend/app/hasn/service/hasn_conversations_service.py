@@ -1,5 +1,7 @@
 from typing import Any, Sequence
+import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn.crud.crud_hasn_conversations import hasn_conversations_dao
@@ -81,6 +83,75 @@ class HasnConversationsService:
         """
         count = await hasn_conversations_dao.delete(db, obj.pks)
         return count
+
+    @staticmethod
+    async def ensure_conversation(
+        *,
+        db: AsyncSession,
+        caller_hasn_id: str,
+        peer_hasn_id: str,
+        relation_type: str = 'social',
+    ) -> HasnConversations:
+        """
+        确保会话存在（如果不存在则创建）
+
+        用于 1:1 会话的幂等创建。根据排序后的参与者对查找或创建会话。
+
+        :param db: 数据库会话
+        :param caller_hasn_id: 调用者的 HASN ID
+        :param peer_hasn_id: 对方的 HASN ID
+        :param relation_type: 关系类型，默认 'social'
+        :return: 会话对象
+        """
+        # 对参与者 ID 排序，确保同一对用户总是得到相同的会话
+        participant_a, participant_b = sorted([caller_hasn_id, peer_hasn_id])
+
+        # 确定参与者类型（h_ 开头是 human，a_ 开头是 agent）
+        def get_participant_type(hasn_id: str) -> str:
+            if hasn_id.startswith('h_'):
+                return 'human'
+            elif hasn_id.startswith('a_'):
+                return 'agent'
+            else:
+                raise errors.BadRequestError(msg=f'无效的 HASN ID 格式: {hasn_id}')
+
+        participant_a_type = get_participant_type(participant_a)
+        participant_b_type = get_participant_type(participant_b)
+
+        # 查找现有会话
+        stmt = select(HasnConversations).where(
+            HasnConversations.type == 'direct',
+            HasnConversations.participant_a_id == participant_a,
+            HasnConversations.participant_b_id == participant_b,
+        )
+        result = await db.execute(stmt)
+        conversation = result.scalar_one_or_none()
+
+        if conversation:
+            return conversation
+
+        # 创建新会话
+        new_conversation = HasnConversations(
+            type='direct',
+            relation_type=relation_type,
+            participant_a_id=participant_a,
+            participant_b_id=participant_b,
+            participant_a_type=participant_a_type,
+            participant_b_type=participant_b_type,
+            agent_policy='free',
+            join_policy='',
+            max_members=2,
+            allow_invite=False,
+            mute_all=False,
+            member_count=2,
+            message_count=0,
+            status='active',
+        )
+        db.add(new_conversation)
+        await db.flush()
+        await db.refresh(new_conversation)
+
+        return new_conversation
 
 
 hasn_conversations_service: HasnConversationsService = HasnConversationsService()

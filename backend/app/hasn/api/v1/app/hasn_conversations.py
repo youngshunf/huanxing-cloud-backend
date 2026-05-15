@@ -5,7 +5,8 @@
 """
 from typing import Annotated
 
-from fastapi import APIRouter, Path, Request
+from fastapi import APIRouter, Path, Request, Body
+from pydantic import BaseModel, Field
 
 from backend.app.hasn.schema.hasn_conversations import (
     CreateHasnConversationsParam,
@@ -19,7 +20,68 @@ from backend.common.response.response_schema import ResponseModel, ResponseSchem
 from backend.common.security.jwt import DependsJwtAuth
 from backend.database.db import CurrentSession, CurrentSessionTransaction
 
+
+class EnsureConversationRequest(BaseModel):
+    """确保会话存在的请求参数"""
+    peer_hasn_id: str = Field(..., description='对方的 HASN ID')
+    relation_type: str | None = Field(default='social', description='关系类型')
+
+
+class EnsureConversationResponse(BaseModel):
+    """确保会话存在的响应"""
+    conversation_id: str = Field(..., description='会话 UUID')
+    peer_hasn_id: str = Field(..., description='对方的 HASN ID')
+    kind: str = Field(..., description='会话类型（direct 表示 1:1）')
+    relation_type: str = Field(..., description='关系类型')
+
+
 router = APIRouter()
+
+
+@router.post(
+    '/ensure',
+    summary='确保会话存在（幂等创建）',
+    dependencies=[DependsJwtAuth],
+)
+async def ensure_conversation(
+    request: Request,
+    db: CurrentSessionTransaction,
+    body: Annotated[EnsureConversationRequest, Body()],
+) -> ResponseSchemaModel[EnsureConversationResponse]:
+    """
+    确保 1:1 会话存在。
+
+    根据调用者和对方的 HASN ID 查找或创建会话。
+    同一对参与者总是返回相同的 conversation_id（基于排序后的参与者对）。
+    """
+    # 获取当前用户的 HASN ID
+    caller_hasn_id = request.user.hasn_id
+    if not caller_hasn_id:
+        # 临时调试：如果缓存中没有 hasn_id，尝试从数据库查询
+        from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+        hasn_human = await hasn_humans_dao.get_by_user_id(db, user_id=request.user.id)
+        if hasn_human:
+            caller_hasn_id = hasn_human.hasn_id
+        else:
+            raise errors.AuthorizationError(msg='用户未绑定 HASN ID')
+
+    relation_type = body.relation_type or 'social'
+
+    conversation = await hasn_conversations_service.ensure_conversation(
+        db=db,
+        caller_hasn_id=caller_hasn_id,
+        peer_hasn_id=body.peer_hasn_id,
+        relation_type=relation_type,
+    )
+
+    response_data = EnsureConversationResponse(
+        conversation_id=str(conversation.id),
+        peer_hasn_id=body.peer_hasn_id,
+        kind='direct',
+        relation_type=conversation.relation_type or relation_type,
+    )
+
+    return response_base.success(data=response_data)
 
 
 @router.get(

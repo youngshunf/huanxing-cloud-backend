@@ -1,21 +1,21 @@
 """{{ doc_comment }} - Agent API
 
-认证方式: DependsAgentAuth（X-Agent-Key）
-用户身份: 通过 X-User-Id Header 传入 sys_user.uuid
+认证方式: Agent JWT (Bearer token)
+Agent 信息: 通过 request.state.agent 获取
 """
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Path
+from fastapi import APIRouter, Path, Request
 
 from backend.app.{{ app_name }}.schema.{{ filename }} import (
     Create{{ schema_name }}Param,
     Update{{ schema_name }}Param,
 )
 from backend.app.{{ app_name }}.service.{{ filename }}_service import {{ table_name }}_service
+from backend.common.dataclasses import AgentTokenPayload
 from backend.common.exception import errors
 from backend.common.response.response_schema import ResponseModel, response_base
-from backend.common.security.agent_auth import DependsAgentAuth
-from backend.common.security.agent_utils import resolve_user_id
+from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
 from backend.database.db import CurrentSession, CurrentSessionTransaction
 
 router = APIRouter()
@@ -24,13 +24,14 @@ router = APIRouter()
 @router.get(
     '',
     summary='{{ doc_comment }}列表',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_list_{{ table_name }}s(
+    request: Request,
     db: CurrentSession,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
 ) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    agent: AgentTokenPayload = request.state.agent
+    # 可以使用 agent.agent_hasn_id, agent.owner_hasn_id, agent.scopes
     data = await {{ table_name }}_service.get_list(db=db)
     return response_base.success(data=data)
 
@@ -38,14 +39,14 @@ async def agent_list_{{ table_name }}s(
 @router.post(
     '',
     summary='创建{{ doc_comment }}',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_create_{{ table_name }}(
+    request: Request,
     db: CurrentSessionTransaction,
     obj: Create{{ schema_name }}Param,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
 ) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    agent: AgentTokenPayload = request.state.agent
     result = await {{ table_name }}_service.create(db=db, obj=obj)
     return response_base.success(data=result)
 
@@ -53,35 +54,37 @@ async def agent_create_{{ table_name }}(
 @router.get(
     '/{pk}',
     summary='获取{{ doc_comment }}详情',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_get_{{ table_name }}(
+    request: Request,
     db: CurrentSession,
     pk: Annotated[int, Path(description='{{ doc_comment }} ID')],
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
 ) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    agent: AgentTokenPayload = request.state.agent
     {{ table_name }} = await {{ table_name }}_service.get(db=db, pk=pk)
-    if {{ table_name }}.user_id != user_id:
-        raise errors.ForbiddenError(msg='无权访问该{{ doc_comment }}')
+    # TODO: 根据实际业务需求添加权限检查
+    # if {{ table_name }}.owner_id != agent.owner_hasn_id:
+    #     raise errors.ForbiddenError(msg='无权访问该{{ doc_comment }}')
     return response_base.success(data={{ table_name }})
 
 
 @router.put(
     '/{pk}',
     summary='更新{{ doc_comment }}',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_update_{{ table_name }}(
+    request: Request,
     db: CurrentSessionTransaction,
     pk: Annotated[int, Path(description='{{ doc_comment }} ID')],
     obj: Update{{ schema_name }}Param,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
 ) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    agent: AgentTokenPayload = request.state.agent
     {{ table_name }} = await {{ table_name }}_service.get(db=db, pk=pk)
-    if {{ table_name }}.user_id != user_id:
-        raise errors.ForbiddenError(msg='无权修改该{{ doc_comment }}')
+    # TODO: 根据实际业务需求添加权限检查
+    # if {{ table_name }}.owner_id != agent.owner_hasn_id:
+    #     raise errors.ForbiddenError(msg='无权修改该{{ doc_comment }}')
     count = await {{ table_name }}_service.update(db=db, pk=pk, obj=obj)
     if count > 0:
         return response_base.success()
@@ -91,17 +94,18 @@ async def agent_update_{{ table_name }}(
 @router.delete(
     '/{pk}',
     summary='删除{{ doc_comment }}',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_delete_{{ table_name }}(
+    request: Request,
     db: CurrentSessionTransaction,
     pk: Annotated[int, Path(description='{{ doc_comment }} ID')],
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
 ) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    agent: AgentTokenPayload = request.state.agent
     {{ table_name }} = await {{ table_name }}_service.get(db=db, pk=pk)
-    if {{ table_name }}.user_id != user_id:
-        raise errors.ForbiddenError(msg='无权删除该{{ doc_comment }}')
+    # TODO: 根据实际业务需求添加权限检查
+    # if {{ table_name }}.owner_id != agent.owner_hasn_id:
+    #     raise errors.ForbiddenError(msg='无权删除该{{ doc_comment }}')
     from backend.app.{{ app_name }}.schema.{{ filename }} import Delete{{ schema_name }}Param
     count = await {{ table_name }}_service.delete(db=db, obj=Delete{{ schema_name }}Param(pks=[pk]))
     if count > 0:

@@ -1,11 +1,11 @@
 """平台权限定义表（hasn.* namespace） - Agent API
 
 认证方式: DependsAgentJwtAuth（X-Agent-Key）
-用户身份: 通过 X-User-Id Header 传入 sys_user.uuid
+Agent 信息: 通过 request.state.agent 获取 AgentTokenPayload
 """
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Path
+from fastapi import APIRouter, Path, Request
 
 from backend.app.app_platform.schema.platform_scopes import (
     CreatePlatformScopesParam,
@@ -15,11 +15,10 @@ from backend.app.app_platform.service.platform_scopes_service import platform_sc
 from backend.common.exception import errors
 from backend.common.response.response_schema import ResponseModel, response_base
 from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
-from backend.common.security.agent_utils import resolve_user_id
+from backend.common.dataclasses import AgentTokenPayload
 from backend.database.db import CurrentSession, CurrentSessionTransaction
 
 router = APIRouter()
-
 
 @router.get(
     '',
@@ -28,12 +27,12 @@ router = APIRouter()
 )
 async def agent_list_platform_scopess(
     db: CurrentSession,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    request: Request) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     data = await platform_scopes_service.get_list(db=db)
     return response_base.success(data=data)
-
 
 @router.post(
     '',
@@ -42,13 +41,13 @@ async def agent_list_platform_scopess(
 )
 async def agent_create_platform_scopes(
     db: CurrentSessionTransaction,
-    obj: CreatePlatformScopesParam,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    request: Request,
+    obj: CreatePlatformScopesParam) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     result = await platform_scopes_service.create(db=db, obj=obj)
     return response_base.success(data=result)
-
 
 @router.get(
     '/{pk}',
@@ -57,15 +56,15 @@ async def agent_create_platform_scopes(
 )
 async def agent_get_platform_scopes(
     db: CurrentSession,
-    pk: Annotated[int, Path(description='平台权限定义表（hasn.* namespace） ID')],
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    request: Request,
+    pk: Annotated[int, Path(description='平台权限定义表（hasn.* namespace） ID')]) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     platform_scopes = await platform_scopes_service.get(db=db, pk=pk)
     if platform_scopes.user_id != user_id:
         raise errors.ForbiddenError(msg='无权访问该平台权限定义表（hasn.* namespace）')
     return response_base.success(data=platform_scopes)
-
 
 @router.put(
     '/{pk}',
@@ -73,12 +72,13 @@ async def agent_get_platform_scopes(
     dependencies=[DependsAgentJwtAuth],
 )
 async def agent_update_platform_scopes(
-    db: CurrentSessionTransaction,
+    db: CurrentSession,
+    request: Request,
     pk: Annotated[int, Path(description='平台权限定义表（hasn.* namespace） ID')],
-    obj: UpdatePlatformScopesParam,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    obj: UpdatePlatformScopesParam) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     platform_scopes = await platform_scopes_service.get(db=db, pk=pk)
     if platform_scopes.user_id != user_id:
         raise errors.ForbiddenError(msg='无权修改该平台权限定义表（hasn.* namespace）')
@@ -87,18 +87,18 @@ async def agent_update_platform_scopes(
         return response_base.success()
     return response_base.fail()
 
-
 @router.delete(
     '/{pk}',
     summary='删除平台权限定义表（hasn.* namespace）',
     dependencies=[DependsAgentJwtAuth],
 )
 async def agent_delete_platform_scopes(
-    db: CurrentSessionTransaction,
-    pk: Annotated[int, Path(description='平台权限定义表（hasn.* namespace） ID')],
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    db: CurrentSession,
+    request: Request,
+    pk: Annotated[int, Path(description='平台权限定义表（hasn.* namespace） ID')]) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     platform_scopes = await platform_scopes_service.get(db=db, pk=pk)
     if platform_scopes.user_id != user_id:
         raise errors.ForbiddenError(msg='无权删除该平台权限定义表（hasn.* namespace）')

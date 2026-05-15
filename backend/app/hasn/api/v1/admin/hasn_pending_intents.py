@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取HASN 第三方渠道反向 onboarding pending intent 详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取HASN 第三方渠道反向 onboarding pending intent 详情', dependencies=[DependsJwtAuth], name='admin_get_hasn_pending_intents')
 async def get_hasn_pending_intents(
     db: CurrentSession, pk: Annotated[int, Path(description='HASN 第三方渠道反向 onboarding pending intent  ID')]
 ) -> ResponseSchemaModel[GetHasnPendingIntentsDetail]:
@@ -34,7 +34,7 @@ async def get_hasn_pending_intents(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hasn_pending_intentss_paginated')
 async def get_hasn_pending_intentss_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHasnPendingIntentsDetail]]:
     page_data = await hasn_pending_intents_service.get_list(db=db)
     return response_base.success(data=page_data)

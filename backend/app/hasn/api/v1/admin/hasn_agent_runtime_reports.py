@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取HASN Agent Runtime 脱敏摘要上报详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取HASN Agent Runtime 脱敏摘要上报详情', dependencies=[DependsJwtAuth], name='admin_get_hasn_agent_runtime_reports')
 async def get_hasn_agent_runtime_reports(
     db: CurrentSession, pk: Annotated[int, Path(description='HASN Agent Runtime 脱敏摘要上报 ID')]
 ) -> ResponseSchemaModel[GetHasnAgentRuntimeReportsDetail]:
@@ -34,7 +34,7 @@ async def get_hasn_agent_runtime_reports(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hasn_agent_runtime_reportss_paginated')
 async def get_hasn_agent_runtime_reportss_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHasnAgentRuntimeReportsDetail]]:
     page_data = await hasn_agent_runtime_reports_service.get_list(db=db)
     return response_base.success(data=page_data)

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.common.security.agent_jwt import jwt_decode_agent
 from backend.common.exception import errors
-from backend.app.hasn.service.hasn_agents_service import HasnAgentsService
+from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
 from backend.database.db import async_db_session
 
 
@@ -96,8 +96,7 @@ async def get_agent_context(
 
     # 加载 Agent 信息验证状态
     async with async_db_session() as db:
-        agent_service = HasnAgentsService()
-        agent = await agent_service.get_by_hasn_id(db, hasn_id=x_hasn_agent_id)
+        agent = await hasn_agents_dao.get_by_hasn_id(db, hasn_id=x_hasn_agent_id)
 
         if not agent:
             raise HTTPException(

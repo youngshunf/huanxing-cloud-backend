@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取订阅等级配置详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取订阅等级配置详情', dependencies=[DependsJwtAuth], name='admin_get_subscription_tier')
 async def get_subscription_tier(
     db: CurrentSession, pk: Annotated[int, Path(description='订阅等级配置 ID')]
 ) -> ResponseSchemaModel[GetSubscriptionTierDetail]:
@@ -34,7 +34,7 @@ async def get_subscription_tier(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_subscription_tiers_paginated')
 async def get_subscription_tiers_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetSubscriptionTierDetail]]:
     page_data = await subscription_tier_service.get_list(db=db)
     return response_base.success(data=page_data)

@@ -28,7 +28,7 @@ router = APIRouter()
     '/notify/{channel_id}',
     summary='统一支付回调',
     response_class=PlainTextResponse,
-)
+ name='open_unified_pay_notify')
 async def unified_pay_notify(
     request: Request,
     db: CurrentSessionTransaction,
@@ -115,7 +115,7 @@ async def unified_pay_notify(
     '/refund-notify/{channel_id}',
     summary='统一退款回调',
     response_class=PlainTextResponse,
-)
+ name='open_unified_refund_notify')
 async def unified_refund_notify(
     request: Request,
     db: CurrentSessionTransaction,
@@ -131,7 +131,7 @@ async def unified_refund_notify(
     '/contract-notify/{channel_id}',
     summary='统一签约/解约回调',
     response_class=PlainTextResponse,
-)
+ name='open_unified_contract_notify')
 async def unified_contract_notify(
     request: Request,
     db: CurrentSessionTransaction,

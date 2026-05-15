@@ -41,5 +41,21 @@ class CRUDHasnAgents(CRUDPlus[HasnAgents]):
             select(HasnAgents).where(HasnAgents.star_id == star_id)
         )).scalars().first()
 
+    @staticmethod
+    async def get_active_agents_by_owner(db: AsyncSession, owner_hasn_id: str) -> Sequence[HasnAgents]:
+        """
+        查询某个 Owner 的所有活跃 Agent
+
+        :param db: 数据库会话
+        :param owner_hasn_id: Owner 的 hasn_id
+        :return: Agent 列表
+        """
+        return (await db.execute(
+            select(HasnAgents)
+            .where(HasnAgents.owner_id == owner_hasn_id)
+            .where(HasnAgents.status == 'active')
+            .order_by(HasnAgents.id.asc())
+        )).scalars().all()
+
 
 hasn_agents_dao: CRUDHasnAgents = CRUDHasnAgents(HasnAgents)

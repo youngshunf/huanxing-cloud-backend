@@ -1,7 +1,7 @@
 """Agent 订阅查询 API
 
 路径前缀: /api/v1/user_tier/agent/subscriptions
-认证方式: X-Agent-Key（DependsAgentAuth）
+认证方式: Agent JWT (DependsAgentJwtAuth)
 
 供 Agent 代查用户订阅状态和积分信息。
 """
@@ -11,18 +11,17 @@ from fastapi import APIRouter, Query, Request
 
 from backend.app.user_tier.service.credit_service import credit_service
 from backend.common.response.response_schema import ResponseModel, response_base
-from backend.common.security.agent_auth import DependsAgentAuth
-from backend.common.security.agent_utils import resolve_user_id
+from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
+from backend.common.dataclasses import AgentTokenPayload
 from backend.database.db import CurrentSession
 
 router = APIRouter()
-
 
 @router.get(
     '',
     summary='查询用户订阅信息（Agent端）',
     description='Agent 通过 user_uuid 查询用户订阅状态和积分余额',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_get_subscription(
     request: Request,

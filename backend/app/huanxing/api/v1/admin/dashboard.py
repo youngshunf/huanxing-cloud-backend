@@ -16,7 +16,7 @@ router = APIRouter()
     summary='唤星数据看板',
     description='返回全局/按服务器的统计数据：用户总数、活跃数、服务器数、按模板/服务器分布等',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_get_dashboard')
 async def get_dashboard(
     db: CurrentSession,
     server_id: Annotated[str | None, Query(description='按服务器筛选（可选）')] = None,

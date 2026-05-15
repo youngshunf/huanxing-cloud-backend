@@ -12,7 +12,7 @@ router = APIRouter()
 @router.get(
     '/share/{share_token}',
     summary='访问分享文档（公开接口，无需登录）',
-)
+ name='open_get_shared_document')
 async def get_shared_document(
     db: CurrentSession,
     share_token: Annotated[str, Path(description='分享token')],

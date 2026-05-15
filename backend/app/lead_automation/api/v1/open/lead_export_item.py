@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取Lead CSV export item snapshot列表',
     dependencies=[DependsPagination],
-)
+ name='open_get_lead_export_items')
 async def get_lead_export_items(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetLeadExportItemDetail]]:
@@ -30,7 +30,7 @@ async def get_lead_export_items(
 @router.get(
     '/{pk}',
     summary='获取Lead CSV export item snapshot详情',
-)
+ name='open_get_lead_export_item')
 async def get_lead_export_item(
     db: CurrentSession,
     pk: Annotated[int, Path(description='Lead CSV export item snapshot ID')],

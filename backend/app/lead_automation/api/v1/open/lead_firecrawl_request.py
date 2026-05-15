@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取Firecrawl request audit for AI lead automation列表',
     dependencies=[DependsPagination],
-)
+ name='open_get_lead_firecrawl_requests')
 async def get_lead_firecrawl_requests(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetLeadFirecrawlRequestDetail]]:
@@ -30,7 +30,7 @@ async def get_lead_firecrawl_requests(
 @router.get(
     '/{pk}',
     summary='获取Firecrawl request audit for AI lead automation详情',
-)
+ name='open_get_lead_firecrawl_request')
 async def get_lead_firecrawl_request(
     db: CurrentSession,
     pk: Annotated[int, Path(description='Firecrawl request audit for AI lead automation ID')],

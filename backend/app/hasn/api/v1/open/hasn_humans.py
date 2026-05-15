@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取HASN 人类用户身份列表',
     dependencies=[DependsPagination],
-)
+ name='open_open_get_hasn_humanss')
 async def open_get_hasn_humanss(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnHumansDetail]]:
@@ -30,7 +30,7 @@ async def open_get_hasn_humanss(
 @router.get(
     '/{pk}',
     summary='获取HASN 人类用户身份详情',
-)
+ name='open_open_get_hasn_humans')
 async def open_get_hasn_humans(
     db: CurrentSession,
     pk: Annotated[int, Path(description='HASN 人类用户身份 ID')],

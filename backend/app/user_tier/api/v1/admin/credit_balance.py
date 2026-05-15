@@ -22,7 +22,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取用户积分余额详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取用户积分余额详情', dependencies=[DependsJwtAuth], name='admin_get_user_credit_balance')
 async def get_user_credit_balance(
     db: CurrentSession, pk: Annotated[int, Path(description='用户积分余额 ID')]
 ) -> ResponseSchemaModel[GetUserCreditBalanceDetail]:
@@ -37,7 +37,7 @@ async def get_user_credit_balance(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_user_credit_balances_paginated')
 async def get_user_credit_balances_paginated(
     db: CurrentSession,
     user_keyword: Annotated[str | None, Query(description='用户昵称/手机号搜索')] = None,

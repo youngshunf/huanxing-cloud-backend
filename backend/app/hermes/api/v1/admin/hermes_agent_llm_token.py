@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取Hermes Agent 级 LLM token 隔离记录详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取Hermes Agent 级 LLM token 隔离记录详情', dependencies=[DependsJwtAuth], name='admin_get_hermes_agent_llm_token')
 async def get_hermes_agent_llm_token(
     db: CurrentSession, pk: Annotated[int, Path(description='Hermes Agent 级 LLM token 隔离记录 ID')]
 ) -> ResponseSchemaModel[GetHermesAgentLlmTokenDetail]:
@@ -34,7 +34,7 @@ async def get_hermes_agent_llm_token(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hermes_agent_llm_tokens_paginated')
 async def get_hermes_agent_llm_tokens_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHermesAgentLlmTokenDetail]]:
     page_data = await hermes_agent_llm_token_service.get_list(db=db)
     return response_base.success(data=page_data)

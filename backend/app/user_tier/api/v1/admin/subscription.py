@@ -20,7 +20,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取用户订阅详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取用户订阅详情', dependencies=[DependsJwtAuth], name='admin_get_user_subscription')
 async def get_user_subscription(
     db: CurrentSession, pk: Annotated[int, Path(description='用户订阅 ID')]
 ) -> ResponseSchemaModel[GetUserSubscriptionDetail]:
@@ -35,7 +35,7 @@ async def get_user_subscription(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_user_subscriptions_paginated')
 async def get_user_subscriptions_paginated(
     db: CurrentSession,
     user_keyword: Annotated[str | None, Query(description='用户昵称/手机号搜索')] = None,

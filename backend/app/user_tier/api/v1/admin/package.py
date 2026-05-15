@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取积分包配置详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取积分包配置详情', dependencies=[DependsJwtAuth], name='admin_get_credit_package')
 async def get_credit_package(
     db: CurrentSession, pk: Annotated[int, Path(description='积分包配置 ID')]
 ) -> ResponseSchemaModel[GetCreditPackageDetail]:
@@ -34,7 +34,7 @@ async def get_credit_package(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_credit_packages_paginated')
 async def get_credit_packages_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetCreditPackageDetail]]:
     page_data = await credit_package_service.get_list(db=db)
     return response_base.success(data=page_data)

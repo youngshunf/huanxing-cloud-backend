@@ -36,6 +36,15 @@ class GetNewToken(AccessTokenBase):
     new_refresh_token_expire_time: datetime | None = Field(None, description='新刷新令牌过期时间')
 
 
+class AgentTokenInfo(SchemaBase):
+    """Agent JWT 信息"""
+
+    agent_hasn_id: str = Field(description='Agent HASN ID')
+    agent_name: str = Field(description='Agent 显示名')
+    access_token: str = Field(description='Agent JWT')
+    scopes: list[str] = Field(description='Agent 权限列表')
+
+
 class GetLoginToken(AccessTokenBase):
     """获取登录令牌"""
 
@@ -45,6 +54,7 @@ class GetLoginToken(AccessTokenBase):
     llm_token: str = Field(description='LLM API Key')
     llm_base_url: str | None = Field(default=None, description='LLM API Base URL')
     hasn_node_key: str | None = Field(default=None, description='HASN Node Key（hasn_nk_ 前缀）')
+    agent_tokens: list[AgentTokenInfo] = Field(default_factory=list, description='Agent JWT 列表')
     user: GetUserInfoDetail = Field(description='用户信息')
 
 

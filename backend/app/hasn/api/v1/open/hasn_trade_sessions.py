@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取HASN 交易会话列表',
     dependencies=[DependsPagination],
-)
+ name='open_open_get_hasn_trade_sessionss')
 async def open_get_hasn_trade_sessionss(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnTradeSessionsDetail]]:
@@ -30,7 +30,7 @@ async def open_get_hasn_trade_sessionss(
 @router.get(
     '/{pk}',
     summary='获取HASN 交易会话详情',
-)
+ name='open_open_get_hasn_trade_sessions')
 async def open_get_hasn_trade_sessions(
     db: CurrentSession,
     pk: Annotated[int, Path(description='HASN 交易会话 ID')],

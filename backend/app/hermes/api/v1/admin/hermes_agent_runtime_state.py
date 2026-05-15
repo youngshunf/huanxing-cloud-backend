@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取Hermes Agent Runtime 状态详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取Hermes Agent Runtime 状态详情', dependencies=[DependsJwtAuth], name='admin_get_hermes_agent_runtime_state')
 async def get_hermes_agent_runtime_state(
     db: CurrentSession, pk: Annotated[int, Path(description='Hermes Agent Runtime 状态 ID')]
 ) -> ResponseSchemaModel[GetHermesAgentRuntimeStateDetail]:
@@ -34,7 +34,7 @@ async def get_hermes_agent_runtime_state(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hermes_agent_runtime_states_paginated')
 async def get_hermes_agent_runtime_states_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHermesAgentRuntimeStateDetail]]:
     page_data = await hermes_agent_runtime_state_service.get_list(db=db)
     return response_base.success(data=page_data)

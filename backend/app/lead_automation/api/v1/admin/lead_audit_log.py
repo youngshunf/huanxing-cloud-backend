@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取Lead automation PII and compliance audit log详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取Lead automation PII and compliance audit log详情', dependencies=[DependsJwtAuth], name='admin_get_lead_audit_log')
 async def get_lead_audit_log(
     db: CurrentSession, pk: Annotated[int, Path(description='Lead automation PII and compliance audit log ID')]
 ) -> ResponseSchemaModel[GetLeadAuditLogDetail]:
@@ -34,7 +34,7 @@ async def get_lead_audit_log(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_lead_audit_logs_paginated')
 async def get_lead_audit_logs_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetLeadAuditLogDetail]]:
     page_data = await lead_audit_log_service.get_list(db=db)
     return response_base.success(data=page_data)

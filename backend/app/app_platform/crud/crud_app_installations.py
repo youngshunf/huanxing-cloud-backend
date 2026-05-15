@@ -32,7 +32,7 @@ class CRUDAppInstallations(CRUDPlus[AppInstallations]):
         """
         return await self.select_models(db)
 
-    async def create(self, db: AsyncSession, obj: CreateAppInstallationsParam) -> None:
+    async def create(self, db: AsyncSession, obj):
         """
         创建App 安装记录
 
@@ -40,7 +40,7 @@ class CRUDAppInstallations(CRUDPlus[AppInstallations]):
         :param obj: 创建App 安装记录参数
         :return:
         """
-        await self.create_model(db, obj)
+        return await self.create_model(db, obj)
 
     async def update(self, db: AsyncSession, pk: int, obj: UpdateAppInstallationsParam) -> int:
         """

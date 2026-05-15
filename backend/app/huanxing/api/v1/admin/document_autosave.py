@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取文档自动保存表（每文档每用户仅一条，UPSERT更新）详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取文档自动保存表（每文档每用户仅一条，UPSERT更新）详情', dependencies=[DependsJwtAuth], name='admin_get_huanxing_document_autosave')
 async def get_huanxing_document_autosave(
     db: CurrentSession, pk: Annotated[int, Path(description='文档自动保存表（每文档每用户仅一条，UPSERT更新） ID')]
 ) -> ResponseSchemaModel[GetHuanxingDocumentAutosaveDetail]:
@@ -34,7 +34,7 @@ async def get_huanxing_document_autosave(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_huanxing_document_autosaves_paginated')
 async def get_huanxing_document_autosaves_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHuanxingDocumentAutosaveDetail]]:
     page_data = await huanxing_document_autosave_service.get_list(db=db)
     return response_base.success(data=page_data)

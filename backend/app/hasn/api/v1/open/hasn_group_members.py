@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取HASN 群成员列表',
     dependencies=[DependsPagination],
-)
+ name='open_open_get_hasn_group_memberss')
 async def open_get_hasn_group_memberss(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnGroupMembersDetail]]:
@@ -30,7 +30,7 @@ async def open_get_hasn_group_memberss(
 @router.get(
     '/{pk}',
     summary='获取HASN 群成员详情',
-)
+ name='open_open_get_hasn_group_members')
 async def open_get_hasn_group_members(
     db: CurrentSession,
     pk: Annotated[int, Path(description='HASN 群成员 ID')],

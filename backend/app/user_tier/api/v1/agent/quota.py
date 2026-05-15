@@ -1,7 +1,7 @@
 """Agent 配额查询 API
 
 路径前缀: /api/v1/user_tier/agent/quota
-认证方式: X-Agent-Key（DependsAgentAuth）
+认证方式: Agent JWT (DependsAgentJwtAuth)
 
 供 OpenClaw Agent 查询用户配额、积分余额。
 
@@ -14,15 +14,13 @@ from decimal import Decimal
 
 from backend.app.user_tier.service.credit_service import credit_service
 from backend.common.response.response_schema import ResponseSchemaModel, response_base
-from backend.common.security.agent_auth import DependsAgentAuth
-from backend.common.security.agent_utils import resolve_user_id
+from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
+from backend.common.dataclasses import AgentTokenPayload
 from backend.database.db import CurrentSession
 
 router = APIRouter()
 
-
 # ==================== Response Schemas ====================
-
 
 class QuotaResponse(BaseModel):
     """配额查询响应"""
@@ -35,7 +33,6 @@ class QuotaResponse(BaseModel):
     used_credits: Decimal
     available: bool  # 是否还有可用额度
 
-
 class DeductRequest(BaseModel):
     """积分扣减请求"""
     user_id: int
@@ -43,22 +40,19 @@ class DeductRequest(BaseModel):
     model_name: str | None = None
     description: str | None = None
 
-
 class DeductResponse(BaseModel):
     """积分扣减响应"""
     success: bool
     remaining_credits: Decimal
     message: str
 
-
 # ==================== APIs ====================
-
 
 @router.get(
     '/{user_id}',
     summary='查询用户配额',
     description='查询指定用户的订阅状态和积分余额',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def get_user_quota(
     user_id: int,
@@ -88,12 +82,11 @@ async def get_user_quota(
 
     return response_base.success(data=data)
 
-
 @router.post(
     '/deduct',
     summary='扣减用户积分',
     description='模型调用计费时扣减用户积分',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def deduct_credits(
     request: Request,

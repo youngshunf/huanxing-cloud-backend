@@ -59,6 +59,27 @@ class TokenPayload:
     id: int
     session_uuid: str
     expire_time: datetime
+    token_type: str = "user"  # "user" or "agent"
+
+
+@dataclasses.dataclass
+class AgentTokenPayload:
+    agent_hasn_id: str
+    agent_name: str
+    owner_hasn_id: str
+    owner_user_id: int
+    scopes: list[str]
+    session_uuid: str
+    expire_time: datetime
+    token_type: str = "agent"
+
+
+@dataclasses.dataclass
+class AgentAccessToken:
+    access_token: str
+    access_token_expire_time: datetime
+    session_uuid: str
+    scopes: list[str]
 
 
 @dataclasses.dataclass

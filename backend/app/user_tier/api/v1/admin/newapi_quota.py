@@ -30,7 +30,7 @@ router = APIRouter()
     '',
     summary='分页查询所有用户的 Token/额度概览',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_admin_newapi_get_all_users')
 async def admin_newapi_get_all_users(
     db: CurrentSession,
     page: Annotated[int, Query(ge=1, description='页码')] = 1,
@@ -54,7 +54,7 @@ async def admin_newapi_get_all_users(
     '/{user_id}/quota',
     summary='查询指定用户的详细额度信息',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_admin_newapi_get_user_quota')
 async def admin_newapi_get_user_quota(
     db: CurrentSession,
     user_id: Annotated[int, Path(description='唤星用户 ID')],
@@ -86,7 +86,7 @@ async def admin_newapi_update_user_quota(
     '/{user_id}/usage/summary',
     summary='查询指定用户的用量统计（按模型分组）',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_admin_newapi_get_usage_summary')
 async def admin_newapi_get_usage_summary(
     db: CurrentSession,
     user_id: Annotated[int, Path(description='唤星用户 ID')],
@@ -109,7 +109,7 @@ async def admin_newapi_get_usage_summary(
     '/{user_id}/usage/detail',
     summary='查询指定用户的用量明细（分页）',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_admin_newapi_get_usage_detail')
 async def admin_newapi_get_usage_detail(
     db: CurrentSession,
     user_id: Annotated[int, Path(description='唤星用户 ID')],

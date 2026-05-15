@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取HASN Agent 列表',
     dependencies=[DependsPagination],
-)
+ name='open_open_get_hasn_agentss')
 async def open_get_hasn_agentss(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnAgentsDetail]]:
@@ -30,7 +30,7 @@ async def open_get_hasn_agentss(
 @router.get(
     '/{pk}',
     summary='获取HASN Agent 详情',
-)
+ name='open_open_get_hasn_agents')
 async def open_get_hasn_agents(
     db: CurrentSession,
     pk: Annotated[int, Path(description='HASN Agent  ID')],

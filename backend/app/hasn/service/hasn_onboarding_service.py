@@ -358,6 +358,17 @@ class HasnOnboardingService:
                 agent_hasn_id=agent.hasn_id,
             )
 
+        # 签发 Agent JWT
+        from backend.common.security.agent_jwt import create_agent_access_token, get_agent_scopes_cached
+        scopes_config = await get_agent_scopes_cached(agent.hasn_id, db)
+        agent_token = await create_agent_access_token(
+            agent_hasn_id=agent.hasn_id,
+            agent_name=getattr(agent, 'name', None) or DEFAULT_AGENT_DISPLAY_NAME,
+            owner_hasn_id=human.hasn_id,
+            owner_user_id=user_id,
+            scopes=scopes_config['scopes'],
+        )
+
         sandbox = await self.gateway.get_sandbox_summary(db, human.hasn_id)
         return OnboardingEnsureResponse(
             human=HumanSummary(
@@ -379,6 +390,9 @@ class HasnOnboardingService:
                 # hasn_id 顶替 star_id 写本地导致绑定时报 empty。
                 star_id=getattr(agent, 'star_id', '') or '',
                 display_name=getattr(agent, 'name', None),
+                access_token=agent_token.access_token,
+                scopes=agent_token.scopes,
+                expire_time=agent_token.access_token_expire_time.isoformat(),
             ),
             sandbox=sandbox,
             sync_cursor=f'owner:{human.hasn_id}:0',

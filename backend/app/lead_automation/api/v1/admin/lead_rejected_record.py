@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取Rejected, invalid, duplicate, or failed lead record详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取Rejected, invalid, duplicate, or failed lead record详情', dependencies=[DependsJwtAuth], name='admin_get_lead_rejected_record')
 async def get_lead_rejected_record(
     db: CurrentSession, pk: Annotated[int, Path(description='Rejected, invalid, duplicate, or failed lead record ID')]
 ) -> ResponseSchemaModel[GetLeadRejectedRecordDetail]:
@@ -34,7 +34,7 @@ async def get_lead_rejected_record(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_lead_rejected_records_paginated')
 async def get_lead_rejected_records_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetLeadRejectedRecordDetail]]:
     page_data = await lead_rejected_record_service.get_list(db=db)
     return response_base.success(data=page_data)

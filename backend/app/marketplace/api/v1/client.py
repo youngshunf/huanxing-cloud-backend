@@ -157,7 +157,7 @@ async def get_app(
     return response_base.success(data=app_data)
 
 
-@router.get('/apps/{app_id}/versions', summary='公开接口：获取应用版本列表')
+@router.get('/apps/{app_id}/versions', summary='公开接口：获取应用版本列表', name='marketplace_get_app_versions')
 async def get_app_versions(
     db: CurrentSession,
     app_id: Annotated[str, Path(description='应用ID')],

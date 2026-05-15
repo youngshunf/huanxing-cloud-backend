@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取HASN 消息列表',
     dependencies=[DependsPagination],
-)
+ name='open_open_get_hasn_messagess')
 async def open_get_hasn_messagess(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnMessagesDetail]]:
@@ -30,7 +30,7 @@ async def open_get_hasn_messagess(
 @router.get(
     '/{pk}',
     summary='获取HASN 消息详情',
-)
+ name='open_open_get_hasn_messages')
 async def open_get_hasn_messages(
     db: CurrentSession,
     pk: Annotated[int, Path(description='HASN 消息 ID')],

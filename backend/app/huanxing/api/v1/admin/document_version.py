@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取文档版本历史详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取文档版本历史详情', dependencies=[DependsJwtAuth], name='admin_get_huanxing_document_version')
 async def get_huanxing_document_version(
     db: CurrentSession, pk: Annotated[int, Path(description='文档版本历史 ID')]
 ) -> ResponseSchemaModel[GetHuanxingDocumentVersionDetail]:
@@ -34,7 +34,7 @@ async def get_huanxing_document_version(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_huanxing_document_versions_paginated')
 async def get_huanxing_document_versions_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHuanxingDocumentVersionDetail]]:
     page_data = await huanxing_document_version_service.get_list(db=db)
     return response_base.success(data=page_data)

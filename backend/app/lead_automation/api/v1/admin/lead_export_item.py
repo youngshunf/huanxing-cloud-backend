@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取Lead CSV export item snapshot详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取Lead CSV export item snapshot详情', dependencies=[DependsJwtAuth], name='admin_get_lead_export_item')
 async def get_lead_export_item(
     db: CurrentSession, pk: Annotated[int, Path(description='Lead CSV export item snapshot ID')]
 ) -> ResponseSchemaModel[GetLeadExportItemDetail]:
@@ -34,7 +34,7 @@ async def get_lead_export_item(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_lead_export_items_paginated')
 async def get_lead_export_items_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetLeadExportItemDetail]]:
     page_data = await lead_export_item_service.get_list(db=db)
     return response_base.success(data=page_data)

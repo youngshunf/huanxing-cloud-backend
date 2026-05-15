@@ -25,7 +25,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取唤星服务器详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取唤星服务器详情', dependencies=[DependsJwtAuth], name='admin_get_huanxing_server')
 async def get_huanxing_server(
     db: CurrentSession, pk: Annotated[int, Path(description='唤星服务器 ID')]
 ) -> ResponseSchemaModel[GetHuanxingServerDetail]:
@@ -40,7 +40,7 @@ async def get_huanxing_server(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_huanxing_servers_paginated')
 async def get_huanxing_servers_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHuanxingServerDetail]]:
     page_data = await huanxing_server_service.get_list(db=db)
     return response_base.success(data=page_data)
@@ -99,7 +99,7 @@ async def delete_huanxing_servers(db: CurrentSessionTransaction, obj: DeleteHuan
     summary='服务器心跳上报',
     description='guardian 定期调用，上报服务器状态（Gateway状态、用户数、CPU/内存等）',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_server_heartbeat')
 async def server_heartbeat(
     db: CurrentSessionTransaction,
     server_id: Annotated[str, Path(description='服务器唯一标识（如 server-001）')],
@@ -117,7 +117,7 @@ async def server_heartbeat(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_server_users')
 async def get_server_users(
     db: CurrentSession,
     server_id: Annotated[str, Path(description='服务器唯一标识（如 server-001）')],
@@ -131,7 +131,7 @@ async def get_server_users(
     summary='获取指定服务器的统计数据',
     description='返回服务器的用户数、活跃数、按模板分布等统计信息',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_get_server_stats')
 async def get_server_stats(
     db: CurrentSession,
     server_id: Annotated[str, Path(description='服务器唯一标识（如 server-001）')],

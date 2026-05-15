@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取HASN Owner API Key 详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取HASN Owner API Key 详情', dependencies=[DependsJwtAuth], name='admin_get_hasn_owner_api_keys')
 async def get_hasn_owner_api_keys(
     db: CurrentSession, pk: Annotated[int, Path(description='HASN Owner API Key  ID')]
 ) -> ResponseSchemaModel[GetHasnOwnerApiKeysDetail]:
@@ -34,7 +34,7 @@ async def get_hasn_owner_api_keys(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hasn_owner_api_keyss_paginated')
 async def get_hasn_owner_api_keyss_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHasnOwnerApiKeysDetail]]:
     page_data = await hasn_owner_api_keys_service.get_list(db=db)
     return response_base.success(data=page_data)

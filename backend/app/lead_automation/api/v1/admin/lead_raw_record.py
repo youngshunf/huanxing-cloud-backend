@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取Raw crawled lead page record详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取Raw crawled lead page record详情', dependencies=[DependsJwtAuth], name='admin_get_lead_raw_record')
 async def get_lead_raw_record(
     db: CurrentSession, pk: Annotated[int, Path(description='Raw crawled lead page record ID')]
 ) -> ResponseSchemaModel[GetLeadRawRecordDetail]:
@@ -34,7 +34,7 @@ async def get_lead_raw_record(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_lead_raw_records_paginated')
 async def get_lead_raw_records_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetLeadRawRecordDetail]]:
     page_data = await lead_raw_record_service.get_list(db=db)
     return response_base.success(data=page_data)

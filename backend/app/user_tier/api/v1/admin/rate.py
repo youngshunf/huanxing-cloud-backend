@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取模型积分费率详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取模型积分费率详情', dependencies=[DependsJwtAuth], name='admin_get_model_credit_rate')
 async def get_model_credit_rate(
     db: CurrentSession, pk: Annotated[int, Path(description='模型积分费率 ID')]
 ) -> ResponseSchemaModel[GetModelCreditRateDetail]:
@@ -34,7 +34,7 @@ async def get_model_credit_rate(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_model_credit_rates_paginated')
 async def get_model_credit_rates_paginated(
     db: CurrentSession,
     model_id: Annotated[int | None, Query(description='模型 ID 筛选')] = None,

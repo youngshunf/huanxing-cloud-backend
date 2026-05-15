@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取HASN 客户端上行 outbox 幂等/冲突详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取HASN 客户端上行 outbox 幂等/冲突详情', dependencies=[DependsJwtAuth], name='admin_get_hasn_sync_inbox_events')
 async def get_hasn_sync_inbox_events(
     db: CurrentSession, pk: Annotated[int, Path(description='HASN 客户端上行 outbox 幂等/冲突 ID')]
 ) -> ResponseSchemaModel[GetHasnSyncInboxEventsDetail]:
@@ -34,7 +34,7 @@ async def get_hasn_sync_inbox_events(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hasn_sync_inbox_eventss_paginated')
 async def get_hasn_sync_inbox_eventss_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHasnSyncInboxEventsDetail]]:
     page_data = await hasn_sync_inbox_events_service.get_list(db=db)
     return response_base.success(data=page_data)

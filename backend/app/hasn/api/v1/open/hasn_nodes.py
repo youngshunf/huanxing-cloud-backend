@@ -10,7 +10,7 @@ from backend.database.db import CurrentSession
 router = APIRouter()
 
 
-@router.post('/register', summary='注册节点', response_model=ResponseModel)
+@router.post('/register', summary='注册节点', response_model=ResponseModel, name='open_open_register_node')
 async def open_register_node(
     db: CurrentSession,
     param: HasnNodesRegisterParam,

@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取HASN 通知队列详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取HASN 通知队列详情', dependencies=[DependsJwtAuth], name='admin_get_hasn_notifications')
 async def get_hasn_notifications(
     db: CurrentSession, pk: Annotated[int, Path(description='HASN 通知队列 ID')]
 ) -> ResponseSchemaModel[GetHasnNotificationsDetail]:
@@ -34,7 +34,7 @@ async def get_hasn_notifications(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hasn_notificationss_paginated')
 async def get_hasn_notificationss_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHasnNotificationsDetail]]:
     page_data = await hasn_notifications_service.get_list(db=db)
     return response_base.success(data=page_data)

@@ -1,7 +1,7 @@
 """唤星 Agent 用户同步 API
 
 路径前缀: /api/v1/huanxing/agent/users
-认证方式: X-Agent-Key（DependsAgentAuth）
+认证方式: Agent JWT (DependsAgentJwtAuth)
 
 供 Guardian Agent 在用户注册时同步用户信息到后端。
 """
@@ -12,7 +12,7 @@ from fastapi import APIRouter, Path
 from backend.app.huanxing.schema.huanxing_user import AgentSyncUserParam, AgentUpdateUserParam
 from backend.app.huanxing.service.huanxing_user_service import huanxing_user_service
 from backend.common.response.response_schema import ResponseModel, response_base
-from backend.common.security.agent_auth import DependsAgentAuth
+from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
 from backend.database.db import CurrentSessionTransaction
 
 router = APIRouter()
@@ -21,7 +21,7 @@ router = APIRouter()
 @router.post(
     '',
     summary='同步用户信息（注册时调用）',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_sync_user(
     db: CurrentSessionTransaction,
@@ -56,7 +56,7 @@ async def agent_sync_user(
 @router.put(
     '/{user_id}',
     summary='更新用户信息',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_update_user_info(
     db: CurrentSessionTransaction,

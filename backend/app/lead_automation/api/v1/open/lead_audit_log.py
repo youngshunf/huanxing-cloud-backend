@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取Lead automation PII and compliance audit log列表',
     dependencies=[DependsPagination],
-)
+ name='open_get_lead_audit_logs')
 async def get_lead_audit_logs(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetLeadAuditLogDetail]]:
@@ -30,7 +30,7 @@ async def get_lead_audit_logs(
 @router.get(
     '/{pk}',
     summary='获取Lead automation PII and compliance audit log详情',
-)
+ name='open_get_lead_audit_log')
 async def get_lead_audit_log(
     db: CurrentSession,
     pk: Annotated[int, Path(description='Lead automation PII and compliance audit log ID')],

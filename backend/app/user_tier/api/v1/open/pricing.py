@@ -48,7 +48,7 @@ class CreditPackageItem(BaseModel):
     '/tiers',
     summary='获取订阅等级列表（公开）',
     description='获取所有可用的订阅等级，无需登录',
-)
+ name='open_get_subscription_tiers')
 async def get_subscription_tiers(
     request: Request,
     db: CurrentSession,
@@ -87,7 +87,7 @@ async def get_subscription_tiers(
     '/packages',
     summary='获取积分包列表（公开）',
     description='获取所有可购买的积分包，无需登录',
-)
+ name='open_get_credit_packages')
 async def get_credit_packages(
     request: Request,
     db: CurrentSession,

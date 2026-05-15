@@ -1,11 +1,11 @@
 """HASN 未读计数 - Agent API
 
-认证方式: DependsAgentAuth（X-Agent-Key）
-用户身份: 通过 X-User-Id Header 传入 sys_user.uuid
+认证方式: Agent JWT (DependsAgentJwtAuth)
+Agent 信息: 通过 request.state.agent 获取 AgentTokenPayload
 """
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Path
+from fastapi import APIRouter, Path, Request
 
 from backend.app.hasn.schema.hasn_unread_counts import (
     CreateHasnUnreadCountsParam,
@@ -14,71 +14,71 @@ from backend.app.hasn.schema.hasn_unread_counts import (
 from backend.app.hasn.service.hasn_unread_counts_service import hasn_unread_counts_service
 from backend.common.exception import errors
 from backend.common.response.response_schema import ResponseModel, response_base
-from backend.common.security.agent_auth import DependsAgentAuth
-from backend.common.security.agent_utils import resolve_user_id
+from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
+from backend.common.dataclasses import AgentTokenPayload
 from backend.database.db import CurrentSession, CurrentSessionTransaction
 
 router = APIRouter()
 
-
 @router.get(
     '',
     summary='HASN 未读计数列表',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_list_hasn_unread_countss(
     db: CurrentSession,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    request: Request) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     data = await hasn_unread_counts_service.get_list(db=db, user_id=user_id)
     return response_base.success(data=data)
-
 
 @router.post(
     '',
     summary='创建HASN 未读计数',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_create_hasn_unread_counts(
     db: CurrentSessionTransaction,
-    obj: CreateHasnUnreadCountsParam,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    request: Request,
+    obj: CreateHasnUnreadCountsParam) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     result = await hasn_unread_counts_service.create(db=db, obj=obj, user_id=user_id)
     return response_base.success(data=result)
-
 
 @router.get(
     '/{pk}',
     summary='获取HASN 未读计数详情',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_get_hasn_unread_counts(
     db: CurrentSession,
-    pk: Annotated[int, Path(description='HASN 未读计数 ID')],
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    request: Request,
+    pk: Annotated[int, Path(description='HASN 未读计数 ID')]) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     hasn_unread_counts = await hasn_unread_counts_service.get(db=db, pk=pk)
     if hasn_unread_counts.user_id != user_id:
         raise errors.ForbiddenError(msg='无权访问该HASN 未读计数')
     return response_base.success(data=hasn_unread_counts)
 
-
 @router.put(
     '/{pk}',
     summary='更新HASN 未读计数',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_update_hasn_unread_counts(
-    db: CurrentSessionTransaction,
+    db: CurrentSession,
+    request: Request,
     pk: Annotated[int, Path(description='HASN 未读计数 ID')],
-    obj: UpdateHasnUnreadCountsParam,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    obj: UpdateHasnUnreadCountsParam) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     hasn_unread_counts = await hasn_unread_counts_service.get(db=db, pk=pk)
     if hasn_unread_counts.user_id != user_id:
         raise errors.ForbiddenError(msg='无权修改该HASN 未读计数')
@@ -87,18 +87,18 @@ async def agent_update_hasn_unread_counts(
         return response_base.success()
     return response_base.fail()
 
-
 @router.delete(
     '/{pk}',
     summary='删除HASN 未读计数',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_delete_hasn_unread_counts(
-    db: CurrentSessionTransaction,
-    pk: Annotated[int, Path(description='HASN 未读计数 ID')],
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    db: CurrentSession,
+    request: Request,
+    pk: Annotated[int, Path(description='HASN 未读计数 ID')]) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     hasn_unread_counts = await hasn_unread_counts_service.get(db=db, pk=pk)
     if hasn_unread_counts.user_id != user_id:
         raise errors.ForbiddenError(msg='无权删除该HASN 未读计数')

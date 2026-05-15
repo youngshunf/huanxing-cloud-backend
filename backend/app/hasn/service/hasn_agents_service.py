@@ -132,9 +132,47 @@ class HasnAgentProfileService:
             agent=agent,
             event_type='agent.updated' if already_exists else 'agent.created',
         )
+
+        # 为新创建的 Agent 插入默认权限配置并签发 JWT
+        agent_token_info = None
+        if not already_exists:
+            try:
+                from backend.common.security.agent_jwt import (
+                    create_default_agent_scopes,
+                    create_agent_access_token,
+                    get_agent_scopes_cached,
+                )
+                from backend.app.hasn.schema.hasn_agents import AgentTokenInfo
+
+                # 插入默认权限配置
+                await create_default_agent_scopes(db, agent.hasn_id, request.owner_id)
+
+                # 获取权限配置
+                scopes_config = await get_agent_scopes_cached(agent.hasn_id, db)
+                scopes = scopes_config.get('scopes', [])
+
+                # 签发 Agent JWT
+                agent_token = await create_agent_access_token(
+                    agent_hasn_id=agent.hasn_id,
+                    agent_name=agent.display_name or agent.agent_name,
+                    owner_hasn_id=request.owner_id,
+                    owner_user_id=user_id or 0,
+                    scopes=scopes,
+                )
+
+                agent_token_info = AgentTokenInfo(
+                    access_token=agent_token.access_token,
+                    scopes=agent_token.scopes,
+                )
+            except Exception as e:
+                from backend.common.log import log
+                log.error(f'为 Agent {agent.hasn_id} 签发 JWT 失败: {e}')
+                # JWT 签发失败不影响 Agent 创建
+
         return CloudCreateAgentResponse(
             agent=_agent_snapshot(agent),
             agent_key=agent_key,
+            agent_token=agent_token_info,
             already_exists=already_exists,
         )
 
@@ -262,7 +300,7 @@ class HasnAgentsService:
         return hasn_agentss
 
     @staticmethod
-    async def create(*, db: AsyncSession, obj: CreateHasnAgentsParam) -> None:
+    async def create(*, db: AsyncSession, obj: CreateHasnAgentsParam, user_id: int) -> dict[str, Any]:
         """
         创建HASN Agent
 
@@ -273,7 +311,8 @@ class HasnAgentsService:
 
         :param db: 数据库会话
         :param obj: 创建HASN Agent 参数
-        :return:
+        :param user_id: 用户 ID
+        :return: Agent 信息及 JWT
         """
         await hasn_agents_dao.create(db, obj)
         await db.execute(
@@ -296,6 +335,26 @@ class HasnAgentsService:
                 index_elements=['owner_id', 'peer_id', 'relation_type'],
             )
         )
+
+        # 签发 Agent JWT
+        from backend.common.security.agent_jwt import create_agent_access_token, get_agent_scopes_cached
+        scopes_config = await get_agent_scopes_cached(obj.hasn_id, db)
+        agent_token = await create_agent_access_token(
+            agent_hasn_id=obj.hasn_id,
+            agent_name=obj.name,
+            owner_hasn_id=obj.owner_id,
+            owner_user_id=user_id,
+            scopes=scopes_config['scopes'],
+        )
+
+        return {
+            'hasn_id': obj.hasn_id,
+            'owner_id': obj.owner_id,
+            'name': obj.name,
+            'access_token': agent_token.access_token,
+            'scopes': agent_token.scopes,
+            'expire_time': agent_token.access_token_expire_time.isoformat(),
+        }
 
     @staticmethod
     async def update(*, db: AsyncSession, pk: int, obj: UpdateHasnAgentsParam) -> int:

@@ -96,9 +96,16 @@ class CloudCreateAgentRequest(SchemaBase):
     capabilities: dict[str, Any] | list[Any] | None = Field(None, description='能力摘要')
 
 
+class AgentTokenInfo(SchemaBase):
+    """Agent JWT 信息"""
+    access_token: str = Field(description='Agent JWT')
+    scopes: list[str] = Field(description='Agent 权限列表')
+
+
 class CloudCreateAgentResponse(SchemaBase):
     agent: AgentSnapshot = Field(description='云端 Agent 快照')
     agent_key: str | None = Field(None, description='新建 Agent Key，仅创建时返回')
+    agent_token: AgentTokenInfo | None = Field(None, description='Agent JWT，仅创建时返回')
     already_exists: bool = Field(default=False, description='是否幂等命中已有 Agent')
 
 

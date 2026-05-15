@@ -4,7 +4,9 @@ MCP 路由
 提供 SSE 和 HTTP 端点
 """
 import logging
-from fastapi import APIRouter, Request
+from typing import Any
+from fastapi import APIRouter, Request, HTTPException
+from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from backend.app.mcp.auth import AgentContextDep
@@ -14,6 +16,67 @@ from backend.app.mcp.server import mcp_server
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/mcp", tags=["MCP"])
+mcp_router = router  # 别名，方便导入
+
+
+class ToolsListRequest(BaseModel):
+    """工具列表请求"""
+    namespace: str | None = None
+
+
+class ToolsListResponse(BaseModel):
+    """工具列表响应"""
+    tools: list[dict[str, Any]]
+
+
+class ToolCallRequest(BaseModel):
+    """工具调用请求"""
+    tool_name: str
+    arguments: dict[str, Any]
+
+
+class ToolCallResponse(BaseModel):
+    """工具调用响应"""
+    result: Any
+
+
+@router.post("/tools/list", response_model=ToolsListResponse)
+async def list_tools(
+    request: ToolsListRequest,
+    agent_context: AgentContextDep
+):
+    """列出可用工具"""
+    try:
+        tools = await mcp_server.list_tools(
+            agent_context=agent_context,
+            namespace=request.namespace
+        )
+        return ToolsListResponse(tools=tools)
+    except Exception as e:
+        logger.error(f"Failed to list tools: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/tools/call", response_model=ToolCallResponse)
+async def call_tool(
+    request: ToolCallRequest,
+    agent_context: AgentContextDep
+):
+    """调用工具"""
+    try:
+        result = await mcp_server.call_tool(
+            agent_context=agent_context,
+            tool_name=request.tool_name,
+            arguments=request.arguments
+        )
+        return ToolCallResponse(result=result)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to call tool: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/sse")

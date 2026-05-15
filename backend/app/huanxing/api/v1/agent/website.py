@@ -8,7 +8,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 from backend.common.dataclasses import UploadUrl
 from backend.common.exception import errors
 from backend.common.response.response_schema import ResponseSchemaModel, response_base
-from backend.common.security.agent_auth import DependsAgentAuth
+from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
 from backend.core.conf import settings
 
 router = APIRouter()
@@ -18,7 +18,7 @@ router = APIRouter()
     '/deploy',
     summary='Agent 专用网站部署',
     description='Agent 调用上传生成的网站 zip 压缩包，解压到部署目录',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_deploy_website(
     user_id: Annotated[str, Form(...)],

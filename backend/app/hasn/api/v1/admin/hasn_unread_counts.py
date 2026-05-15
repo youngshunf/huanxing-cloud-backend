@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取HASN 未读计数详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取HASN 未读计数详情', dependencies=[DependsJwtAuth], name='admin_get_hasn_unread_counts')
 async def get_hasn_unread_counts(
     db: CurrentSession, pk: Annotated[int, Path(description='HASN 未读计数 ID')]
 ) -> ResponseSchemaModel[GetHasnUnreadCountsDetail]:
@@ -34,7 +34,7 @@ async def get_hasn_unread_counts(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hasn_unread_countss_paginated')
 async def get_hasn_unread_countss_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHasnUnreadCountsDetail]]:
     page_data = await hasn_unread_counts_service.get_list(db=db)
     return response_base.success(data=page_data)

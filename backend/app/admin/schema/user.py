@@ -127,6 +127,7 @@ class GetUserInfoWithRelationDetail(GetUserInfoDetail):
 
     dept: GetDeptDetail | None = Field(None, description='部门信息')
     roles: list[GetRoleWithRelationDetail] = Field(description='角色列表')
+    hasn_id: str | None = Field(None, description='HASN ID')
 
 
 class GetCurrentUserInfoWithRelationDetail(GetUserInfoWithRelationDetail):

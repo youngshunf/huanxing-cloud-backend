@@ -18,7 +18,7 @@ router = APIRouter()
     '',
     summary='分页获取订单列表（管理端）',
     dependencies=[DependsJwtAuth, DependsPagination],
-)
+ name='admin_get_orders_paginated')
 async def get_orders_paginated(
     db: CurrentSession,
     user_id: Annotated[int | None, Query(description='按用户筛选')] = None,
@@ -32,7 +32,7 @@ async def get_orders_paginated(
     '/{pk}',
     summary='获取订单详情',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_get_order_detail')
 async def get_order_detail(
     db: CurrentSession,
     pk: Annotated[int, Path(description='订单 ID')],

@@ -24,7 +24,7 @@ router = APIRouter()
     '',
     summary='分页获取商户列表',
     dependencies=[DependsJwtAuth, DependsPagination],
-)
+ name='admin_get_merchants_paginated')
 async def get_merchants_paginated(
     db: CurrentSession,
     type: Annotated[str | None, Query(description='类型 weixin/alipay')] = None,
@@ -39,7 +39,7 @@ async def get_merchants_paginated(
     '/simple',
     summary='获取全部启用商户（下拉选择用）',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_get_merchants_simple')
 async def get_merchants_simple(
     db: CurrentSession,
 ) -> ResponseSchemaModel[list[GetPayMerchantSimple]]:
@@ -52,7 +52,7 @@ async def get_merchants_simple(
     '/{pk}',
     summary='获取商户详情',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_get_merchant')
 async def get_merchant(
     pk: Annotated[int, Path(description='商户 ID')],
     db: CurrentSession,
@@ -68,7 +68,7 @@ async def get_merchant(
     '',
     summary='创建商户',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_create_merchant')
 async def create_merchant(
     db: CurrentSessionTransaction,
     obj: CreatePayMerchantParam,
@@ -81,7 +81,7 @@ async def create_merchant(
     '/{pk}',
     summary='更新商户',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_update_merchant')
 async def update_merchant(
     pk: Annotated[int, Path(description='商户 ID')],
     obj: UpdatePayMerchantParam,
@@ -95,7 +95,7 @@ async def update_merchant(
     '',
     summary='删除商户',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_delete_merchants')
 async def delete_merchants(
     pk: Annotated[list[int], Query(...)],
     db: CurrentSessionTransaction,

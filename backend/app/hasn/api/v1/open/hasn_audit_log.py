@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取HASN 审计日志列表',
     dependencies=[DependsPagination],
-)
+ name='open_open_get_hasn_audit_logs')
 async def open_get_hasn_audit_logs(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnAuditLogDetail]]:
@@ -30,7 +30,7 @@ async def open_get_hasn_audit_logs(
 @router.get(
     '/{pk}',
     summary='获取HASN 审计日志详情',
-)
+ name='open_open_get_hasn_audit_log')
 async def open_get_hasn_audit_log(
     db: CurrentSession,
     pk: Annotated[int, Path(description='HASN 审计日志 ID')],

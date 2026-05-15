@@ -23,7 +23,7 @@ router = APIRouter()
     '',
     summary='分页获取所有唤星文档',
     dependencies=[DependsJwtAuth, DependsPagination],
-)
+ name='admin_get_huanxing_documents_paginated')
 async def get_huanxing_documents_paginated(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHuanxingDocumentDetail]]:
@@ -35,7 +35,7 @@ async def get_huanxing_documents_paginated(
     '',
     summary='创建唤星文档',
     dependencies=[DependsJwtAuth],
-)
+ name='admin_create_huanxing_document')
 async def create_huanxing_document(
     request: Request,
     db: CurrentSessionTransaction,
@@ -64,7 +64,7 @@ async def delete_huanxing_documents(
     return response_base.fail()
 
 
-@router.get('/{pk}', summary='获取唤星文档详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取唤星文档详情', dependencies=[DependsJwtAuth], name='admin_get_huanxing_document')
 async def get_huanxing_document(
     db: CurrentSession,
     pk: Annotated[int, Path(description='唤星文档 ID')],

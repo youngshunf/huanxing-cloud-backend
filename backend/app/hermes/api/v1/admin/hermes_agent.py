@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取Hermes Agent 详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取Hermes Agent 详情', dependencies=[DependsJwtAuth], name='admin_get_hermes_agent')
 async def get_hermes_agent(
     db: CurrentSession, pk: Annotated[int, Path(description='Hermes Agent  ID')]
 ) -> ResponseSchemaModel[GetHermesAgentDetail]:
@@ -34,7 +34,7 @@ async def get_hermes_agent(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hermes_agents_paginated')
 async def get_hermes_agents_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHermesAgentDetail]]:
     page_data = await hermes_agent_service.get_list(db=db)
     return response_base.success(data=page_data)

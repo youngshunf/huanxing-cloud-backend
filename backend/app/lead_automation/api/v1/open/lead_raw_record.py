@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取Raw crawled lead page record列表',
     dependencies=[DependsPagination],
-)
+ name='open_get_lead_raw_records')
 async def get_lead_raw_records(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetLeadRawRecordDetail]]:
@@ -30,7 +30,7 @@ async def get_lead_raw_records(
 @router.get(
     '/{pk}',
     summary='获取Raw crawled lead page record详情',
-)
+ name='open_get_lead_raw_record')
 async def get_lead_raw_record(
     db: CurrentSession,
     pk: Annotated[int, Path(description='Raw crawled lead page record ID')],

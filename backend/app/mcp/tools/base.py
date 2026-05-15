@@ -4,8 +4,6 @@ MCP 工具基类
 from abc import ABC, abstractmethod
 from typing import Any
 
-from mcp.types import Tool
-
 
 class BaseTool(ABC):
     """MCP 工具基类"""
@@ -36,16 +34,8 @@ class BaseTool(ABC):
     @abstractmethod
     async def execute(
         self,
-        agent_context: 'AgentContext',
-        arguments: dict[str, Any]
+        arguments: dict[str, Any],
+        agent_context: 'AgentContext'
     ) -> Any:
         """执行工具"""
         pass
-
-    def to_mcp_tool(self) -> Tool:
-        """转换为 MCP Tool 定义"""
-        return Tool(
-            name=self.name,
-            description=self.description,
-            inputSchema=self.input_schema
-        )

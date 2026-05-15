@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取唤星用户与 new-api 用户映射详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取唤星用户与 new-api 用户映射详情', dependencies=[DependsJwtAuth], name='admin_get_llm_newapi_user_mapping')
 async def get_llm_newapi_user_mapping(
     db: CurrentSession, pk: Annotated[int, Path(description='唤星用户与 new-api 用户映射 ID')]
 ) -> ResponseSchemaModel[GetLlmNewapiUserMappingDetail]:
@@ -34,7 +34,7 @@ async def get_llm_newapi_user_mapping(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_llm_newapi_user_mappings_paginated')
 async def get_llm_newapi_user_mappings_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetLlmNewapiUserMappingDetail]]:
     page_data = await llm_newapi_user_mapping_service.get_list(db=db)
     return response_base.success(data=page_data)

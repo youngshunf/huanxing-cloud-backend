@@ -1,11 +1,11 @@
 """App 安装记录 - Agent API
 
 认证方式: DependsAgentJwtAuth（X-Agent-Key）
-用户身份: 通过 X-User-Id Header 传入 sys_user.uuid
+Agent 信息: 通过 request.state.agent 获取 AgentTokenPayload
 """
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Path
+from fastapi import APIRouter, Path, Request
 
 from backend.app.app_platform.schema.app_installations import (
     CreateAppInstallationsParam,
@@ -15,11 +15,10 @@ from backend.app.app_platform.service.app_installations_service import app_insta
 from backend.common.exception import errors
 from backend.common.response.response_schema import ResponseModel, response_base
 from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
-from backend.common.security.agent_utils import resolve_user_id
+from backend.common.dataclasses import AgentTokenPayload
 from backend.database.db import CurrentSession, CurrentSessionTransaction
 
 router = APIRouter()
-
 
 @router.get(
     '',
@@ -28,12 +27,12 @@ router = APIRouter()
 )
 async def agent_list_app_installationss(
     db: CurrentSession,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    request: Request) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     data = await app_installations_service.get_list(db=db)
     return response_base.success(data=data)
-
 
 @router.post(
     '',
@@ -42,13 +41,13 @@ async def agent_list_app_installationss(
 )
 async def agent_create_app_installations(
     db: CurrentSessionTransaction,
-    obj: CreateAppInstallationsParam,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    request: Request,
+    obj: CreateAppInstallationsParam) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     result = await app_installations_service.create(db=db, obj=obj)
     return response_base.success(data=result)
-
 
 @router.get(
     '/{pk}',
@@ -57,15 +56,15 @@ async def agent_create_app_installations(
 )
 async def agent_get_app_installations(
     db: CurrentSession,
-    pk: Annotated[int, Path(description='App 安装记录 ID')],
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    request: Request,
+    pk: Annotated[int, Path(description='App 安装记录 ID')]) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     app_installations = await app_installations_service.get(db=db, pk=pk)
     if app_installations.user_id != user_id:
         raise errors.ForbiddenError(msg='无权访问该App 安装记录')
     return response_base.success(data=app_installations)
-
 
 @router.put(
     '/{pk}',
@@ -73,12 +72,13 @@ async def agent_get_app_installations(
     dependencies=[DependsAgentJwtAuth],
 )
 async def agent_update_app_installations(
-    db: CurrentSessionTransaction,
+    db: CurrentSession,
+    request: Request,
     pk: Annotated[int, Path(description='App 安装记录 ID')],
-    obj: UpdateAppInstallationsParam,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    obj: UpdateAppInstallationsParam) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     app_installations = await app_installations_service.get(db=db, pk=pk)
     if app_installations.user_id != user_id:
         raise errors.ForbiddenError(msg='无权修改该App 安装记录')
@@ -87,18 +87,18 @@ async def agent_update_app_installations(
         return response_base.success()
     return response_base.fail()
 
-
 @router.delete(
     '/{pk}',
     summary='删除App 安装记录',
     dependencies=[DependsAgentJwtAuth],
 )
 async def agent_delete_app_installations(
-    db: CurrentSessionTransaction,
-    pk: Annotated[int, Path(description='App 安装记录 ID')],
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    db: CurrentSession,
+    request: Request,
+    pk: Annotated[int, Path(description='App 安装记录 ID')]) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     app_installations = await app_installations_service.get(db=db, pk=pk)
     if app_installations.user_id != user_id:
         raise errors.ForbiddenError(msg='无权删除该App 安装记录')

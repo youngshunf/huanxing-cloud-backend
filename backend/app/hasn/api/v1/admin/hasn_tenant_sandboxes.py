@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取HASN Tenant Sandbox lifecycle 详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取HASN Tenant Sandbox lifecycle 详情', dependencies=[DependsJwtAuth], name='admin_get_hasn_tenant_sandboxes')
 async def get_hasn_tenant_sandboxes(
     db: CurrentSession, pk: Annotated[int, Path(description='HASN Tenant Sandbox lifecycle  ID')]
 ) -> ResponseSchemaModel[GetHasnTenantSandboxesDetail]:
@@ -34,7 +34,7 @@ async def get_hasn_tenant_sandboxes(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hasn_tenant_sandboxess_paginated')
 async def get_hasn_tenant_sandboxess_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHasnTenantSandboxesDetail]]:
     page_data = await hasn_tenant_sandboxes_service.get_list(db=db)
     return response_base.success(data=page_data)

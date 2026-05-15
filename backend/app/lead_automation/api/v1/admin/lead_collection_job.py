@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取AI lead automation collection job详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取AI lead automation collection job详情', dependencies=[DependsJwtAuth], name='admin_get_lead_collection_job')
 async def get_lead_collection_job(
     db: CurrentSession, pk: Annotated[int, Path(description='AI lead automation collection job ID')]
 ) -> ResponseSchemaModel[GetLeadCollectionJobDetail]:
@@ -34,7 +34,7 @@ async def get_lead_collection_job(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_lead_collection_jobs_paginated')
 async def get_lead_collection_jobs_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetLeadCollectionJobDetail]]:
     page_data = await lead_collection_job_service.get_list(db=db)
     return response_base.success(data=page_data)

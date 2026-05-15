@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取Lead CSV export batch列表',
     dependencies=[DependsPagination],
-)
+ name='open_get_lead_export_batchs')
 async def get_lead_export_batchs(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetLeadExportBatchDetail]]:
@@ -30,7 +30,7 @@ async def get_lead_export_batchs(
 @router.get(
     '/{pk}',
     summary='获取Lead CSV export batch详情',
-)
+ name='open_get_lead_export_batch')
 async def get_lead_export_batch(
     db: CurrentSession,
     pk: Annotated[int, Path(description='Lead CSV export batch ID')],

@@ -6,7 +6,7 @@ from starlette.background import BackgroundTask, BackgroundTasks
 from backend.app.admin.crud.crud_menu import menu_dao
 from backend.app.admin.crud.crud_user import user_dao
 from backend.app.admin.model import User
-from backend.app.admin.schema.token import GetLoginToken, GetNewToken
+from backend.app.admin.schema.token import GetLoginToken, GetNewToken, AgentTokenInfo
 from backend.app.admin.schema.user import AuthLoginParam
 from backend.app.admin.service.login_log_service import login_log_service
 from backend.app.admin.service.user_password_history_service import password_security_service
@@ -183,6 +183,50 @@ class AuthService:
                 raise errors.ServerError(msg='LLM 服务初始化失败，请稍后重试')
             # HASN Node Key 已与登录解耦，由客户端在网络初始化时调用专用接口获取
             hasn_node_key = None
+
+            # 批量签发 Agent JWT
+            agent_tokens_list = []
+            try:
+                from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+                from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
+                from backend.common.security.agent_jwt import create_agent_access_token, get_agent_scopes_cached
+
+                # 查询用户的 hasn_id
+                human = await hasn_humans_dao.get_by_user_id(db, user.id)
+                if human and human.hasn_id:
+                    # 查询该用户的所有活跃 Agent
+                    agents = await hasn_agents_dao.get_active_agents_by_owner(db, human.hasn_id)
+
+                    # 为每个 Agent 签发 JWT
+                    for agent in agents:
+                        try:
+                            # 获取 Agent 的权限配置
+                            scopes_config = await get_agent_scopes_cached(agent.hasn_id, db)
+                            scopes = scopes_config.get('scopes', [])
+
+                            # 签发 Agent JWT
+                            agent_token = await create_agent_access_token(
+                                agent_hasn_id=agent.hasn_id,
+                                agent_name=agent.display_name or agent.agent_name,
+                                owner_hasn_id=human.hasn_id,
+                                owner_user_id=user.id,
+                                scopes=scopes,
+                            )
+
+                            agent_tokens_list.append(AgentTokenInfo(
+                                agent_hasn_id=agent.hasn_id,
+                                agent_name=agent.display_name or agent.agent_name,
+                                access_token=agent_token.access_token,
+                                scopes=agent_token.scopes,
+                            ))
+                        except Exception as e:
+                            log.error(f'为 Agent {agent.hasn_id} 签发 JWT 失败: {e}')
+                            # 单个 Agent 签发失败不影响整体登录流程
+                            continue
+            except Exception as e:
+                log.error(f'批量签发 Agent JWT 失败: {e}')
+                # Agent JWT 签发失败不影响用户登录
+
             data = GetLoginToken(
                 access_token=access_token_data.access_token,
                 access_token_expire_time=access_token_data.access_token_expire_time,
@@ -193,6 +237,7 @@ class AuthService:
                 llm_token=llm_token,
                 llm_base_url=settings.LLM_API_BASE_URL,
                 hasn_node_key=hasn_node_key,
+                agent_tokens=agent_tokens_list,
                 user=user,  # type: ignore
             )
             return data

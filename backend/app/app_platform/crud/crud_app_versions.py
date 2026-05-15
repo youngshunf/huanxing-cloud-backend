@@ -32,7 +32,7 @@ class CRUDAppVersions(CRUDPlus[AppVersions]):
         """
         return await self.select_models(db)
 
-    async def create(self, db: AsyncSession, obj: CreateAppVersionsParam) -> None:
+    async def create(self, db: AsyncSession, obj):
         """
         创建App 版本
 
@@ -40,7 +40,7 @@ class CRUDAppVersions(CRUDPlus[AppVersions]):
         :param obj: 创建App 版本参数
         :return:
         """
-        await self.create_model(db, obj)
+        return await self.create_model(db, obj)
 
     async def update(self, db: AsyncSession, pk: int, obj: UpdateAppVersionsParam) -> int:
         """

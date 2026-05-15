@@ -141,9 +141,11 @@ async def list_pending_requests(
             peer_info = await hasn_agents_dao.get_by_hasn_id(db, req.peer_id)
             peer_type = 'agent' if peer_info else 'human'
         if peer_info:
+            # HasnHumans 使用 nickname，HasnAgents 使用 display_name
+            name = peer_info.nickname if peer_type == 'human' else peer_info.display_name
             target = HasnContactPeerOut(
                 hasn_id=peer_info.hasn_id, star_id=peer_info.star_id,
-                name=peer_info.name, type=peer_type,
+                name=name, type=peer_type,
             )
         else:
             target = HasnContactPeerOut(
@@ -229,19 +231,21 @@ async def list_contacts(
                 owned_agents.append(AgentPeerOut(
                     hasn_id=a.hasn_id,
                     star_id=a.star_id,
-                    name=a.name,
+                    name=a.display_name,
                     agent_name=a.agent_name,
                     avatar_url=getattr(a, 'avatar_url', None),
                     type=a.type or 'desktop',
                     role=a.role or 'specialist',
                 ))
 
+        # HasnHumans 使用 nickname，HasnAgents 使用 display_name
+        peer_name = peer_info.nickname if c.peer_type == 'human' else peer_info.display_name
         items.append(HasnContactOut(
             id=c.id,
             peer=HasnContactPeerOut(
                 hasn_id=peer_info.hasn_id,
                 star_id=peer_info.star_id,
-                name=peer_info.name,
+                name=peer_name,
                 type=c.peer_type,
                 avatar_url=getattr(peer_info, 'avatar_url', None),
             ),

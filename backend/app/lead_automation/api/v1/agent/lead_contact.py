@@ -1,11 +1,11 @@
 """Valid deduplicated lead contact - Agent API
 
-认证方式: DependsAgentAuth（X-Agent-Key）
-用户身份: 通过 X-User-Id Header 传入 sys_user.uuid
+认证方式: Agent JWT (DependsAgentJwtAuth)
+Agent 信息: 通过 request.state.agent 获取 AgentTokenPayload
 """
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Path
+from fastapi import APIRouter, Path, Request
 
 from backend.app.lead_automation.schema.lead_contact import (
     CreateLeadContactParam,
@@ -14,71 +14,71 @@ from backend.app.lead_automation.schema.lead_contact import (
 from backend.app.lead_automation.service.lead_contact_service import lead_contact_service
 from backend.common.exception import errors
 from backend.common.response.response_schema import ResponseModel, response_base
-from backend.common.security.agent_auth import DependsAgentAuth
-from backend.common.security.agent_utils import resolve_user_id
+from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
+from backend.common.dataclasses import AgentTokenPayload
 from backend.database.db import CurrentSession, CurrentSessionTransaction
 
 router = APIRouter()
 
-
 @router.get(
     '',
     summary='Valid deduplicated lead contact列表',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_list_lead_contacts(
     db: CurrentSession,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    request: Request) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     data = await lead_contact_service.get_list(db=db)
     return response_base.success(data=data)
-
 
 @router.post(
     '',
     summary='创建Valid deduplicated lead contact',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_create_lead_contact(
     db: CurrentSessionTransaction,
-    obj: CreateLeadContactParam,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    request: Request,
+    obj: CreateLeadContactParam) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     result = await lead_contact_service.create(db=db, obj=obj)
     return response_base.success(data=result)
-
 
 @router.get(
     '/{pk}',
     summary='获取Valid deduplicated lead contact详情',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_get_lead_contact(
     db: CurrentSession,
-    pk: Annotated[int, Path(description='Valid deduplicated lead contact ID')],
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    request: Request,
+    pk: Annotated[int, Path(description='Valid deduplicated lead contact ID')]) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     lead_contact = await lead_contact_service.get(db=db, pk=pk)
     if lead_contact.user_id != user_id:
         raise errors.ForbiddenError(msg='无权访问该Valid deduplicated lead contact')
     return response_base.success(data=lead_contact)
 
-
 @router.put(
     '/{pk}',
     summary='更新Valid deduplicated lead contact',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_update_lead_contact(
-    db: CurrentSessionTransaction,
+    db: CurrentSession,
+    request: Request,
     pk: Annotated[int, Path(description='Valid deduplicated lead contact ID')],
-    obj: UpdateLeadContactParam,
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    obj: UpdateLeadContactParam) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     lead_contact = await lead_contact_service.get(db=db, pk=pk)
     if lead_contact.user_id != user_id:
         raise errors.ForbiddenError(msg='无权修改该Valid deduplicated lead contact')
@@ -87,18 +87,18 @@ async def agent_update_lead_contact(
         return response_base.success()
     return response_base.fail()
 
-
 @router.delete(
     '/{pk}',
     summary='删除Valid deduplicated lead contact',
-    dependencies=[DependsAgentAuth],
+    dependencies=[DependsAgentJwtAuth],
 )
 async def agent_delete_lead_contact(
-    db: CurrentSessionTransaction,
-    pk: Annotated[int, Path(description='Valid deduplicated lead contact ID')],
-    x_user_id: Annotated[str, Header(description='用户 UUID')],
-) -> ResponseModel:
-    user_id = await resolve_user_id(db, x_user_id)
+    db: CurrentSession,
+    request: Request,
+    pk: Annotated[int, Path(description='Valid deduplicated lead contact ID')]) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+
+    user_id = agent.owner_user_id
     lead_contact = await lead_contact_service.get(db=db, pk=pk)
     if lead_contact.user_id != user_id:
         raise errors.ForbiddenError(msg='无权删除该Valid deduplicated lead contact')

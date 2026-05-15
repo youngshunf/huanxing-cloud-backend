@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取AI lead automation source configuration列表',
     dependencies=[DependsPagination],
-)
+ name='open_get_lead_source_configs')
 async def get_lead_source_configs(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetLeadSourceConfigDetail]]:
@@ -30,7 +30,7 @@ async def get_lead_source_configs(
 @router.get(
     '/{pk}',
     summary='获取AI lead automation source configuration详情',
-)
+ name='open_get_lead_source_config')
 async def get_lead_source_config(
     db: CurrentSession,
     pk: Annotated[int, Path(description='AI lead automation source configuration ID')],

@@ -19,7 +19,7 @@ router = APIRouter()
     '',
     summary='获取HASN 未读计数列表',
     dependencies=[DependsPagination],
-)
+ name='open_open_get_hasn_unread_countss')
 async def open_get_hasn_unread_countss(
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnUnreadCountsDetail]]:
@@ -30,7 +30,7 @@ async def open_get_hasn_unread_countss(
 @router.get(
     '/{pk}',
     summary='获取HASN 未读计数详情',
-)
+ name='open_open_get_hasn_unread_counts')
 async def open_get_hasn_unread_counts(
     db: CurrentSession,
     pk: Annotated[int, Path(description='HASN 未读计数 ID')],

@@ -19,7 +19,7 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取HASN Channel Binding 详情', dependencies=[DependsJwtAuth])
+@router.get('/{pk}', summary='获取HASN Channel Binding 详情', dependencies=[DependsJwtAuth], name='admin_get_hasn_channel_bindings')
 async def get_hasn_channel_bindings(
     db: CurrentSession, pk: Annotated[int, Path(description='HASN Channel Binding  ID')]
 ) -> ResponseSchemaModel[GetHasnChannelBindingsDetail]:
@@ -34,7 +34,7 @@ async def get_hasn_channel_bindings(
         DependsJwtAuth,
         DependsPagination,
     ],
-)
+ name='admin_get_hasn_channel_bindingss_paginated')
 async def get_hasn_channel_bindingss_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetHasnChannelBindingsDetail]]:
     page_data = await hasn_channel_bindings_service.get_list(db=db)
     return response_base.success(data=page_data)
