@@ -197,6 +197,10 @@ def register_router(app: FastAPI) -> None:
     router = build_final_router()
     app.include_router(router, dependencies=dependencies)
 
+    # MCP Server 路由
+    from backend.app.mcp.routes import register_mcp_routes
+    register_mcp_routes(app)
+
     # Extra
     ensure_unique_route_names(app)
     simplify_operation_ids(app)
