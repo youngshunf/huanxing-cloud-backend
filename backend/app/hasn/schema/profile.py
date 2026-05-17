@@ -45,6 +45,23 @@ class GetMergedProfile(SchemaBase):
     created_at: datetime | None = Field(None, description='创建时间')
     updated_at: datetime | None = Field(None, description='更新时间')
 
+    @property
+    def profile_complete(self) -> bool:
+        """计算资料完整性（昵称已设置且非默认值）"""
+        if not self.nickname or self.nickname.strip() == '':
+            return False
+        # 检查是否为默认昵称格式
+        # 1. "用户12345" 格式
+        if self.nickname.startswith('用户') and self.nickname[2:].isdigit():
+            return False
+        # 2. 带星号的手机号格式（如 "138****5678"）
+        if '****' in self.nickname or '***' in self.nickname:
+            return False
+        # 3. 纯数字（可能是手机号）
+        if self.nickname.isdigit() and len(self.nickname) >= 10:
+            return False
+        return True
+
 
 class UpdateMergedProfileParam(SchemaBase):
     """合并 profile 更新参数（PUT 请求体）。

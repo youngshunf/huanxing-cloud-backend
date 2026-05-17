@@ -251,7 +251,10 @@ async def upload_user_avatar(
     storages = await s3_storage_dao.get_all(db)
     s3_storage = storages[0] if storages else None
     if not s3_storage:
-        raise errors.NotFoundError(msg='S3 存储配置不存在，请先在管理后台配置存储')
+        raise errors.NotFoundError(
+            msg='S3 存储配置不存在。请先在管理后台配置 S3 存储（系统管理 -> S3存储管理），'
+            '或使用兼容 S3 的本地存储服务（如 MinIO）。'
+        )
     
     # 创建 S3 操作器
     op = AsyncOperator(
@@ -272,8 +275,11 @@ async def upload_user_avatar(
     path = f'avatars/{filename}'
     
     # 上传文件
-    await op.write(path, content)
-    
+    try:
+        await op.write(path, content)
+    except Exception as e:
+        raise errors.ServerError(msg=f'上传文件到 S3 失败: {str(e)}')
+
     # 构建 URL
     if s3_storage.cdn_domain:
         base_url = s3_storage.cdn_domain.rstrip('/')
