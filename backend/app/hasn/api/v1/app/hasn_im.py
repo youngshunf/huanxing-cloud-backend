@@ -109,7 +109,7 @@ async def list_my_conversations(
             human = pr.scalar_one_or_none()
             if human:
                 peer_name = human.name or peer_id
-                peer_avatar = getattr(human, 'avatar_url', None)
+                peer_avatar = getattr(human, 'avatar', None)
         elif peer_id.startswith('a_'):
             pr = await db.execute(
                 select(HasnAgents).where(HasnAgents.hasn_id == peer_id)
@@ -117,7 +117,7 @@ async def list_my_conversations(
             agent = pr.scalar_one_or_none()
             if agent:
                 peer_name = agent.name or peer_id
-                peer_avatar = getattr(agent, 'avatar_url', None)
+                peer_avatar = getattr(agent, 'avatar', None)
 
         items.append(ConversationOut(
             id=str(conv.id),

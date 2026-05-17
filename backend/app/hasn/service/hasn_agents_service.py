@@ -72,7 +72,7 @@ class SqlAlchemyAgentProfileGateway:
             description=payload.get('description'),
             capabilities=payload.get('capabilities'),
             created_via='client',
-            avatar_url=payload.get('avatar'),
+            avatar=payload.get('avatar'),
             template_id=payload.get('template_id'),
             skills=payload.get('skills'),
             soul_md=payload.get('soul_md'),
@@ -255,6 +255,7 @@ def _agent_snapshot(agent: Any) -> AgentSnapshot:
         user_md=getattr(agent, 'user_md', None),
         profile_revision=int(getattr(agent, 'profile_revision', 1) or 1),
         status=getattr(agent, 'status', 'active') or 'active',
+        social_enabled=bool(getattr(agent, 'social_enabled', False)),
         updated_time=getattr(agent, 'updated_time', None),
     )
 

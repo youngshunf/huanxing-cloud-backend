@@ -342,7 +342,7 @@ async def register_hasn_identity(
     db: AsyncSession,
     user_id: int,
     name: str,
-    avatar_url: str | None = None,
+    avatar: str | None = None,
     bio: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -383,7 +383,7 @@ async def register_hasn_identity(
         user_id=user_id,
         nickname=name,
         bio=bio,
-        avatar=avatar_url,
+        avatar=avatar,
         status='active',
         contact_policy={
             'human_direct': 'open',
@@ -420,7 +420,7 @@ async def register_hasn_agent(
     description: str | None = None,
     capabilities: list | dict | None = None,
     created_via: str = 'client',
-    avatar_url: str | None = None,
+    avatar: str | None = None,
     template_id: str | None = None,
     skills: dict | list | None = None,
     soul_md: str | None = None,
@@ -437,7 +437,7 @@ async def register_hasn_agent(
       role: primary | specialist | service
       description: Agent 描述
       capabilities: A2A AgentCard 兼容能力列表
-      avatar_url: CDN 头像 URL
+      avatar: CDN 头像 URL
 
     返回: {agent: HasnAgents, agent_key: str | None, already_exists: bool}
     """
@@ -469,8 +469,8 @@ async def register_hasn_agent(
         if agent_type and existing_agent.type != agent_type:
             existing_agent.type = agent_type
             updated = True
-        if avatar_url and existing_agent.avatar != avatar_url:
-            existing_agent.avatar = avatar_url
+        if avatar and existing_agent.avatar != avatar:
+            existing_agent.avatar = avatar
             updated = True
         for attr, value in {
             'description': description,
@@ -515,7 +515,7 @@ async def register_hasn_agent(
         user_md=user_md,
         profile_source='cloud',
         profile_revision=1,
-        avatar=avatar_url,
+        avatar=avatar,
         api_key_hash=agent_key_hash,
         status='active',
         created_via=created_via,

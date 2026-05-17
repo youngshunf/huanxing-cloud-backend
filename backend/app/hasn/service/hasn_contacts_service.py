@@ -1,11 +1,13 @@
 from typing import Any, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn.crud.crud_hasn_contacts import hasn_contacts_dao
 from backend.app.hasn.model import HasnContacts
 from backend.app.hasn.model.hasn_humans import HasnHumans
+from backend.app.hasn.model.hasn_agents import HasnAgents
+from backend.app.hasn.model.hasn_agent_runtime_reports import HasnAgentRuntimeReports
 from backend.app.hasn.schema.hasn_contacts import CreateHasnContactsParam, DeleteHasnContactsParam, UpdateHasnContactsParam
 from backend.common.exception import errors
 from backend.common.pagination import paging_data
@@ -13,9 +15,9 @@ from backend.common.pagination import paging_data
 
 class HasnContactsService:
     @staticmethod
-    async def get(*, db: AsyncSession, pk: int) -> HasnContacts:
+    async def get(*, db: AsyncSession, pk: int) -> dict[str, Any]:
         """
-        获取HASN 联系人关系
+        获取HASN 联系人关系（包含 peer 信息和 owned_agents）
 
         :param db: 数据库会话
         :param pk: HASN 联系人关系 ID
@@ -24,7 +26,139 @@ class HasnContactsService:
         hasn_contacts = await hasn_contacts_dao.get(db, pk)
         if not hasn_contacts:
             raise errors.NotFoundError(msg='HASN 联系人关系不存在')
-        return hasn_contacts
+
+        # 构造完整的联系人信息（包含 peer 和 owned_agents）
+        return await HasnContactsService._build_contact_detail(db, hasn_contacts)
+
+    @staticmethod
+    async def _build_contact_detail(db: AsyncSession, contact: HasnContacts) -> dict[str, Any]:
+        """
+        构造完整的联系人详情（包含 peer 信息和 owned_agents）
+
+        :param db: 数据库会话
+        :param contact: 联系人关系记录
+        :return: 完整的联系人信息字典
+        """
+        # 基础联系人信息
+        result = {
+            "id": contact.id,
+            "owner_id": contact.owner_id,
+            "peer_id": contact.peer_id,
+            "peer_owner_id": contact.peer_owner_id,
+            "peer_type": contact.peer_type,
+            "relation_type": contact.relation_type,
+            "trust_level": contact.trust_level,
+            "trust_level_label": HasnContactsService._get_trust_level_label(contact.trust_level),
+            "scope": contact.scope,
+            "custom_permissions": contact.custom_permissions,
+            "nickname": contact.nickname,
+            "tags": contact.tags,
+            "subscription": contact.subscription,
+            "status": contact.status,
+            "request_message": contact.request_message,
+            "auto_expire": contact.auto_expire.isoformat() if contact.auto_expire else None,
+            "connected_at": contact.connected_at.isoformat() if contact.connected_at else None,
+            "last_interaction_at": contact.last_interaction_at.isoformat() if contact.last_interaction_at else None,
+            "interaction_count": contact.interaction_count,
+            "created_time": contact.created_time.isoformat() if contact.created_time else None,
+            "updated_time": contact.updated_time.isoformat() if contact.updated_time else None,
+        }
+
+        # 获取 peer 信息（对方的详细信息）
+        peer_info = None
+        if contact.peer_type == "human":
+            human_result = await db.execute(
+                select(HasnHumans).where(HasnHumans.hasn_id == contact.peer_id)
+            )
+            human = human_result.scalar_one_or_none()
+            if human:
+                peer_info = {
+                    "hasn_id": human.hasn_id,
+                    "star_id": human.star_id,
+                    "name": human.nickname,
+                    "type": "human",
+                    "avatar": human.avatar,
+                }
+        elif contact.peer_type == "agent":
+            agent_result = await db.execute(
+                select(HasnAgents).where(HasnAgents.hasn_id == contact.peer_id)
+            )
+            agent = agent_result.scalar_one_or_none()
+            if agent:
+                peer_info = {
+                    "hasn_id": agent.hasn_id,
+                    "star_id": agent.star_id,
+                    "name": agent.display_name,
+                    "type": "agent",
+                    "avatar": agent.avatar,
+                }
+
+        result["peer"] = peer_info
+
+        owned_agents = []
+        if contact.peer_type == "human":
+            latest_report_subq = (
+                select(
+                    HasnAgentRuntimeReports.agent_hasn_id,
+                    HasnAgentRuntimeReports.runtime_status,
+                    HasnAgentRuntimeReports.last_seen_at,
+                    func.row_number()
+                    .over(
+                        partition_by=HasnAgentRuntimeReports.agent_hasn_id,
+                        order_by=HasnAgentRuntimeReports.reported_at.desc(),
+                    )
+                    .label("rn"),
+                )
+                .subquery()
+            )
+            agents_result = await db.execute(
+                select(
+                    HasnAgents,
+                    latest_report_subq.c.runtime_status,
+                    latest_report_subq.c.last_seen_at,
+                )
+                .outerjoin(
+                    latest_report_subq,
+                    (latest_report_subq.c.agent_hasn_id == HasnAgents.hasn_id)
+                    & (latest_report_subq.c.rn == 1),
+                )
+                .where(
+                    HasnAgents.owner_id == contact.peer_id,
+                    HasnAgents.status == "active",
+                    HasnAgents.social_enabled.is_(True),
+                    HasnAgents.deleted_at.is_(None),
+                )
+            )
+            for agent, runtime_status, last_seen_at in agents_result.all():
+                owned_agents.append(
+                    {
+                        "hasn_id": agent.hasn_id,
+                        "star_id": agent.star_id,
+                        "name": agent.display_name,
+                        "agent_name": agent.agent_name,
+                        "avatar": agent.avatar,
+                        "type": agent.type,
+                        "role": agent.role,
+                        "online_status": runtime_status or "unknown",
+                        "last_seen_at": last_seen_at.isoformat() if last_seen_at else None,
+                    }
+                )
+
+        result["owned_agents"] = owned_agents
+
+        return result
+
+    @staticmethod
+    def _get_trust_level_label(trust_level: int) -> str:
+        """获取信任等级标签"""
+        labels = {
+            0: "已拉黑",
+            1: "陌生人",
+            2: "普通好友",
+            3: "信任好友",
+            4: "所有者",
+        }
+        return labels.get(trust_level, "未知")
 
     @staticmethod
     async def get_list(
@@ -32,7 +166,7 @@ class HasnContactsService:
         user_id: int | None = None,
     ) -> dict[str, Any]:
         """
-        获取HASN 联系人关系列表
+        获取HASN 联系人关系列表（包含 peer 信息和 owned_agents）
 
         :param db: 数据库会话
         :param user_id: 当提供时，仅返回该平台用户（sys_user.id）所对应 hasn_humans.hasn_id
@@ -46,7 +180,17 @@ class HasnContactsService:
             hasn_contacts_select = hasn_contacts_select.where(
                 HasnContacts.owner_id.in_(owner_ids_subq)
             )
-        return await paging_data(db, hasn_contacts_select)
+
+        page_data = await paging_data(db, hasn_contacts_select)
+
+        # 为每个联系人构造完整信息
+        items = []
+        for contact in page_data["items"]:
+            detail = await HasnContactsService._build_contact_detail(db, contact)
+            items.append(detail)
+
+        page_data["items"] = items
+        return page_data
 
     @staticmethod
     async def get_all(*, db: AsyncSession) -> Sequence[HasnContacts]:

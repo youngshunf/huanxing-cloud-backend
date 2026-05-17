@@ -87,7 +87,7 @@ def _make_item(entity, *, peer_type: str) -> dict:
         "hasn_id": entity.hasn_id,
         "star_id": entity.star_id,
         "name": getattr(entity, "name", "") or "",
-        "avatar_url": getattr(entity, "avatar_url", None),
+        "avatar": getattr(entity, "avatar", None),
         "type": peer_type,
         "existing_relation": None,
     }

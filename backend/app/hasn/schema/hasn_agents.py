@@ -28,6 +28,7 @@ class HasnAgentsSchemaBase(SchemaBase):
     api_key_hash: str = Field(description='API Key 的 SHA256 哈希')
     status: str = Field(description='状态 (active:活跃:green/disabled:已停用:orange/revoked:已吊销:red)')
     created_via: str = Field(description='创建来源 (guardian:Guardian注册:blue/client:客户端创建:green)')
+    social_enabled: bool = Field(default=False, description='是否对外开启社交可见')
 
 
 class CreateHasnAgentsParam(HasnAgentsSchemaBase):
@@ -74,6 +75,7 @@ class AgentSnapshot(SchemaBase):
     user_md: str | None = Field(None, description='USER.md 内容')
     profile_revision: int = Field(default=1, description='Profile 修订号')
     status: str = Field(default='active', description='Agent 状态')
+    social_enabled: bool = Field(default=False, description='是否对外开启社交可见')
     updated_time: datetime | None = Field(None, description='更新时间')
 
 

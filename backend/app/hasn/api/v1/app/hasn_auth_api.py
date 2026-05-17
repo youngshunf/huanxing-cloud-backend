@@ -40,7 +40,7 @@ router = APIRouter()
 class RegisterHasnReq(BaseModel):
     name: str = Field(description='显示名称')
     bio: str | None = Field(None, description='个人简介')
-    avatar_url: str | None = Field(None, description='头像 URL')
+    avatar: str | None = Field(None, description='头像 URL')
 
 
 class RegisterClientReq(BaseModel):
@@ -68,7 +68,7 @@ async def api_register_hasn(
         db=db,
         user_id=user_info.id,
         name=obj_in.name,
-        avatar_url=obj_in.avatar_url,
+        avatar=obj_in.avatar,
         bio=obj_in.bio,
     )
 
@@ -107,7 +107,7 @@ class RegisterAgentReq(BaseModel):
     role: str = Field(default='specialist', description='Agent 角色: primary | specialist | service')
     description: str | None = Field(None, description='Agent 描述')
     capabilities: list | None = Field(None, description='能力列表（A2A AgentCard 兼容）')
-    avatar_url: str | None = Field(None, description='CDN 头像 URL')
+    avatar: str | None = Field(None, description='CDN 头像 URL')
 
 
 @router.post('/auth/register-agent', summary='注册 Agent HASN 身份')
@@ -127,7 +127,7 @@ async def api_register_agent(
         role=obj_in.role,
         description=obj_in.description,
         capabilities=obj_in.capabilities,
-        avatar_url=obj_in.avatar_url,
+        avatar=obj_in.avatar,
     )
     if not result.get('already_exists'):
         await db.commit()

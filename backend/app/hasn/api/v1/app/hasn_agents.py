@@ -6,7 +6,10 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Path, Request
+from pydantic import BaseModel, Field
+import sqlalchemy as sa
 
+from backend.app.hasn.model import HasnAgents, HasnHumans
 from backend.app.hasn.schema.hasn_agents import (
     AgentSyncRequest,
     AgentSyncResponse,
@@ -123,6 +126,49 @@ async def update_my_hasn_agents(
     if count > 0:
         return response_base.success()
     return response_base.fail()
+
+
+class ToggleSocialBody(BaseModel):
+    enabled: bool = Field(description='目标 social_enabled 值')
+
+
+@router.post(
+    '/{hasn_id}/social/toggle',
+    summary='切换 Agent social_enabled (按 hasn_id, daemon 同步用)',
+    dependencies=[DependsJwtAuth],
+)
+async def toggle_my_hasn_agent_social(
+    request: Request,
+    db: CurrentSessionTransaction,
+    hasn_id: Annotated[str, Path(description='Agent HASN ID, 如 a_xxx')],
+    body: ToggleSocialBody,
+) -> ResponseModel:
+    user_id = request.user.id
+    owner = (
+        await db.execute(
+            sa.select(HasnHumans.hasn_id).where(HasnHumans.user_id == user_id)
+        )
+    ).scalar_one_or_none()
+    if not owner:
+        raise errors.ForbiddenError(msg='当前用户未注册 HASN 身份')
+    agent = (
+        await db.execute(
+            sa.select(HasnAgents).where(
+                HasnAgents.hasn_id == hasn_id,
+                HasnAgents.owner_id == owner,
+            )
+        )
+    ).scalar_one_or_none()
+    if not agent:
+        raise errors.NotFoundError(msg='Agent 不存在或不属于当前用户')
+    agent.social_enabled = body.enabled
+    if hasattr(agent, 'profile_revision'):
+        agent.profile_revision = (agent.profile_revision or 1) + 1
+    await db.flush()
+    return response_base.success(data={
+        'hasn_id': agent.hasn_id,
+        'social_enabled': agent.social_enabled,
+    })
 
 
 @router.delete(

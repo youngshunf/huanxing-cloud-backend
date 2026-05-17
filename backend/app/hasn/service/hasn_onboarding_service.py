@@ -143,7 +143,7 @@ class SqlAlchemyOnboardingGateway:
             db=db,
             user_id=user.id,
             name=user.nickname or user.username or '唤星用户',
-            avatar_url=user.avatar,
+            avatar=user.avatar,
             bio=user.bio,
         )
         return result['human'], not result.get('already_exists', False)

@@ -34,4 +34,5 @@ class HasnAgents(Base):
     api_key_hash: Mapped[str] = mapped_column(sa.String(64), default='', comment='Agent Key 的 SHA256 哈希')
     status: Mapped[str] = mapped_column(sa.String(20), default='', comment='状态 (active:活跃:green/disabled:已停用:orange/deleted:已删除:red)')
     created_via: Mapped[str] = mapped_column(sa.String(20), default='', comment='创建来源 (guardian:Guardian注册:blue/client:客户端创建:green/ws:WS实时注册:purple)')
+    social_enabled: Mapped[bool] = mapped_column(sa.Boolean, default=False, comment='是否对外开启社交可见 (true:社交可见/false:仅自用)')
     deleted_at: Mapped[datetime | None] = mapped_column(default=None, comment='软删除时间')

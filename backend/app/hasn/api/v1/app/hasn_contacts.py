@@ -3,13 +3,12 @@
 认证方式: DependsJwtAuth（仅当前登录用户）
 数据隔离: 通过 request.user.id 限制为用户自己的数据
 """
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Path, Request
 
 from backend.app.hasn.schema.hasn_contacts import (
     CreateHasnContactsParam,
-    GetHasnContactsDetail,
     UpdateHasnContactsParam,
 )
 from backend.app.hasn.service.hasn_contacts_service import hasn_contacts_service
@@ -30,9 +29,9 @@ router = APIRouter()
 async def get_my_hasn_contactss(
     request: Request,
     db: CurrentSession,
-) -> ResponseSchemaModel[PageData[GetHasnContactsDetail]]:
+) -> ResponseSchemaModel[PageData[dict[str, Any]]]:
     user_id = request.user.id
-    page_data = await hasn_contacts_service.get_list(db=db)
+    page_data = await hasn_contacts_service.get_list(db=db, user_id=user_id)
     return response_base.success(data=page_data)
 
 
@@ -60,10 +59,20 @@ async def get_my_hasn_contacts(
     request: Request,
     db: CurrentSession,
     pk: Annotated[int, Path(description='HASN 联系人关系 ID')],
-) -> ResponseSchemaModel[GetHasnContactsDetail]:
+) -> ResponseSchemaModel[dict[str, Any]]:
     hasn_contacts = await hasn_contacts_service.get(db=db, pk=pk)
-    if hasn_contacts.user_id != request.user.id:
+
+    # 权限检查：通过 owner_id 查询对应的 user_id
+    from backend.app.hasn.model.hasn_humans import HasnHumans
+    from sqlalchemy import select
+
+    owner_id = hasn_contacts.get("owner_id")
+    result = await db.execute(select(HasnHumans.user_id).where(HasnHumans.hasn_id == owner_id))
+    owner_user_id = result.scalar_one_or_none()
+
+    if owner_user_id != request.user.id:
         raise errors.ForbiddenError(msg='无权访问该HASN 联系人关系')
+
     return response_base.success(data=hasn_contacts)
 
 

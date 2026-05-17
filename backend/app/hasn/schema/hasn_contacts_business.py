@@ -18,7 +18,7 @@ class HasnContactPeerOut(BaseModel):
     star_id: str
     name: str
     type: str  # human / agent
-    avatar_url: str | None = None
+    avatar: str | None = None
     status: str = 'active'
 
 
@@ -49,9 +49,11 @@ class AgentPeerOut(BaseModel):
     star_id: str
     name: str
     agent_name: str
-    avatar_url: str | None = None
+    avatar: str | None = None
     type: str = 'desktop'
     role: str = 'specialist'
+    online_status: str = 'unknown'
+    last_seen_at: str | None = None
 
 
 class HasnContactOut(BaseModel):

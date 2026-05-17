@@ -233,7 +233,7 @@ async def list_contacts(
                     star_id=a.star_id,
                     name=a.display_name,
                     agent_name=a.agent_name,
-                    avatar_url=getattr(a, 'avatar_url', None),
+                    avatar=getattr(a, 'avatar', None),
                     type=a.type or 'desktop',
                     role=a.role or 'specialist',
                 ))
@@ -247,7 +247,7 @@ async def list_contacts(
                 star_id=peer_info.star_id,
                 name=peer_name,
                 type=c.peer_type,
-                avatar_url=getattr(peer_info, 'avatar_url', None),
+                avatar=getattr(peer_info, 'avatar', None),
             ),
             relation_type=c.relation_type,
             trust_level=c.trust_level,
