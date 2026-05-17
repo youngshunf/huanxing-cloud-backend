@@ -26,6 +26,7 @@ router = APIRouter()
     '',
     summary='获取我的{{ doc_comment }}列表',
     dependencies=[DependsJwtAuth, DependsPagination],
+    name='app_get_my_{{ table_name }}s',
 )
 async def get_my_{{ table_name }}s(
     request: Request,
@@ -39,6 +40,7 @@ async def get_my_{{ table_name }}s(
     '',
     summary='创建{{ doc_comment }}',
     dependencies=[DependsJwtAuth],
+    name='app_create_my_{{ table_name }}',
 )
 async def create_my_{{ table_name }}(
     request: Request,
@@ -53,6 +55,7 @@ async def create_my_{{ table_name }}(
     '/{pk}',
     summary='获取{{ doc_comment }}详情',
     dependencies=[DependsJwtAuth],
+    name='app_get_my_{{ table_name }}',
 )
 async def get_my_{{ table_name }}(
     request: Request,
@@ -69,6 +72,7 @@ async def get_my_{{ table_name }}(
     '/{pk}',
     summary='更新{{ doc_comment }}',
     dependencies=[DependsJwtAuth],
+    name='app_update_my_{{ table_name }}',
 )
 async def update_my_{{ table_name }}(
     request: Request,
@@ -89,6 +93,7 @@ async def update_my_{{ table_name }}(
     '/{pk}',
     summary='删除{{ doc_comment }}',
     dependencies=[DependsJwtAuth],
+    name='app_delete_my_{{ table_name }}',
 )
 async def delete_my_{{ table_name }}(
     request: Request,
