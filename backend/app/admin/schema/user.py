@@ -85,7 +85,7 @@ class UserInfoSchemaBase(SchemaBase):
     dept_id: int | None = Field(None, description='部门 ID')
     username: str = Field(description='用户名')
     nickname: str = Field(description='昵称')
-    avatar: Annotated[HttpUrl, PlainSerializer(ser_string)] | None = Field(None, description='头像地址')
+    avatar: str | None = Field(None, description='头像地址')
     email: CustomEmailStr | None = Field(None, description='邮箱')
     phone: CustomPhoneNumber | None = Field(None, description='手机号')
     # 扩展用户资料字段

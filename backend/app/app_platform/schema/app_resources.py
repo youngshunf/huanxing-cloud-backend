@@ -14,7 +14,7 @@ class AppResourcesSchemaBase(SchemaBase):
     resource_name: str = Field(description='None')
     display_name: str = Field(description='None')
     description: str = Field(description='None')
-    schema_json: dict = Field(description='None')
+    schema_json_: dict = Field(alias='schema_json', description='None')
     storage_strategy: str = Field(description='存储策略 (jsonb:JSONB存储:blue/dedicated_table:独立表:green)')
     created_time: datetime = Field(description='None')
     updated_time: datetime = Field(description='None')
