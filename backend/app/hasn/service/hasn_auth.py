@@ -523,7 +523,8 @@ async def register_hasn_agent(
     db.add(agent)
     await db.flush()
 
-    # 同事务写入 hasn_contacts（owner→agent 的 service 关系，trust_level=5/connected）
+    # 同事务写入 hasn_contacts（owner→agent 的 social 关系，trust_level=5/connected）
+    # Core/02 §7.4.1: trust_level=5 (Owner) 仅 social 关系合法
     # 保证注册 agent 后 contacts 表立即可被 list_contacts 检索到；重复调用通过
     # ON CONFLICT (owner_id, peer_id, relation_type) DO NOTHING 幂等。
     await db.execute(
@@ -533,7 +534,7 @@ async def register_hasn_agent(
             peer_id=agent_hasn_id,
             peer_owner_id=owner_hasn_id,
             peer_type='agent',
-            relation_type='service',
+            relation_type='social',
             trust_level=5,
             status='connected',
             subscription=False,

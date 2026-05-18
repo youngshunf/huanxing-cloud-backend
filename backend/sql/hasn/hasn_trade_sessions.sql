@@ -27,7 +27,7 @@ COMMENT ON COLUMN "public"."hasn_trade_sessions"."id" IS '交易会话 ID (UUID)
 COMMENT ON COLUMN "public"."hasn_trade_sessions"."buyer_id" IS '买方 hasn_id';
 COMMENT ON COLUMN "public"."hasn_trade_sessions"."seller_id" IS '卖方 hasn_id';
 COMMENT ON COLUMN "public"."hasn_trade_sessions"."relation_type" IS '关系类型 (commerce:商业:orange/service:履约:green)';
-COMMENT ON COLUMN "public"."hasn_trade_sessions"."scope" IS '当前作用域 (pre_sale:售前咨询:blue/in_order:订单进行中:orange/after_sale:售后:green/active_order:配送中:cyan/subscription:已订阅:purple)';
+COMMENT ON COLUMN "public"."hasn_trade_sessions"."scope" IS '当前作用域 (commerce: pre_sale:售前:blue/negotiation:协商:cyan/in_order:订单中:orange/fulfilling:履约中:violet/after_sale:售后:green/subscription:订阅:purple | service: active_order:活跃订单:cyan | professional: consultation:咨询:blue/treatment:进行中:orange/follow_up:跟进:green | platform: app_installation:应用安装:gray/system_notice:系统通知:gray)';
 COMMENT ON COLUMN "public"."hasn_trade_sessions"."status" IS '状态 (active:进行中:green/completed:已完成:blue/archived:已归档:gray/cancelled:已取消:red)';
 COMMENT ON COLUMN "public"."hasn_trade_sessions"."order_id" IS '关联订单 ID';
 COMMENT ON COLUMN "public"."hasn_trade_sessions"."expires_at" IS '过期时间';

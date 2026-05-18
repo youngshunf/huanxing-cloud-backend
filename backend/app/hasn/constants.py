@@ -5,6 +5,8 @@
 维度三: action_type   — 每种 relation_type 的独立行为集合
 四态编码: allow / deny / confirm_required / scope_limited
 """
+from backend.common.log import log
+
 
 # ── 四态编码 ─────────────────────────────────────
 ALLOW = 'allow'
@@ -175,7 +177,18 @@ DEFAULT_PERMISSION_MATRIX: dict[str, dict[int, dict[str, str] | None]] = {
 
 
 def effective_trust_level(relation_type: str, trust_level: int) -> int:
-    """解析有效信任等级（处理 None fallback 向下取整到最近有效等级）"""
+    """解析有效信任等级（处理 None fallback 向下取整到最近有效等级）。
+
+    Core/02 §7.4.1: 非 social + trust_level=5 时运行时降级为 4 处理。
+    """
+    # 协议级降级：Owner=5 仅 social 合法，其他类型运行时降级
+    if relation_type != 'social' and trust_level == 5:
+        log.warning(
+            f'[trust_level] 非 social 关系收到 trust_level=5，'
+            f'运行时降级为 4 (relation_type={relation_type})'
+        )
+        trust_level = 4
+
     matrix = DEFAULT_PERMISSION_MATRIX.get(relation_type, {})
     level = min(trust_level, 5)
     while level >= 0:
@@ -208,15 +221,88 @@ def compute_effective_permissions(
 
 # ── Scope 行为映射表 (协议 04 §1.5) ──────────────
 SCOPE_ACTION_MAP: dict[str, list[str]] = {
+    # commerce
     'pre_sale':     ['product_inquiry', 'view_public_info'],
+    'negotiation':  ['trade_communication'],
     'in_order':     ['trade_communication', 'view_shopping_pref'],
+    'fulfilling':   ['trade_communication', 'order_communication'],
     'after_sale':   ['trade_communication', 'view_public_info'],
     'subscription': ['send_push'],
-    'active_order': ['order_communication', 'decrypt_address'],
-    'consultation': ['professional_consult', 'view_public_info'],
-    'treatment':    ['professional_consult', 'view_authorized_data'],
-    'follow_up':    ['professional_consult', 'view_public_info'],
+    # service
+    'active_order': ['order_communication', 'decrypt_delivery_address'],
+    # professional
+    'consultation': ['professional_consultation', 'view_public_info'],
+    'treatment':    ['professional_consultation'],
+    'follow_up':    ['professional_consultation'],
+    # platform
+    'app_installation': ['send_message', 'app_event'],
+    'system_notice':    ['send_message'],
 }
+
+
+# ── 协议级约束错误码 (Core/04 §1.4) ──────────────
+ERR_TRUST_LEVEL_INVALID = 40010  # 非 social 关系不得设 trust_level=5；service 关系不存在 Stranger
+ERR_SCOPE_LIFECYCLE_INVALID = 40011  # scope 生命周期非法转换
+
+
+# ── Scope 生命周期状态机 (Core/02 §7.5.2) ─────────
+SCOPE_LIFECYCLE_STATES = ('pending', 'active', 'closed', 'expired')
+
+# 合法转换：pending→active, active→closed, active→expired, pending→closed
+SCOPE_LIFECYCLE_TRANSITIONS: dict[str, frozenset[str]] = {
+    'pending': frozenset({'active', 'closed'}),
+    'active':  frozenset({'closed', 'expired'}),
+    'closed':  frozenset(),  # 终态
+    'expired': frozenset(),  # 终态
+}
+
+
+def is_lifecycle_transition_valid(from_state: str, to_state: str) -> bool:
+    """检查 scope 生命周期状态转换是否合法。"""
+    return to_state in SCOPE_LIFECYCLE_TRANSITIONS.get(from_state, frozenset())
+
+
+def apply_lifecycle_to_decision(decision: str, lifecycle_state: str | None) -> str:
+    """权限引擎 scope_limited 检查（Core/02 §7.5.2）。
+
+    当矩阵返回 SCOPE_LTD 且 session.lifecycle_state ∈ {closed, expired} 时直接降级为 DENY。
+    其他情况原样返回 decision。
+    """
+    if decision == SCOPE_LTD and lifecycle_state in ('closed', 'expired'):
+        return DENY
+    return decision
+
+
+# ── 协议级约束校验 (Core/04 §1.4) ──────────────
+def validate_relation_constraints(relation_type: str, trust_level: int) -> None:
+    """校验 relation_type + trust_level 协议级约束。
+
+    - 非 social 关系不得设置 trust_level=5（Owner 仅 social）
+    - service 关系不存在 Stranger 状态（trust_level=1）
+
+    违反则抛 ValueError，调用方应捕获并返回 ERR_TRUST_LEVEL_INVALID。
+    """
+    if relation_type != 'social' and trust_level == 5:
+        raise ValueError(
+            f'非 social 关系不得设置 trust_level=5（Owner），'
+            f'当前 relation_type={relation_type}'
+        )
+    if relation_type == 'service' and trust_level == 1:
+        raise ValueError(
+            'service 关系不存在 Stranger 状态（trust_level=1），'
+            '此关系随订单创建自动建立'
+        )
+
+
+def runtime_effective_trust_level(relation_type: str, trust_level: int) -> int:
+    """运行时有效 trust_level（Core/02 §7.4.1 降级规则）。
+
+    非 social + trust_level=5 时降级为 4 处理（防御措施，正常写入路径已被
+    validate_relation_constraints 拦截）。
+    """
+    if relation_type != 'social' and trust_level == 5:
+        return 4
+    return trust_level
 
 
 # ── 7 条铁律常量 (协议 04 §2) ─────────────────────

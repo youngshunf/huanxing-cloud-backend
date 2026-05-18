@@ -47,7 +47,7 @@ COMMENT ON COLUMN "public"."hasn_contacts"."peer_id" IS '对方 hasn_id';
 COMMENT ON COLUMN "public"."hasn_contacts"."peer_owner_id" IS '对方归属人 hasn_id (peer 自己的 owner，区分"我的 agent"vs"别人的 agent")';
 COMMENT ON COLUMN "public"."hasn_contacts"."peer_type" IS '对方类型 (human:人类:blue/agent:代理:green)';
 COMMENT ON COLUMN "public"."hasn_contacts"."relation_type" IS '关系类型 (social:社交:blue/commerce:商业:orange/service:履约:green/professional:专业:purple/platform:平台:cyan)';
-COMMENT ON COLUMN "public"."hasn_contacts"."trust_level" IS '信任等级 (0:已拉黑:red/1:陌生人:gray/2:普通好友:blue/3:信任好友:green/4:所有者:purple)';
+COMMENT ON COLUMN "public"."hasn_contacts"."trust_level" IS '信任等级 (0:已拉黑:red/1:陌生人:gray/2:普通联系人:blue/3:朋友:green/4:高信任:orange/5:所有者:purple)';
 COMMENT ON COLUMN "public"."hasn_contacts"."scope" IS '关系作用域 (JSONB)';
 COMMENT ON COLUMN "public"."hasn_contacts"."custom_permissions" IS '自定义权限覆盖 (JSONB)';
 COMMENT ON COLUMN "public"."hasn_contacts"."nickname" IS '备注名';

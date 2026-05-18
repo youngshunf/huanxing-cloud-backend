@@ -11,7 +11,7 @@ class HasnContactsSchemaBase(SchemaBase):
     peer_owner_id: str | None = Field(None, description='对方归属人 hasn_id (peer 自己的 owner)')
     peer_type: str = Field(description='对方类型 (human:人类:blue/agent:代理:green)')
     relation_type: str = Field(description='关系类型 (social:社交:blue/commerce:商业:orange/service:履约:green/professional:专业:purple/platform:平台:cyan)')
-    trust_level: int = Field(description='信任等级 (0:已拉黑:red/1:陌生人:gray/2:普通好友:blue/3:信任好友:green/4:所有者:purple)')
+    trust_level: int = Field(description='信任等级 (0:已拉黑:red/1:陌生人:gray/2:普通联系人:blue/3:朋友:green/4:高信任:orange/5:所有者:purple)')
     scope: dict | None = Field(None, description='关系作用域 (JSONB)')
     custom_permissions: dict = Field(description='自定义权限覆盖 (JSONB)')
     nickname: str | None = Field(None, description='备注名')

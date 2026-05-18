@@ -28,7 +28,9 @@ from backend.app.hasn.service.hasn_auth import hasn_auth
 from backend.app.hasn.constants import (
     validate_against_iron_laws,
     compute_effective_permissions,
+    validate_relation_constraints,
     IronLawViolation,
+    ERR_TRUST_LEVEL_INVALID,
 )
 
 router = APIRouter(prefix="/contacts", tags=["HASN Contacts"])
@@ -293,6 +295,17 @@ async def update_trust_level(
         raise HTTPException(status_code=404, detail='联系人不存在')
     if contact.owner_id != hasn_id:
         raise HTTPException(status_code=403, detail='无权修改此联系人')
+
+    # 协议级约束 (Core/02 §7.4.1, Core/04 §1.4)
+    # - 非 social 关系不得设置 trust_level=5（Owner 仅 social）
+    # - service 关系不存在 Stranger 状态（trust_level=1）
+    try:
+        validate_relation_constraints(contact.relation_type, obj_in.trust_level)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={'code': ERR_TRUST_LEVEL_INVALID, 'msg': str(e)},
+        ) from e
 
     # 铁律 2: trust_level=5 仅限自己的 Agent
     if obj_in.trust_level == 5:
