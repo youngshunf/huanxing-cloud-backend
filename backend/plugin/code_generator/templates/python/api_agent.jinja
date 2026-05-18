@@ -25,9 +25,9 @@ router = APIRouter()
     '',
     summary='{{ doc_comment }}列表',
     dependencies=[DependsAgentJwtAuth],
-    name='agent_list_{{ table_name }}s',
+    name='agent_list_{{ table_name }}',
 )
-async def agent_list_{{ table_name }}s(
+async def agent_list_{{ table_name }}(
     request: Request,
     db: CurrentSession,
 ) -> ResponseModel:

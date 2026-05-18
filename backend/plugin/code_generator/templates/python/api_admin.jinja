@@ -34,9 +34,9 @@ async def get_{{ table_name }}(
         DependsJwtAuth,
         DependsPagination,
     ],
-    name='admin_get_{{ table_name }}s_paginated',
+    name='admin_get_{{ table_name }}_paginated',
 )
-async def get_{{ table_name }}s_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[Get{{ schema_name }}Detail]]:
+async def get_{{ table_name }}_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[Get{{ schema_name }}Detail]]:
     page_data = await {{ table_name }}_service.get_list(db=db)
     return response_base.success(data=page_data)
 
@@ -80,9 +80,9 @@ async def update_{{ table_name }}(
         Depends(RequestPermission('{{ permission }}:del')),
         DependsRBAC,
     ],
-    name='admin_delete_{{ table_name }}s',
+    name='admin_delete_{{ table_name }}',
 )
-async def delete_{{ table_name }}s(db: CurrentSessionTransaction, obj: Delete{{ schema_name }}Param) -> ResponseModel:
+async def delete_{{ table_name }}(db: CurrentSessionTransaction, obj: Delete{{ schema_name }}Param) -> ResponseModel:
     count = await {{ table_name }}_service.delete(db=db, obj=obj)
     if count > 0:
         return response_base.success()

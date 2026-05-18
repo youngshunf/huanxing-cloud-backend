@@ -14,7 +14,7 @@ from backend.app.{{ app_name }}.api.{{ api_version }}.{{ scope }}.{{ filename }}
 # ========================================
 v1 = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/{{ app_name }}'{% if tag %}, tags=['{{ tag }}管理']{% endif %})
 
-v1.include_router(admin_{{ table_name }}_router, prefix='/{{ table_name.replace('_', '-') }}s'{% if tag %}, tags=['{{ tag }}管理-{{ doc_comment }}']{% endif %})
+v1.include_router(admin_{{ table_name }}_router, prefix='/{{ table_name.replace('_', '-') }}'{% if tag %}, tags=['{{ tag }}管理-{{ doc_comment }}']{% endif %})
 {% endif %}
 
 {% if 'app' in api_scopes %}
@@ -24,7 +24,7 @@ v1.include_router(admin_{{ table_name }}_router, prefix='/{{ table_name.replace(
 # ========================================
 app = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/{{ app_name }}/app'{% if tag %}, tags=['{{ tag }}用户端']{% endif %})
 
-app.include_router(app_{{ table_name }}_router, prefix='/{{ table_name.replace('_', '-') }}s'{% if tag %}, tags=['{{ tag }}用户端-{{ doc_comment }}']{% endif %})
+app.include_router(app_{{ table_name }}_router, prefix='/{{ table_name.replace('_', '-') }}'{% if tag %}, tags=['{{ tag }}用户端-{{ doc_comment }}']{% endif %})
 {% endif %}
 
 {% if 'open' in api_scopes %}
@@ -34,7 +34,7 @@ app.include_router(app_{{ table_name }}_router, prefix='/{{ table_name.replace('
 # ========================================
 open_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/{{ app_name }}/open'{% if tag %}, tags=['{{ tag }}公开']{% endif %})
 
-open_api.include_router(open_{{ table_name }}_router, prefix='/{{ table_name.replace('_', '-') }}s'{% if tag %}, tags=['{{ tag }}公开-{{ doc_comment }}']{% endif %})
+open_api.include_router(open_{{ table_name }}_router, prefix='/{{ table_name.replace('_', '-') }}'{% if tag %}, tags=['{{ tag }}公开-{{ doc_comment }}']{% endif %})
 {% endif %}
 
 {% if 'agent' in api_scopes %}
@@ -44,5 +44,5 @@ open_api.include_router(open_{{ table_name }}_router, prefix='/{{ table_name.rep
 # ========================================
 agent = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/{{ app_name }}/agent'{% if tag %}, tags=['{{ tag }}Agent']{% endif %})
 
-agent.include_router(agent_{{ table_name }}_router, prefix='/{{ table_name.replace('_', '-') }}s'{% if tag %}, tags=['{{ tag }}Agent-{{ doc_comment }}']{% endif %})
+agent.include_router(agent_{{ table_name }}_router, prefix='/{{ table_name.replace('_', '-') }}'{% if tag %}, tags=['{{ tag }}Agent-{{ doc_comment }}']{% endif %})
 {% endif %}

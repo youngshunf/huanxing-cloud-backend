@@ -26,9 +26,9 @@ router = APIRouter()
     '',
     summary='获取我的{{ doc_comment }}列表',
     dependencies=[DependsJwtAuth, DependsPagination],
-    name='app_get_my_{{ table_name }}s',
+    name='app_get_my_{{ table_name }}',
 )
-async def get_my_{{ table_name }}s(
+async def get_my_{{ table_name }}(
     request: Request,
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[Get{{ schema_name }}Detail]]:

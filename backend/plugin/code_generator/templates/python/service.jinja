@@ -43,8 +43,8 @@ class {{ class_name }}Service:
         :param db: 数据库会话
         :return:
         """
-        {{ table_name }}s = await {{ table_name }}_dao.get_all(db)
-        return {{ table_name }}s
+        {{ table_name }}_list = await {{ table_name }}_dao.get_all(db)
+        return {{ table_name }}_list
 
     @staticmethod
     async def create(*, db: AsyncSession, obj: Create{{ schema_name }}Param) -> None:
