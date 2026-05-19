@@ -7,17 +7,17 @@ Scope guard:
   and pending-intent association data; runtime-private endpoint/workspace/PID/CLI/OAuth
   details are intentionally filtered out.
 """
+
 from __future__ import annotations
 
 import random
 import string
+
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import sqlalchemy as sa
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.admin.crud.crud_user import user_dao
 from backend.app.admin.model import User
@@ -41,6 +41,9 @@ from backend.common.sms import sms_service
 from backend.core.conf import settings
 from backend.database.redis import redis_client
 from backend.utils.timezone import timezone
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 SMS_CODE_PREFIX = 'sms_code'
 SMS_CODE_EXPIRE = 1800
@@ -91,6 +94,22 @@ class PlatformUserGateway(Protocol):
     async def get_or_create_phone_user(self, db: AsyncSession, phone: str) -> tuple[Any, bool]: ...
 
 
+class LlmCredentialIssuer(Protocol):
+    async def issue(self, db: AsyncSession, user: Any) -> tuple[str | None, str | None, str | None]: ...
+
+
+class AgentTokenIssuer(Protocol):
+    async def issue(
+        self,
+        db: AsyncSession,
+        *,
+        agent_hasn_id: str,
+        agent_name: str,
+        owner_hasn_id: str,
+        owner_user_id: int,
+    ) -> Any: ...
+
+
 class OnboardingGateway(Protocol):
     async def get_user(self, db: AsyncSession, user_id: int) -> Any | None: ...
     async def ensure_human(self, db: AsyncSession, user: Any) -> tuple[Any, bool]: ...
@@ -129,6 +148,43 @@ class SqlAlchemyPlatformUserGateway:
         await db.flush()
         await db.refresh(user)
         return user, True
+
+
+class SqlAlchemyLlmCredentialIssuer:
+    async def issue(self, db: AsyncSession, user: Any) -> tuple[str | None, str | None, str | None]:
+        from backend.app.llm.service.llm_newapi_user_mapping_service import (
+            llm_newapi_user_mapping_service,
+        )
+
+        mapping = await llm_newapi_user_mapping_service.ensure_newapi_user(
+            db,
+            user.id,
+            username=user.phone or user.username,
+            nickname=user.nickname or '',
+        )
+        return f'sk-{mapping.newapi_token_key}', settings.LLM_API_BASE_URL, settings.LLM_DEFAULT_MODEL
+
+
+class SqlAlchemyAgentTokenIssuer:
+    async def issue(
+        self,
+        db: AsyncSession,
+        *,
+        agent_hasn_id: str,
+        agent_name: str,
+        owner_hasn_id: str,
+        owner_user_id: int,
+    ) -> Any:
+        from backend.common.security.agent_jwt import create_agent_access_token, get_agent_scopes_cached
+
+        scopes_config = await get_agent_scopes_cached(agent_hasn_id, db)
+        return await create_agent_access_token(
+            agent_hasn_id=agent_hasn_id,
+            agent_name=agent_name,
+            owner_hasn_id=owner_hasn_id,
+            owner_user_id=owner_user_id,
+            scopes=scopes_config['scopes'],
+        )
 
 
 class SqlAlchemyOnboardingGateway:
@@ -196,7 +252,7 @@ class SqlAlchemyOnboardingGateway:
         """
         result = await db.execute(
             sa.text(
-                '''
+                """
                 UPDATE public.hasn_pending_intents
                 SET owner_id = :owner_id,
                     agent_hasn_id = :agent_hasn_id,
@@ -207,7 +263,7 @@ class SqlAlchemyOnboardingGateway:
                   AND status = 'pending'
                   AND expires_at > now()
                 RETURNING intent_id
-                '''
+                """
             ),
             {
                 'owner_id': owner_id,
@@ -222,14 +278,14 @@ class SqlAlchemyOnboardingGateway:
         try:
             result = await db.execute(
                 sa.text(
-                    '''
+                    """
                     SELECT sandbox_id, state, router_base_url
                     FROM public.hasn_tenant_sandboxes
                     WHERE owner_id = :owner_id
                       AND state <> 'deleted'
                     ORDER BY updated_time DESC NULLS LAST, created_time DESC
                     LIMIT 1
-                    '''
+                    """
                 ),
                 {'owner_id': owner_id},
             )
@@ -254,6 +310,7 @@ class HasnPhoneAuthService:
     token_expire_seconds: int = settings.TOKEN_EXPIRE_SECONDS
     code_generator: Any | None = None
     token_creator: Any = create_access_token
+    llm_credentials: LlmCredentialIssuer = field(default_factory=SqlAlchemyLlmCredentialIssuer)
 
     async def send_code(self, request: PhoneSendCodeRequest) -> PhoneSendCodeResponse:
         phone = request.phone
@@ -300,27 +357,10 @@ class HasnPhoneAuthService:
             hasn_onboarding=True,
         )
 
-        # PR7: ensure newapi user + token so the daemon receives per-owner
-        # LLM credentials with the login response. This mirrors the admin
-        # `/auth/phone-login` flow so the hasn daemon path is functionally
-        # equivalent — one set of LLM credentials per owner, shared by all
-        # of that owner's agents via per-profile `.env` files.
-        from backend.app.llm.service.llm_newapi_user_mapping_service import (
-            llm_newapi_user_mapping_service,
-        )
-        from backend.core.conf import settings
-
-        llm_token: str | None = None
-        llm_base_url: str | None = settings.LLM_API_BASE_URL
+        # PR7: ensure newapi user + token so the daemon receives per-owner LLM credentials.
         try:
-            mapping = await llm_newapi_user_mapping_service.ensure_newapi_user(
-                db,
-                user.id,
-                username=user.phone or user.username,
-                nickname=user.nickname or '',
-            )
-            llm_token = f'sk-{mapping.newapi_token_key}'
-        except Exception as exc:  # noqa: BLE001 — surface real failure, no fake fallback
+            llm_token, llm_base_url, llm_model = await self.llm_credentials.issue(db, user)
+        except Exception as exc:
             raise errors.ServerError(msg=f'LLM 服务初始化失败: {exc}') from exc
 
         return PhoneVerifyResponse(
@@ -328,15 +368,14 @@ class HasnPhoneAuthService:
             expires_in_sec=self.token_expire_seconds,
             llm_token=llm_token,
             llm_base_url=llm_base_url,
-            # 默认从全局 settings 拉；后续支持 user 表 llm_model 列时
-            # 改成 `getattr(user, 'llm_model', None) or settings.LLM_DEFAULT_MODEL`
-            llm_model=settings.LLM_DEFAULT_MODEL,
+            llm_model=llm_model,
         )
 
 
 @dataclass(slots=True)
 class HasnOnboardingService:
     gateway: OnboardingGateway = field(default_factory=SqlAlchemyOnboardingGateway)
+    agent_tokens: AgentTokenIssuer = field(default_factory=SqlAlchemyAgentTokenIssuer)
 
     async def ensure(
         self, db: AsyncSession, user_id: int, request: OnboardingEnsureRequest
@@ -358,15 +397,12 @@ class HasnOnboardingService:
                 agent_hasn_id=agent.hasn_id,
             )
 
-        # 签发 Agent JWT
-        from backend.common.security.agent_jwt import create_agent_access_token, get_agent_scopes_cached
-        scopes_config = await get_agent_scopes_cached(agent.hasn_id, db)
-        agent_token = await create_agent_access_token(
+        agent_token = await self.agent_tokens.issue(
+            db,
             agent_hasn_id=agent.hasn_id,
             agent_name=getattr(agent, 'name', None) or DEFAULT_AGENT_DISPLAY_NAME,
             owner_hasn_id=human.hasn_id,
             owner_user_id=user_id,
-            scopes=scopes_config['scopes'],
         )
 
         sandbox = await self.gateway.get_sandbox_summary(db, human.hasn_id)

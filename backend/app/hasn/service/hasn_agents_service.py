@@ -1,5 +1,7 @@
-from typing import Any, Protocol, Sequence
 import re
+
+from collections.abc import Sequence
+from typing import Any, Protocol
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +17,8 @@ from backend.app.hasn.schema.hasn_agents import (
     CloudCreateAgentResponse,
     CreateHasnAgentsParam,
     DeleteHasnAgentsParam,
+    UpdateAgentProfileRequest,
+    UpdateAgentProfileResponse,
     UpdateHasnAgentsParam,
 )
 from backend.common.exception import errors
@@ -29,32 +33,42 @@ class AgentProfileGateway(Protocol):
     async def list_owner_agents(
         self, db: AsyncSession, *, owner_id: str, after_revision: int | None = None
     ) -> list[Any]: ...
-    async def append_agent_sync_event(self, db: AsyncSession, *, owner_id: str, agent: Any, event_type: str) -> None: ...
+    async def append_agent_sync_event(
+        self, db: AsyncSession, *, owner_id: str, agent: Any, event_type: str
+    ) -> None: ...
 
 
 class SqlAlchemyAgentProfileGateway:
     async def owns_owner(self, db: AsyncSession, *, owner_id: str, user_id: int) -> bool:
-        from backend.app.hasn.model import HasnHumans
         import sqlalchemy as sa
 
+        from backend.app.hasn.model import HasnHumans
+
         result = await db.execute(
-            sa.select(HasnHumans.id).where(
+            sa
+            .select(HasnHumans.id)
+            .where(
                 HasnHumans.hasn_id == owner_id,
                 HasnHumans.user_id == user_id,
                 HasnHumans.status == 'active',
-            ).limit(1)
+            )
+            .limit(1)
         )
         return result.scalar_one_or_none() is not None
 
     async def get_template(self, db: AsyncSession, *, template_id: str) -> Any | None:
-        from backend.app.hasn.model import HasnAgentTemplates
         import sqlalchemy as sa
 
+        from backend.app.hasn.model import HasnAgentTemplates
+
         result = await db.execute(
-            sa.select(HasnAgentTemplates).where(
+            sa
+            .select(HasnAgentTemplates)
+            .where(
                 HasnAgentTemplates.template_id == template_id,
                 HasnAgentTemplates.status == 'active',
-            ).limit(1)
+            )
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
@@ -137,12 +151,12 @@ class HasnAgentProfileService:
         agent_token_info = None
         if not already_exists:
             try:
+                from backend.app.hasn.schema.hasn_agents import AgentTokenInfo
                 from backend.common.security.agent_jwt import (
-                    create_default_agent_scopes,
                     create_agent_access_token,
+                    create_default_agent_scopes,
                     get_agent_scopes_cached,
                 )
-                from backend.app.hasn.schema.hasn_agents import AgentTokenInfo
 
                 # 插入默认权限配置
                 await create_default_agent_scopes(db, agent.hasn_id, request.owner_id)
@@ -166,6 +180,7 @@ class HasnAgentProfileService:
                 )
             except Exception as e:
                 from backend.common.log import log
+
                 log.error(f'为 Agent {agent.hasn_id} 签发 JWT 失败: {e}')
                 # JWT 签发失败不影响 Agent 创建
 
@@ -175,6 +190,61 @@ class HasnAgentProfileService:
             agent_token=agent_token_info,
             already_exists=already_exists,
         )
+
+    async def update_profile_cloud_first(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        hasn_id: str,
+        request: UpdateAgentProfileRequest,
+        user_id: int | None = None,
+    ) -> UpdateAgentProfileResponse:
+        """云端权威更新 Agent profile（display_name / description / avatar）。
+
+        daemon 调用：云端先落库 → 返回最新快照 → daemon 据此回写本地镜像。
+        所有字段都是 partial：只有显式传入的字段才会被写。
+        """
+        import sqlalchemy as sa
+
+        await self._assert_owner_access(db, owner_id=owner_id, user_id=user_id)
+
+        agent = (
+            await db.execute(
+                sa.select(HasnAgents).where(
+                    HasnAgents.hasn_id == hasn_id,
+                    HasnAgents.owner_id == owner_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if agent is None:
+            raise errors.NotFoundError(msg='ERR_HASN_AGENT_NOT_FOUND')
+
+        provided = request.model_dump(exclude_unset=True)
+        if not provided:
+            return UpdateAgentProfileResponse(agent=_agent_snapshot(agent))
+
+        if 'display_name' in provided and provided['display_name'] is not None:
+            agent.display_name = provided['display_name']
+        if 'description' in provided:
+            agent.description = provided['description']
+        if 'avatar' in provided:
+            agent.avatar = provided['avatar']
+        if 'role' in provided and provided['role'] is not None:
+            agent.role = provided['role']
+
+        if hasattr(agent, 'profile_revision'):
+            agent.profile_revision = (agent.profile_revision or 1) + 1
+        await db.flush()
+
+        await self.gateway.append_agent_sync_event(
+            db,
+            owner_id=owner_id,
+            agent=agent,
+            event_type='agent.updated',
+        )
+
+        return UpdateAgentProfileResponse(agent=_agent_snapshot(agent))
 
     async def sync_agents(
         self, db: AsyncSession, request: AgentSyncRequest, *, user_id: int | None = None
@@ -188,7 +258,9 @@ class HasnAgentProfileService:
         if not request.include_disabled:
             agents = [agent for agent in agents if getattr(agent, 'status', 'active') == 'active']
         snapshots = [_agent_snapshot(agent) for agent in agents]
-        server_revision = max((snapshot.profile_revision for snapshot in snapshots), default=request.after_revision or 0)
+        server_revision = max(
+            (snapshot.profile_revision for snapshot in snapshots), default=request.after_revision or 0
+        )
         return AgentSyncResponse(owner_id=request.owner_id, server_revision=server_revision, agents=snapshots)
 
     async def _assert_owner_access(self, db: AsyncSession, *, owner_id: str, user_id: int | None) -> None:
@@ -204,7 +276,9 @@ def _merge_agent_create_payload(request: CloudCreateAgentRequest, template: Any 
         'template_id': request.template_id,
         'agent_name': _resolve_agent_slug(request, template),
         'display_name': request.display_name,
-        'description': request.description or getattr(template, 'default_description', None) or getattr(template, 'description', None),
+        'description': request.description
+        or getattr(template, 'default_description', None)
+        or getattr(template, 'description', None),
         'avatar': request.avatar or getattr(template, 'avatar', None),
         'skills': request.skills if request.skills is not None else getattr(template, 'default_skills', None),
         'soul_md': request.soul_md if request.soul_md is not None else getattr(template, 'default_soul_md', None),
@@ -238,11 +312,11 @@ def _resolve_agent_slug(request: CloudCreateAgentRequest, template: Any | None) 
 
 def _agent_snapshot(agent: Any) -> AgentSnapshot:
     return AgentSnapshot(
-        hasn_id=getattr(agent, 'hasn_id'),
+        hasn_id=agent.hasn_id,
         star_id=getattr(agent, 'star_id', ''),
-        owner_id=getattr(agent, 'owner_id'),
-        agent_name=getattr(agent, 'agent_name'),
-        display_name=getattr(agent, 'display_name'),
+        owner_id=agent.owner_id,
+        agent_name=agent.agent_name,
+        display_name=agent.display_name,
         description=getattr(agent, 'description', None),
         avatar=getattr(agent, 'avatar', None),
         type=getattr(agent, 'type', 'desktop') or 'desktop',
@@ -267,7 +341,7 @@ class HasnAgentsService:
     @staticmethod
     async def get(*, db: AsyncSession, pk: int) -> HasnAgents:
         """
-        获取HASN Agent 
+        获取HASN Agent
 
         :param db: 数据库会话
         :param pk: HASN Agent  ID
@@ -292,7 +366,7 @@ class HasnAgentsService:
     @staticmethod
     async def get_all(*, db: AsyncSession) -> Sequence[HasnAgents]:
         """
-        获取所有HASN Agent 
+        获取所有HASN Agent
 
         :param db: 数据库会话
         :return:
@@ -339,6 +413,7 @@ class HasnAgentsService:
 
         # 签发 Agent JWT
         from backend.common.security.agent_jwt import create_agent_access_token, get_agent_scopes_cached
+
         scopes_config = await get_agent_scopes_cached(obj.hasn_id, db)
         agent_token = await create_agent_access_token(
             agent_hasn_id=obj.hasn_id,
@@ -360,7 +435,7 @@ class HasnAgentsService:
     @staticmethod
     async def update(*, db: AsyncSession, pk: int, obj: UpdateHasnAgentsParam) -> int:
         """
-        更新HASN Agent 
+        更新HASN Agent
 
         :param db: 数据库会话
         :param pk: HASN Agent  ID
@@ -373,7 +448,7 @@ class HasnAgentsService:
     @staticmethod
     async def delete(*, db: AsyncSession, obj: DeleteHasnAgentsParam) -> int:
         """
-        删除HASN Agent 
+        删除HASN Agent
 
         :param db: 数据库会话
         :param obj: HASN Agent  ID 列表

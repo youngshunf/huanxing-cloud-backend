@@ -15,12 +15,11 @@ from backend.app.hasn.schema.hasn_onboarding import (
     SandboxSummary,
 )
 from backend.app.hasn.service.hasn_onboarding_service import (
-    HasnOnboardingService,
-    HasnPhoneAuthService,
-    SMS_CODE_PREFIX,
-    SMS_RATE_PREFIX,
     DEFAULT_AGENT_DISPLAY_NAME,
     PRIVATE_NODE_INFO_KEYS,
+    SMS_CODE_PREFIX,
+    HasnOnboardingService,
+    HasnPhoneAuthService,
 )
 
 
@@ -90,6 +89,28 @@ class FakeDb:
         self.flush_count += 1
 
 
+class FakeLlmCredentialIssuer:
+    async def issue(self, db: Any, user: Any) -> tuple[str, str, str]:
+        return f'sk-user-{user.id}', 'https://llm.example/v1', 'test-model'
+
+
+class FakeAgentTokenIssuer:
+    async def issue(
+        self,
+        db: Any,
+        *,
+        agent_hasn_id: str,
+        agent_name: str,
+        owner_hasn_id: str,
+        owner_user_id: int,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            access_token=f'agent-token:{agent_hasn_id}',
+            access_token_expire_time=SimpleNamespace(isoformat=lambda: '2026-05-18T00:00:00+00:00'),
+            scopes=['message.read', 'knowledge.read'],
+        )
+
+
 @pytest.mark.asyncio
 async def test_phone_send_code_reuses_sms_window_and_returns_contract_shape() -> None:
     redis = FakeRedis()
@@ -125,6 +146,7 @@ async def test_phone_verify_creates_platform_user_and_issues_bearer_token() -> N
         users=users,
         token_expire_seconds=86400,
         token_creator=fake_token_creator,
+        llm_credentials=FakeLlmCredentialIssuer(),
     )
 
     response = await service.verify(
@@ -134,6 +156,9 @@ async def test_phone_verify_creates_platform_user_and_issues_bearer_token() -> N
     assert response.access_token == 'jwt-token'
     assert response.token_type == 'Bearer'
     assert response.expires_in_sec == 86400
+    assert response.llm_token == 'sk-user-1'
+    assert response.llm_base_url == 'https://llm.example/v1'
+    assert response.llm_model == 'test-model'
     assert f'{SMS_CODE_PREFIX}:13800138000' in redis.deleted
     assert db.flush_count == 1
     assert captured_token_kwargs['pending_intent_id'] == 'pi_123'
@@ -180,7 +205,7 @@ class FakeOnboardingGateway:
 @pytest.mark.asyncio
 async def test_onboarding_ensure_closes_old_user_default_agent_and_pending_intent_loop() -> None:
     gateway = FakeOnboardingGateway()
-    service = HasnOnboardingService(gateway=gateway)
+    service = HasnOnboardingService(gateway=gateway, agent_tokens=FakeAgentTokenIssuer())
     request = OnboardingEnsureRequest(
         node=NodeClaim(
             node_id='n_device_1',
@@ -199,6 +224,8 @@ async def test_onboarding_ensure_closes_old_user_default_agent_and_pending_inten
     assert response.owner_binding.revision == 3
     assert response.default_agent.hasn_id == 'a_default_1'
     assert response.default_agent.display_name == DEFAULT_AGENT_DISPLAY_NAME
+    assert response.default_agent.access_token == 'agent-token:a_default_1'
+    assert response.default_agent.scopes == ['message.read', 'knowledge.read']
     assert response.sandbox and response.sandbox.status == 'sleeping'
     assert response.sync_cursor == 'owner:h_owner_1:0'
     assert gateway.consumed == [('pi_resume_1', 'h_owner_1', 'a_default_1')]

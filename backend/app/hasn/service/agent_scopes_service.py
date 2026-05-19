@@ -2,7 +2,7 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.hasn.crud import crud_hasn_agents
+from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
 from backend.app.hasn.schema.agent_scopes import (
     AgentScopesConfig,
     AgentTokenInfo,
@@ -23,7 +23,7 @@ class AgentScopesService:
     async def get_agent_scopes(self, db: AsyncSession, agent_hasn_id: str, owner_hasn_id: str) -> AgentScopesConfig:
         """查询 Agent 权限配置"""
         # 验证 Agent 归属关系
-        agent = await crud_hasn_agents.get_by_hasn_id(db, hasn_id=agent_hasn_id)
+        agent = await hasn_agents_dao.get_by_hasn_id(db, hasn_id=agent_hasn_id)
         if not agent:
             raise errors.NotFoundError(msg=f'Agent {agent_hasn_id} 不存在')
         if agent.owner_id != owner_hasn_id:
@@ -46,7 +46,7 @@ class AgentScopesService:
     ) -> UpdateAgentScopesResponse:
         """更新 Agent 权限配置"""
         # 验证 Agent 归属关系
-        agent = await crud_hasn_agents.get_by_hasn_id(db, hasn_id=agent_hasn_id)
+        agent = await hasn_agents_dao.get_by_hasn_id(db, hasn_id=agent_hasn_id)
         if not agent:
             raise errors.NotFoundError(msg=f'Agent {agent_hasn_id} 不存在')
         if agent.owner_id != owner_hasn_id:

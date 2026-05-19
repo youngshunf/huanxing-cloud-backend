@@ -1,8 +1,11 @@
 """Agent 权限管理路由"""
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
 from backend.app.hasn.schema.agent_scopes import (
     AgentScopesConfig,
     UpdateAgentScopesRequest,
@@ -24,13 +27,11 @@ router = APIRouter()
 async def get_agent_scopes(
     request: Request,
     agent_hasn_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AgentScopesConfig:
     """查询 Agent 权限配置"""
     # 获取 Owner HASN ID
-    from backend.app.hasn.crud import crud_hasn_humans
-
-    human = await crud_hasn_humans.get_by_user_id(db, user_id=request.user.id)
+    human = await hasn_humans_dao.get_by_user_id(db, user_id=request.user.id)
     if not human:
         from backend.common.exception import errors
 
@@ -53,13 +54,11 @@ async def update_agent_scopes(
     request: Request,
     agent_hasn_id: str,
     request_body: UpdateAgentScopesRequest,
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> UpdateAgentScopesResponse:
     """更新 Agent 权限配置"""
     # 获取 Owner HASN ID
-    from backend.app.hasn.crud import crud_hasn_humans
-
-    human = await crud_hasn_humans.get_by_user_id(db, user_id=request.user.id)
+    human = await hasn_humans_dao.get_by_user_id(db, user_id=request.user.id)
     if not human:
         from backend.common.exception import errors
 

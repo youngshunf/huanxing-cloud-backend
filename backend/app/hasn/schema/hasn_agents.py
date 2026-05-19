@@ -8,6 +8,7 @@ from backend.common.schema import SchemaBase
 
 class HasnAgentsSchemaBase(SchemaBase):
     """HASN Agent 基础模型"""
+
     hasn_id: str = Field(description='HASN Agent 唯一标识（格式: a_{uuid}）')
     star_id: str = Field(description='Agent 唤星号（如: 100001#star）')
     owner_id: str = Field(description='所属 Human 的 hasn_id')
@@ -15,7 +16,9 @@ class HasnAgentsSchemaBase(SchemaBase):
     agent_name: str = Field(description='Agent 标识名')
     description: str | None = Field(None, description='Agent 描述')
     avatar: str | None = Field(None, description='头像（与 sys_user.avatar 对齐）')
-    type: str = Field(description='Agent 类型 (desktop:桌面端:blue/mobile:手机端:green/cloud:云端:purple/web:网页端:orange)')
+    type: str = Field(
+        description='Agent 类型 (desktop:桌面端:blue/mobile:手机端:green/cloud:云端:purple/web:网页端:orange)'
+    )
     role: str = Field(description='Agent 角色 (primary:主要:blue/specialist:专家:green/service:服务:orange)')
     node_id: str | None = Field(None, description='Agent 驻留节点 ID（设备指纹派生）')
     home_client_id: int | None = Field(None, description='本地 Agent 归属客户端 ID')
@@ -100,6 +103,7 @@ class CloudCreateAgentRequest(SchemaBase):
 
 class AgentTokenInfo(SchemaBase):
     """Agent JWT 信息"""
+
     access_token: str = Field(description='Agent JWT')
     scopes: list[str] = Field(description='Agent 权限列表')
 
@@ -109,6 +113,19 @@ class CloudCreateAgentResponse(SchemaBase):
     agent_key: str | None = Field(None, description='新建 Agent Key，仅创建时返回')
     agent_token: AgentTokenInfo | None = Field(None, description='Agent JWT，仅创建时返回')
     already_exists: bool = Field(default=False, description='是否幂等命中已有 Agent')
+
+
+class UpdateAgentProfileRequest(SchemaBase):
+    """daemon 发起的部分字段更新请求（云端为权威源）。"""
+
+    display_name: str | None = Field(None, min_length=1, max_length=80, description='Agent 显示名')
+    description: str | None = Field(None, max_length=280, description='Agent 简介')
+    avatar: str | None = Field(None, max_length=500, description='Agent 头像 URL')
+    role: str | None = Field(None, min_length=1, max_length=64, description='Agent 角色')
+
+
+class UpdateAgentProfileResponse(SchemaBase):
+    agent: AgentSnapshot = Field(description='更新后的 Agent 快照（云端权威）')
 
 
 class AgentSyncRequest(SchemaBase):

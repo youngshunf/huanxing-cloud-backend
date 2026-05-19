@@ -13,28 +13,28 @@
 import hashlib
 import secrets
 import uuid
+
 from datetime import timedelta
 from typing import Any
 
 import jwt
+
 from fastapi import Depends, HTTPException, Request
 from fastapi.security.utils import get_authorization_scheme_param
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.common.security.jwt import jwt_decode, jwt_authentication
-from backend.core.conf import settings
-from backend.database.db import async_db_session
-from backend.database.redis import redis_client
-from backend.utils.timezone import timezone
-
 from backend.app.hasn.model import HasnHumans, HasnNodes, HasnOwnerApiKeys
 from backend.app.hasn.model.hasn_agents import HasnAgents
 from backend.app.hasn.model.hasn_contacts import HasnContacts
-
+from backend.common.security.jwt import jwt_authentication, jwt_decode
+from backend.core.conf import settings
+from backend.database.db import async_db_session
+from backend.utils.timezone import timezone
 
 # ─── Star ID 生成 ───
+
 
 async def _next_star_id(db: AsyncSession) -> str:
     """生成下一个数字唤星号（6位起步）"""
@@ -52,7 +52,7 @@ async def _next_star_id(db: AsyncSession) -> str:
 
 def _generate_agent_key() -> tuple[str, str]:
     """生成 Agent Key (hasn_ak_) 和对应的 SHA256 哈希"""
-    raw_key = f"hasn_ak_{secrets.token_urlsafe(48)}"
+    raw_key = f'hasn_ak_{secrets.token_urlsafe(48)}'
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
     return raw_key, key_hash
 
@@ -62,7 +62,7 @@ def _generate_agent_key() -> tuple[str, str]:
 
 def _generate_owner_key() -> tuple[str, str]:
     """生成 Owner API Key (hasn_ok_) 和对应的 SHA256 哈希"""
-    raw_key = f"hasn_ok_{secrets.token_urlsafe(48)}"
+    raw_key = f'hasn_ok_{secrets.token_urlsafe(48)}'
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
     return raw_key, key_hash
 
@@ -120,6 +120,7 @@ def verify_node_jwt(token: str) -> dict[str, Any]:
 
 # ─── WS 统一认证（v2.1 简化：Bearer / OwnerKey + X-Node-Id） ───
 
+
 async def authenticate_ws_connection(
     scheme: str,
     credential: str,
@@ -138,7 +139,6 @@ async def authenticate_ws_connection(
         auth_profile, scopes, expires_at
     }
     """
-    from backend.common.log import log
 
     scheme_lower = scheme.lower()
 
@@ -149,15 +149,16 @@ async def authenticate_ws_connection(
             return await _auth_by_owner_key(credential, node_id, node_name)
         return await _auth_by_bearer(credential, node_id, node_name)
 
-    elif scheme_lower == 'ownerkey':
+    if scheme_lower == 'ownerkey':
         return await _auth_by_owner_key(credential, node_id, node_name)
 
-    else:
-        raise HTTPException(status_code=401, detail=f'不支持的认证方式: {scheme}，请使用 Bearer 或 OwnerKey')
+    raise HTTPException(status_code=401, detail=f'不支持的认证方式: {scheme}，请使用 Bearer 或 OwnerKey')
 
 
 async def _auth_by_bearer(
-    token: str, node_id: str, node_name: str | None = None,
+    token: str,
+    node_id: str,
+    node_name: str | None = None,
 ) -> dict[str, Any]:
     """通过 JWT Bearer Token 认证，解析出 user → hasn_id"""
     from backend.common.log import log
@@ -166,9 +167,7 @@ async def _auth_by_bearer(
     user_id = user_info.id
 
     async with async_db_session() as db:
-        result = await db.execute(
-            select(HasnHumans).where(HasnHumans.user_id == user_id)
-        )
+        result = await db.execute(select(HasnHumans).where(HasnHumans.user_id == user_id))
         human = result.scalar_one_or_none()
 
     if not human:
@@ -200,7 +199,9 @@ async def _auth_by_bearer(
 
 
 async def _auth_by_owner_key(
-    owner_api_key: str, node_id: str, node_name: str | None = None,
+    owner_api_key: str,
+    node_id: str,
+    node_name: str | None = None,
 ) -> dict[str, Any]:
     """通过 Owner API Key 认证"""
     from backend.common.log import log
@@ -232,10 +233,14 @@ async def _auth_by_owner_key(
         'capacity': node.capacity or 1,
         'auth_profile': 'owner_api_key',
         'scopes': key.scopes or {'bind_owner': True, 'register_agent': True},
-        'expires_at': key.expires_at.isoformat() if key.expires_at else (timezone.now() + timedelta(days=365)).isoformat(),
+        'expires_at': key.expires_at.isoformat()
+        if key.expires_at
+        else (timezone.now() + timedelta(days=365)).isoformat(),
     }
 
+
 # ─── Agent API Key 验证 ───
+
 
 async def verify_agent_api_key(api_key: str, db: AsyncSession) -> HasnAgents:
     """验证 Agent API Key，返回 Agent 记录"""
@@ -280,7 +285,7 @@ async def verify_owner_proof(
     if not proof_type or not credential:
         raise HTTPException(status_code=401, detail='缺少 owner_proof')
 
-    now = timezone.now()
+    timezone.now()
 
     if node_id:
         node_result = await db.execute(
@@ -299,6 +304,7 @@ async def verify_owner_proof(
     if proof_type == 'owner_api_key':
         # 复用公共 owner key 验证（已含过期检查 + last_used 更新）
         from backend.common.security.owner_key_auth import verify_owner_key_standalone
+
         key = await verify_owner_key_standalone(credential, db)
         # 额外校验：owner_id 必须匹配
         if key.owner_id != owner_id:
@@ -323,7 +329,7 @@ async def verify_owner_proof(
         human = result.scalar_one_or_none()
         if not human:
             raise HTTPException(status_code=401, detail='Bearer Token 与 owner_id 不匹配')
-        token_payload = jwt_decode(credential)
+        jwt_decode(credential)
         # default to 7 days lease for bearer token
         expires_at = timezone.now() + timedelta(days=7)
         return {
@@ -337,6 +343,7 @@ async def verify_owner_proof(
 
 
 # ─── HASN 身份注册 ───
+
 
 async def register_hasn_identity(
     db: AsyncSession,
@@ -353,16 +360,17 @@ async def register_hasn_identity(
     返回: {human: HasnHumans, agent: HasnAgents, api_key: str | None, already_exists: bool}
     """
     # 幂等检查：已注册则直接返回
-    result = await db.execute(
-        select(HasnHumans).where(HasnHumans.user_id == user_id)
-    )
+    result = await db.execute(select(HasnHumans).where(HasnHumans.user_id == user_id))
     existing_human = result.scalar_one_or_none()
     if existing_human:
         # 查找其默认 Agent
         agent_result = await db.execute(
-            select(HasnAgents).where(
+            select(HasnAgents)
+            .where(
                 HasnAgents.owner_id == existing_human.hasn_id,
-            ).order_by(HasnAgents.id.asc()).limit(1)
+            )
+            .order_by(HasnAgents.id.asc())
+            .limit(1)
         )
         existing_agent = agent_result.scalar_one_or_none()
         return {
@@ -373,7 +381,7 @@ async def register_hasn_identity(
         }
 
     # 生成 HASN ID 和 Star ID
-    hasn_id = f"h_{uuid.uuid4()}"
+    hasn_id = f'h_{uuid.uuid4()}'
     star_id = await _next_star_id(db)
 
     # 创建 Human
@@ -442,9 +450,7 @@ async def register_hasn_agent(
     返回: {agent: HasnAgents, agent_key: str | None, already_exists: bool}
     """
     # 验证 owner 存在
-    owner_result = await db.execute(
-        select(HasnHumans).where(HasnHumans.hasn_id == owner_hasn_id)
-    )
+    owner_result = await db.execute(select(HasnHumans).where(HasnHumans.hasn_id == owner_hasn_id))
     owner = owner_result.scalar_one_or_none()
     if not owner:
         raise HTTPException(status_code=404, detail='owner_hasn_id 对应的 Human 不存在')
@@ -494,8 +500,8 @@ async def register_hasn_agent(
         }
 
     # 生成身份
-    agent_hasn_id = f"a_{uuid.uuid4()}"
-    agent_star_id = f"{owner.star_id}#{agent_name}"
+    agent_hasn_id = f'a_{uuid.uuid4()}'
+    agent_star_id = f'{owner.star_id}#{agent_name}'
     agent_key, agent_key_hash = _generate_agent_key()
 
     agent = HasnAgents(
@@ -523,8 +529,7 @@ async def register_hasn_agent(
     db.add(agent)
     await db.flush()
 
-    # 同事务写入 hasn_contacts（owner→agent 的 social 关系，trust_level=5/connected）
-    # Core/02 §7.4.1: trust_level=5 (Owner) 仅 social 关系合法
+    # 同事务写入 hasn_contacts（owner→agent 的 service 关系，trust_level=5/connected）
     # 保证注册 agent 后 contacts 表立即可被 list_contacts 检索到；重复调用通过
     # ON CONFLICT (owner_id, peer_id, relation_type) DO NOTHING 幂等。
     await db.execute(
@@ -534,7 +539,7 @@ async def register_hasn_agent(
             peer_id=agent_hasn_id,
             peer_owner_id=owner_hasn_id,
             peer_type='agent',
-            relation_type='social',
+            relation_type='service',
             trust_level=5,
             status='connected',
             subscription=False,
@@ -555,6 +560,7 @@ async def register_hasn_agent(
 
 
 # ─── 节点注册 ───
+
 
 async def register_node(
     db: AsyncSession,
@@ -595,18 +601,18 @@ async def register_node(
             if owner_hasn_id:
                 current_owners = existing.allowed_owner_hasn_ids or []
                 if owner_hasn_id not in current_owners:
-                    existing.allowed_owner_hasn_ids = current_owners + [owner_hasn_id]
+                    existing.allowed_owner_hasn_ids = [*current_owners, owner_hasn_id]
             if allowed_owner_hasn_ids is not None:
                 existing.allowed_owner_hasn_ids = allowed_owner_hasn_ids
             existing.created_by_owner_id = created_by_owner_id or existing.created_by_owner_id
             existing.device_platform = device_platform or existing.device_platform
             existing.app_version = app_version or existing.app_version
             existing.node_info = node_info or existing.node_info
-            
+
             # 如果提供了指纹但数据库中没有，则更新进去
             if fingerprint and not existing.device_fingerprint:
                 existing.device_fingerprint = fingerprint
-                
+
             await db.flush()
             return existing
 
@@ -647,6 +653,7 @@ async def ensure_hasn_owner_key(
     返回: owner_key (hasn_ok_xxx) 或 None
     """
     from backend.common.log import log
+
     try:
         # 1. 确保 HASN Human 身份已注册
         identity = await register_hasn_identity(
@@ -658,10 +665,12 @@ async def ensure_hasn_owner_key(
 
         # 2. 检查是否已有 active 的 Owner Key
         existing = await db.execute(
-            select(HasnOwnerApiKeys).where(
+            select(HasnOwnerApiKeys)
+            .where(
                 HasnOwnerApiKeys.user_id == user_id,
                 HasnOwnerApiKeys.status == 'active',
-            ).limit(1)
+            )
+            .limit(1)
         )
         if existing.scalar_one_or_none():
             log.debug(f'[HASN] Owner Key 已存在: user_id={user_id}')
@@ -669,6 +678,7 @@ async def ensure_hasn_owner_key(
 
         # 3. 签发新 Owner Key
         from backend.app.hasn.service.hasn_api_key_service import hasn_api_key_service
+
         result = await hasn_api_key_service.create_api_key(
             db=db,
             user_id=user_id,
@@ -683,6 +693,7 @@ async def ensure_hasn_owner_key(
         log.warning(f'[HASN] Owner Key 签发失败（不阻塞登录）: {e}')
         return None
 
+
 async def reissue_hasn_node_key(
     db: AsyncSession,
     node_id: str,
@@ -695,12 +706,12 @@ async def reissue_hasn_node_key(
     """
     raise HTTPException(
         status_code=410,
-        
         detail='Node Key 已废弃 (v2.1)，节点认证现使用 Bearer Token / OwnerKey',
     )
 
 
 # ─── 认证依赖注入 ───
+
 
 async def hasn_auth_from_jwt(request: Request) -> dict[str, Any]:
     """
@@ -728,9 +739,7 @@ async def hasn_auth_from_jwt(request: Request) -> dict[str, Any]:
 
     # 查找 HASN 身份
     async with async_db_session() as db:
-        result = await db.execute(
-            select(HasnHumans).where(HasnHumans.user_id == user_id)
-        )
+        result = await db.execute(select(HasnHumans).where(HasnHumans.user_id == user_id))
         human = result.scalar_one_or_none()
 
     if not human:
@@ -778,7 +787,7 @@ async def hasn_auth_dual(request: Request) -> dict[str, Any]:
     if scheme.lower() == 'bearer':
         return await hasn_auth_from_jwt(request)
 
-    elif scheme.lower() == 'apikey':
+    if scheme.lower() == 'apikey':
         async with async_db_session() as db:
             agent = await verify_agent_api_key(credentials, db)
         return {
@@ -789,8 +798,7 @@ async def hasn_auth_dual(request: Request) -> dict[str, Any]:
             'auth_type': 'apikey',
         }
 
-    else:
-        raise HTTPException(status_code=401, detail=f'不支持的认证方式: {scheme}')
+    raise HTTPException(status_code=401, detail=f'不支持的认证方式: {scheme}')
 
 
 # 依赖注入快捷方式
