@@ -19,6 +19,13 @@ from backend.common.security.agent_jwt import jwt_decode_agent
 from backend.database.redis import redis_client
 
 
+class _RuntimeDenial(Exception):
+    def __init__(self, *, code: str, message: str, workspace: dict[str, Any]) -> None:
+        self.code = code
+        self.message = message
+        self.workspace = workspace
+
+
 class AiNativeRuntimeGateway:
     async def get_capabilities(self, db, *, request, body: AiNativeRuntimeCapabilitiesRequest) -> dict[str, Any]:
         agent = self._require_agent(request)
@@ -98,7 +105,25 @@ class AiNativeRuntimeGateway:
             return self._deny_payload(body.trace_id, agent_result['code'], agent_result['message'], audit_id=audit['id'])
 
         agent = agent_result['agent']
-        workspace = await self._resolve_workspace(db, agent=agent, requested_workspace=body.workspace)
+        try:
+            workspace = await self._resolve_workspace(db, agent=agent, requested_workspace=body.workspace)
+        except _RuntimeDenial as denial:
+            manifest = await ai_native_app_registry.ensure_builtin_published(db, app_id)
+            tool = self._find_tool(manifest, tool_id)
+            capability = self._find_capability(manifest, tool_id)
+            audit = await self._write_audit(
+                db,
+                trace_id=body.trace_id,
+                workspace=denial.workspace,
+                agent=agent,
+                manifest=manifest,
+                capability=capability,
+                tool=tool,
+                decision='deny',
+                error_code=denial.code,
+                context={'reason': denial.message},
+            )
+            return self._deny_payload(body.trace_id, denial.code, denial.message, audit_id=audit['id'])
         manifest = await ai_native_app_registry.ensure_builtin_published(db, app_id)
         tool = self._find_tool(manifest, tool_id)
         capability = self._find_capability(manifest, tool_id)
@@ -259,7 +284,11 @@ class AiNativeRuntimeGateway:
         )
         kind = workspace.get('kind') or 'personal'
         if kind not in {'personal', 'enterprise'}:
-            raise errors.RequestError(msg='invalid_workspace_kind')
+            raise _RuntimeDenial(
+                code='15003',
+                message='workspace_inaccessible',
+                workspace=self._fallback_personal_workspace(agent),
+            )
         workspace['kind'] = kind
         if kind == 'personal':
             workspace['user_id'] = agent.owner_user_id
@@ -269,17 +298,33 @@ class AiNativeRuntimeGateway:
 
         enterprise_id = workspace.get('enterprise_id')
         if enterprise_id is None:
-            raise errors.RequestError(msg='enterprise workspace requires enterprise_id')
+            raise _RuntimeDenial(
+                code='15003',
+                message='workspace_inaccessible',
+                workspace=self._fallback_enterprise_workspace(None),
+            )
         membership = await workbench_domain_service._approved_membership(
             db, enterprise_id=int(enterprise_id), user_id=agent.owner_user_id
         )
         if membership is None:
-            raise errors.ForbiddenError(msg='未加入该企业')
+            raise _RuntimeDenial(
+                code='15003',
+                message='workspace_inaccessible',
+                workspace=self._fallback_enterprise_workspace(int(enterprise_id)),
+            )
         workspace['user_id'] = None
         workspace['enterprise_id'] = int(enterprise_id)
         workspace['workspace_key'] = f'enterprise:{enterprise_id}'
         workspace['role'] = getattr(membership, 'role', 'member')
         return workspace
+
+    def _fallback_enterprise_workspace(self, enterprise_id: int | None) -> dict[str, Any]:
+        return {
+            'kind': 'enterprise',
+            'user_id': None,
+            'enterprise_id': enterprise_id,
+            'workspace_key': f'enterprise:{enterprise_id}' if enterprise_id is not None else 'enterprise:unknown',
+        }
 
     async def _ensure_workspace_app_enabled(self, db, *, workspace: dict[str, Any], app_id: str) -> None:
         if not await self._is_workspace_app_enabled(db, workspace=workspace, app_id=app_id):

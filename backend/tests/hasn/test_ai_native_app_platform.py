@@ -551,6 +551,90 @@ def test_runtime_tool_call_revoked_agent_session_writes_15011_audit(monkeypatch:
     assert audit_row.context == {'reason': 'agent_token_session_revoked'}
 
 
+def test_runtime_tool_call_missing_agent_jwt_writes_15010_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.hasn.model import HasnWorkspaceApp
+
+    fake_db = _FakeDb(
+        workspace={'kind': 'personal', 'enterprise_id': None},
+        app_row=HasnWorkspaceApp(
+            workspace_kind='personal',
+            user_id=12345,
+            enterprise_id=None,
+            app_id='knowledge',
+            status='active',
+            config={},
+            enabled_by=12345,
+        ),
+    )
+    app = _make_runtime_test_app(fake_db, monkeypatch, patch_agent=False)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            '/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call',
+            json={'workspace': None, 'input': {'query': '唤星工作台'}, 'trace_id': 'trace-missing-agent-jwt'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['decision'] == 'deny'
+    assert data['error'] == {'code': '15010', 'message': 'agent_jwt_missing'}
+    audit_row = fake_db.added[-1]
+    assert audit_row.trace_id == 'trace-missing-agent-jwt'
+    assert audit_row.decision == 'deny'
+    assert audit_row.error_code == '15010'
+    assert audit_row.agent_hasn_id is None
+    assert audit_row.session_uuid is None
+    assert audit_row.context == {'reason': 'agent_jwt_missing'}
+
+
+def test_runtime_tool_call_inaccessible_workspace_writes_15003_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.hasn.model import HasnWorkspaceApp
+    from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
+
+    fake_db = _FakeDb(
+        workspace=None,
+        app_row=HasnWorkspaceApp(
+            workspace_kind='enterprise',
+            user_id=None,
+            enterprise_id=7,
+            app_id='knowledge',
+            status='active',
+            config={},
+            enabled_by=12345,
+        ),
+    )
+    app = _make_runtime_test_app(fake_db, monkeypatch)
+
+    async def missing_membership(_db: Any, *, enterprise_id: int, user_id: int) -> None:
+        assert (enterprise_id, user_id) == (7, 12345)
+        return None
+
+    monkeypatch.setattr(gateway_module.workbench_domain_service, '_approved_membership', missing_membership)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            '/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call',
+            json={
+                'workspace': {'kind': 'enterprise', 'enterprise_id': 7},
+                'input': {'query': '唤星工作台'},
+                'trace_id': 'trace-workspace-denied',
+            },
+            headers={'Authorization': 'Bearer test-agent'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['decision'] == 'deny'
+    assert data['error'] == {'code': '15003', 'message': 'workspace_inaccessible'}
+    audit_row = fake_db.added[-1]
+    assert audit_row.trace_id == 'trace-workspace-denied'
+    assert audit_row.workspace_kind == 'enterprise'
+    assert audit_row.enterprise_id == 7
+    assert audit_row.decision == 'deny'
+    assert audit_row.error_code == '15003'
+    assert audit_row.context == {'reason': 'workspace_inaccessible'}
+
+
 def test_runtime_audit_route_applies_query_filters(monkeypatch: pytest.MonkeyPatch) -> None:
     from backend.app.hasn.model import HasnAiNativeAppAudit
 
