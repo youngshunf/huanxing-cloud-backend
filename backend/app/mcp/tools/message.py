@@ -57,6 +57,15 @@ class MessageSendTool(BaseTool):
         # 检查权限
         agent_context.require_scopes("message:write")
 
+        missing_arguments = [
+            name for name in ("to", "content")
+            if name not in arguments
+        ]
+        if missing_arguments:
+            raise RuntimeError(
+                f"Missing required arguments: {', '.join(missing_arguments)}"
+            )
+
         # 使用消息服务发送消息
         async with async_db_session() as db:
             message_service = HasnMessageHubService()
