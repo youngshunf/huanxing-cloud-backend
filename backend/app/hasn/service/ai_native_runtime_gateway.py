@@ -89,10 +89,10 @@ class AiNativeRuntimeGateway:
                 capability=capability,
                 tool=tool,
                 decision='deny',
-                error_code='15013',
+                error_code='15002',
                 context={'reason': 'app_not_enabled'},
             )
-            return self._deny_payload(body.trace_id, '15013', 'app_not_enabled', audit_id=audit['id'])
+            return self._deny_payload(body.trace_id, '15002', 'app_not_enabled', audit_id=audit['id'])
 
         required_scopes = list(tool.get('required_scopes') or [])
         if not self._has_required_scopes(agent, required_scopes):

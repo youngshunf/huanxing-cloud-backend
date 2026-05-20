@@ -457,10 +457,10 @@ def test_runtime_tool_call_disabled_app_writes_audit(monkeypatch: pytest.MonkeyP
     assert resp.status_code == 200, resp.text
     data = resp.json()['data']
     assert data['decision'] == 'deny'
-    assert data['error'] == {'code': '15013', 'message': 'app_not_enabled'}
+    assert data['error'] == {'code': '15002', 'message': 'app_not_enabled'}
     audit_row = fake_db.added[-1]
     assert audit_row.decision == 'deny'
-    assert audit_row.error_code == '15013'
+    assert audit_row.error_code == '15002'
 
 
 def test_runtime_audit_route_applies_query_filters(monkeypatch: pytest.MonkeyPatch) -> None:
