@@ -10,7 +10,7 @@ from backend.app.hasn.schema.ai_native_runtime import (
     AiNativeToolCallRequest,
 )
 from backend.app.hasn.service.ai_native_app_registry import ai_native_app_registry
-from backend.app.hasn.service.ai_native_audit_service import ai_native_audit_service
+from backend.app.hasn.service.ai_native_runtime_gateway import ai_native_runtime_gateway
 from backend.common.response.response_schema import ResponseModel, response_base
 from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
 from backend.database.db import CurrentSession, CurrentSessionTransaction
@@ -49,39 +49,18 @@ async def publish_ai_native_app(db: CurrentSessionTransaction, app_id: str) -> R
 
 
 @runtime_router.post('/capabilities', summary='AI-Native 能力发现', dependencies=[DependsAgentJwtAuth])
-async def runtime_capabilities(request: Request, db: CurrentSession, body: AiNativeRuntimeCapabilitiesRequest) -> ResponseModel:
-    manifest = await ai_native_app_registry.ensure_builtin_published(db, 'knowledge')
-    tool = manifest['manifest_json']['tools'][0]
-    agent = getattr(request.state, 'agent', None)
-    return response_base.success(
-        data={
-            'workspace': body.workspace or {'kind': 'personal', 'user_id': None, 'enterprise_id': None, 'workspace_key': None},
-            'agent': {
-                'agent_hasn_id': getattr(agent, 'agent_hasn_id', None),
-                'owner_hasn_id': getattr(agent, 'owner_hasn_id', None),
-                'session_uuid': getattr(agent, 'session_uuid', None),
-            },
-            'manifest_hash': manifest['manifest_hash'],
-            'tools': [
-                {
-                    'app_id': manifest['app_id'],
-                    'tool_id': tool['tool_id'],
-                    'mcp_name': tool['mcp_name'],
-                    'collaboration_mode': manifest['collaboration_mode'],
-                    'display_name': manifest['manifest_json']['capabilities'][0]['name'],
-                    'input_schema': manifest['manifest_json']['capabilities'][0]['input_schema'],
-                    'output_schema': manifest['manifest_json']['capabilities'][0]['output_schema'],
-                    'required_scopes': tool['required_scopes'],
-                    'risk_level': tool['risk_level'],
-                    'requires_confirmation': False,
-                    'idempotent': tool['idempotent'],
-                }
-            ],
-        }
-    )
+async def runtime_capabilities(
+    request: Request, db: CurrentSession, body: AiNativeRuntimeCapabilitiesRequest
+) -> ResponseModel:
+    data = await ai_native_runtime_gateway.get_capabilities(db=db, request=request, body=body)
+    return response_base.success(data=data)
 
 
-@runtime_router.post('/tools/{app_id}/{tool_id}/call', summary='AI-Native Tool 调用', dependencies=[DependsAgentJwtAuth])
+@runtime_router.post(
+    '/tools/{app_id}/{tool_id}/call',
+    summary='AI-Native Tool 调用',
+    dependencies=[DependsAgentJwtAuth],
+)
 async def runtime_tool_call(
     request: Request,
     db: CurrentSessionTransaction,
@@ -89,26 +68,10 @@ async def runtime_tool_call(
     tool_id: str,
     body: AiNativeToolCallRequest,
 ) -> ResponseModel:
-    manifest = await ai_native_app_registry.ensure_builtin_published(db, app_id)
-    agent = getattr(request.state, 'agent', None)
-    return response_base.success(
-        data={
-            'trace_id': body.trace_id,
-            'decision': 'allow',
-            'workspace': body.workspace or {'kind': 'personal', 'user_id': None, 'enterprise_id': None, 'workspace_key': None},
-            'app_id': app_id,
-            'tool_id': tool_id,
-            'result': {'items': [], 'total': 0},
-            'audit_id': manifest['id'],
-            'agent': {
-                'agent_hasn_id': getattr(agent, 'agent_hasn_id', None),
-                'owner_hasn_id': getattr(agent, 'owner_hasn_id', None),
-                'session_uuid': getattr(agent, 'session_uuid', None),
-            },
-        }
-    )
+    data = await ai_native_runtime_gateway.call_tool(db=db, request=request, app_id=app_id, tool_id=tool_id, body=body)
+    return response_base.success(data=data)
 
 
 @audit_router.get('', summary='AI-Native 审计')
-async def list_ai_native_audit(db: CurrentSession, query: AiNativeAuditQuery) -> ResponseModel:
-    return response_base.success(data=await ai_native_audit_service.get_list(db))
+async def list_ai_native_audit(db: CurrentSession, query: AiNativeAuditQuery = Depends()) -> ResponseModel:
+    return response_base.success(data=await ai_native_runtime_gateway.list_audit(db=db, query=query))
