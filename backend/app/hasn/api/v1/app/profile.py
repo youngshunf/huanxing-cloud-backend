@@ -11,9 +11,12 @@ from backend.app.admin.model.user import User
 from backend.app.hasn.model.hasn_humans import HasnHumans
 from backend.app.hasn.schema.profile import GetMergedProfile, UpdateMergedProfileParam
 from backend.app.hasn.service.profile_service import hasn_profile_service
+from backend.common.exception import errors
 from backend.common.response.response_schema import ResponseSchemaModel, response_base
 from backend.common.security.jwt import DependsJwtAuth
 from backend.database.db import CurrentSession, CurrentSessionTransaction
+from backend.plugin.s3.crud.storage import s3_storage_dao
+from backend.plugin.s3.utils.file_ops import build_object_url, object_key_from_url, presign_read_url
 
 router = APIRouter()
 
@@ -89,18 +92,52 @@ async def check_nickname_availability(
 
 
 @router.get('/preset-avatars', summary='获取预置头像列表')
-async def get_preset_avatars() -> ResponseSchemaModel[list[dict]]:
+async def get_preset_avatars(db: CurrentSession) -> ResponseSchemaModel[list[dict]]:
     """
-    返回预置头像列表（无需认证）
+    返回预置头像列表
 
     返回格式：
     [
-        {"id": "avatar-01", "url": "/avatars/preset/avatar-01.svg"},
-        {"id": "avatar-02", "url": "/avatars/preset/avatar-02.svg"},
+        {"id": "avatar-01", "url": "https://cdn.example.com/assets/avatars/preset/avatar-01.png"},
+        {"id": "avatar-02", "url": "https://cdn.example.com/assets/avatars/preset/avatar-02.png"},
         ...
     ]
     """
+    storages = await s3_storage_dao.get_all(db)
+    s3_storage = storages[0] if storages else None
+    if not s3_storage:
+        raise errors.NotFoundError(msg='S3 存储配置不存在，无法返回预置头像 CDN URL')
+
     # 预置头像列表（12 个）
-    preset_avatars = [{'id': f'avatar-{i:02d}', 'url': f'/avatars/preset/avatar-{i:02d}.svg'} for i in range(1, 13)]
+    preset_avatars = [
+        {
+            'id': f'avatar-{i:02d}',
+            'url': build_object_url(s3_storage, f'avatars/preset/avatar-{i:02d}.png'),
+        }
+        for i in range(1, 13)
+    ]
 
     return response_base.success(data=preset_avatars)
+
+
+@router.get('/assets/signed-url', summary='获取私有 OSS 资源临时签名 URL', dependencies=[DependsJwtAuth])
+async def sign_asset_url(
+    db: CurrentSession,
+    url: str = Query(..., min_length=1, description='稳定存储 URL'),
+    expires_in: int = Query(300, ge=60, le=3600, description='签名有效期（秒）'),
+) -> ResponseSchemaModel[dict]:
+    """
+    为已配置对象存储中的稳定 URL 生成临时读签名。
+
+    前端业务数据保存稳定 URL；展示时调用本接口刷新签名 URL。
+    """
+    storages = await s3_storage_dao.get_all(db)
+    for s3_storage in storages:
+        try:
+            object_key_from_url(s3_storage, url)
+        except errors.RequestError:
+            continue
+        data = await presign_read_url(s3_storage, url, expires_in=expires_in)
+        return response_base.success(data=data)
+
+    raise errors.RequestError(msg='URL 不属于已配置的 S3 存储')

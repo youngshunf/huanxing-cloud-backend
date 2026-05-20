@@ -9,7 +9,7 @@ from backend.common.security.permission import RequestPermission
 from backend.common.security.rbac import DependsRBAC
 from backend.database.db import CurrentSession
 from backend.plugin.s3.crud.storage import s3_storage_dao
-from backend.plugin.s3.utils.file_ops import write_file
+from backend.plugin.s3.utils.file_ops import build_object_url, write_file
 from backend.utils.file_ops import upload_file_verify
 
 router = APIRouter()
@@ -32,22 +32,4 @@ async def upload_s3_files(
     upload_file_verify(file)
     await write_file(s3_storage, file)
 
-    # 构建文件路径
-    file_path = file.filename
-    if s3_storage.prefix:
-        prefix = s3_storage.prefix.strip('/')
-        file_path = f'{prefix}/{file.filename}'
-    
-    # 构建完整 URL，优先使用 CDN 域名
-    if s3_storage.cdn_domain:
-        base_url = s3_storage.cdn_domain.rstrip('/')
-        url = f'{base_url}/{file_path}'
-    else:
-        bucket_path = f'/{s3_storage.bucket}'
-        if s3_storage.prefix:
-            prefix = s3_storage.prefix if s3_storage.prefix.startswith('/') else f'/{s3_storage.prefix}'
-            url = f'{s3_storage.endpoint}{bucket_path}{prefix}/{file.filename}'
-        else:
-            url = f'{s3_storage.endpoint}{bucket_path}/{file.filename}'
-    
-    return response_base.success(data={'url': url})
+    return response_base.success(data={'url': build_object_url(s3_storage, file.filename)})
