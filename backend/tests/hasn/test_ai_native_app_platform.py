@@ -34,6 +34,18 @@ def test_ai_native_codegen_and_migration_foundation_exist() -> None:
     assert missing == []
 
 
+def test_legacy_app_platform_backend_surface_is_removed() -> None:
+    legacy_paths = {
+        REPO_ROOT / 'backend' / 'app' / 'app_platform',
+        REPO_ROOT / 'backend' / 'tests' / 'app_platform',
+        REPO_ROOT / 'backend' / 'app' / 'mcp' / 'tools' / 'app_tools.py',
+    }
+
+    remaining = [path.relative_to(REPO_ROOT).as_posix() for path in legacy_paths if path.exists()]
+
+    assert remaining == []
+
+
 def test_builtin_knowledge_manifest_matches_p0_contract() -> None:
     from backend.app.hasn.service.ai_native_builtin_manifests import KNOWLEDGE_AI_NATIVE_MANIFEST
 

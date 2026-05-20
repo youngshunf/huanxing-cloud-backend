@@ -12,7 +12,6 @@ from backend.app.mcp.tools.registry import ToolRegistry
 from backend.app.mcp.tools.base import BaseTool
 from backend.app.mcp.tools.message import MessageSendTool, MessageListTool
 from backend.app.mcp.tools.contact import ContactListTool
-from backend.app.mcp.tools.app_tools import load_app_tools_for_agent, load_app_tools_for_owner
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +52,6 @@ class HasnCloudMcpServer:
             工具列表
         """
         try:
-            # 动态加载 App Tools
-            await self._load_app_tools(agent_context)
-
             # 获取所有工具
             if namespace:
                 tools = self.tool_registry.get_tools_by_namespace(namespace)
@@ -150,50 +146,6 @@ class HasnCloudMcpServer:
             scope in agent_context.scopes
             for scope in tool.required_scopes
         )
-
-    async def _load_app_tools(self, agent_context: AgentContext):
-        """
-        动态加载 App Tools
-
-        根据 Agent 的安装情况，动态注册可用的 App Tools
-        """
-        try:
-            # 加载 Agent 级别的 App Tools
-            agent_tools = await load_app_tools_for_agent(
-                agent_id=agent_context.hasn_id,
-                owner_id=agent_context.owner_id,
-            )
-
-            # 加载 Owner 级别的 App Tools
-            owner_tools = await load_app_tools_for_owner(
-                owner_id=agent_context.owner_id,
-            )
-
-            # 注册所有 App Tools（去重）
-            all_app_tools = agent_tools + owner_tools
-            registered_count = 0
-
-            for tool in all_app_tools:
-                # 如果工具已存在，跳过（避免重复注册）
-                if self.tool_registry.get_tool(tool.name):
-                    continue
-
-                try:
-                    self.tool_registry.register(tool)
-                    registered_count += 1
-                except ValueError:
-                    # 工具已注册，跳过
-                    pass
-
-            if registered_count > 0:
-                logger.info(
-                    f"Dynamically registered {registered_count} app tools "
-                    f"for agent {agent_context.hasn_id}"
-                )
-
-        except Exception as e:
-            logger.error(f"Failed to load app tools: {e}", exc_info=True)
-            # 不抛出异常，允许继续使用内置工具
 
     async def _log_tool_call(
         self,

@@ -1,9 +1,3 @@
-from backend.app.app_platform.api.router import (
-    agent as app_platform_agent,
-    app as app_platform_app,
-    open_api as app_platform_open,
-    v1 as app_platform_v1,
-)
 from backend.app.hermes.api.router import v1 as hermes_v1, app as hermes_app, internal as hermes_internal
 from backend.app.hasn.api.router import (
     ai_native as hasn_ai_native,
@@ -83,8 +77,3 @@ router.include_router(hermes_internal)    # runtime ↔ backend 内部 service t
 # 移动端 App API (M1: /api/v1/app/...)
 router.include_router(mobile_app_v1_router)  # 移动端用户端 API (owner_api_keys/current 等)
 router.include_router(mobile_auth_v1_router)  # 移动端认证 API (/api/v1/auth/logout 等)
-
-router.include_router(app_platform_v1)
-router.include_router(app_platform_app)
-router.include_router(app_platform_agent)
-router.include_router(app_platform_open)
