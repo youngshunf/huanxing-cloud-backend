@@ -389,7 +389,21 @@ class WorkbenchDomainService:
                 .order_by(HasnEnterprise.name.asc())
             )
         ).all()
-        available = [{'kind': 'personal', 'name': '个人空间', 'role': 'owner', 'enterprise_id': None}]
+        enterprise_ids = [int(enterprise.id) for _, enterprise in rows]
+        enterprise_stats = await self._enterprise_workspace_stats(db, enterprise_ids=enterprise_ids)
+        personal_stats = await self._personal_workspace_stats(db, user_id=user_id)
+        available = [
+            {
+                'kind': 'personal',
+                'name': '个人空间',
+                'role': 'owner',
+                'enterprise_id': None,
+                'description': None,
+                'created_at': None,
+                'joined_at': None,
+                **personal_stats,
+            }
+        ]
         available.extend(
             {
                 'kind': 'enterprise',
@@ -397,10 +411,83 @@ class WorkbenchDomainService:
                 'name': enterprise.name,
                 'slug': enterprise.slug,
                 'role': membership.role,
+                'description': getattr(enterprise, 'description', None),
+                'created_at': _datetime_payload(getattr(enterprise, 'created_at', None)),
+                'joined_at': _datetime_payload(getattr(membership, 'created_at', None)),
+                **enterprise_stats.get(int(enterprise.id), _empty_workspace_stats()),
             }
             for membership, enterprise in rows
         )
         return {'active': active, 'available': available, 'user_id': user_id}
+
+    async def _personal_workspace_stats(self, db: AsyncSession, *, user_id: int) -> dict[str, int]:
+        app_count = await _scalar(
+            db,
+            sa
+            .select(sa.func.count())
+            .select_from(HasnWorkspaceApp)
+            .where(
+                HasnWorkspaceApp.workspace_kind == 'personal',
+                HasnWorkspaceApp.user_id == user_id,
+                HasnWorkspaceApp.status == 'active',
+            ),
+        )
+        return {
+            'member_count': 1,
+            'app_count': int(app_count or 0),
+            'admin_count': 1,
+        }
+
+    async def _enterprise_workspace_stats(
+        self,
+        db: AsyncSession,
+        *,
+        enterprise_ids: list[int],
+    ) -> dict[int, dict[str, int]]:
+        if not enterprise_ids:
+            return {}
+
+        member_counts = await _grouped_count(
+            db,
+            sa
+            .select(HasnEnterpriseMembership.enterprise_id, sa.func.count())
+            .where(
+                HasnEnterpriseMembership.enterprise_id.in_(enterprise_ids),
+                HasnEnterpriseMembership.status == 'approved',
+            )
+            .group_by(HasnEnterpriseMembership.enterprise_id),
+        )
+        admin_counts = await _grouped_count(
+            db,
+            sa
+            .select(HasnEnterpriseMembership.enterprise_id, sa.func.count())
+            .where(
+                HasnEnterpriseMembership.enterprise_id.in_(enterprise_ids),
+                HasnEnterpriseMembership.status == 'approved',
+                HasnEnterpriseMembership.role.in_(('owner', 'admin')),
+            )
+            .group_by(HasnEnterpriseMembership.enterprise_id),
+        )
+        app_counts = await _grouped_count(
+            db,
+            sa
+            .select(HasnWorkspaceApp.enterprise_id, sa.func.count())
+            .where(
+                HasnWorkspaceApp.workspace_kind == 'enterprise',
+                HasnWorkspaceApp.enterprise_id.in_(enterprise_ids),
+                HasnWorkspaceApp.status == 'active',
+            )
+            .group_by(HasnWorkspaceApp.enterprise_id),
+        )
+
+        return {
+            enterprise_id: {
+                'member_count': member_counts.get(enterprise_id, 0),
+                'app_count': app_counts.get(enterprise_id, 0),
+                'admin_count': admin_counts.get(enterprise_id, 0),
+            }
+            for enterprise_id in enterprise_ids
+        }
 
     async def get_active_workspace(self, db: AsyncSession, *, user_id: int) -> dict[str, Any]:
         active = await _scalar(
@@ -1084,6 +1171,21 @@ class WorkbenchDomainService:
 
 async def _scalar(db: AsyncSession, stmt):
     return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def _grouped_count(db: AsyncSession, stmt: Any) -> dict[int, int]:
+    rows = (await db.execute(stmt)).all()
+    return {int(key): int(value or 0) for key, value in rows if key is not None}
+
+
+def _empty_workspace_stats() -> dict[str, int]:
+    return {'member_count': 0, 'app_count': 0, 'admin_count': 0}
+
+
+def _datetime_payload(value: Any) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, 'isoformat') else str(value)
 
 
 def _enterprise_payload(enterprise) -> dict[str, Any]:

@@ -407,6 +407,50 @@ async def test_invite_auto_approve_switches_active_workspace_and_invalidates_use
 
 
 @pytest.mark.asyncio
+async def test_list_user_workspaces_returns_cloud_aggregated_workspace_stats(
+    db_session: AsyncSession,
+) -> None:
+    service = _service()
+    enterprise = await service.create_enterprise(
+        db_session,
+        user_id=11,
+        name='Acme',
+        slug='acme',
+        description='Ops workspace',
+    )
+    db_session.add_all([
+        MembershipStub(enterprise_id=enterprise['id'], user_id=12, role='admin', status='approved'),
+        MembershipStub(enterprise_id=enterprise['id'], user_id=13, role='member', status='approved'),
+        MembershipStub(enterprise_id=enterprise['id'], user_id=14, role='admin', status='pending'),
+        WorkspaceAppStub(
+            workspace_kind='enterprise',
+            enterprise_id=enterprise['id'],
+            app_id='disabled-app',
+            status='disabled',
+        ),
+        WorkspaceAppStub(
+            workspace_kind='personal',
+            user_id=12,
+            app_id='personal-tool',
+            status='active',
+        ),
+    ])
+    await db_session.flush()
+
+    workspaces = await service.list_user_workspaces(db_session, user_id=12)
+
+    personal = workspaces['available'][0]
+    enterprise_workspace = workspaces['available'][1]
+    assert personal['member_count'] == 1
+    assert personal['app_count'] == 1
+    assert personal['admin_count'] == 1
+    assert enterprise_workspace['description'] == 'Ops workspace'
+    assert enterprise_workspace['member_count'] == 3
+    assert enterprise_workspace['app_count'] == 1
+    assert enterprise_workspace['admin_count'] == 2
+
+
+@pytest.mark.asyncio
 async def test_invite_codes_reject_revoked_and_expired_codes(db_session: AsyncSession) -> None:
     service = _service()
     enterprise = await service.create_enterprise(
