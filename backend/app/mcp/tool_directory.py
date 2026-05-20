@@ -1,0 +1,202 @@
+"""MCP Tool Directory and progressive exposure projection."""
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from backend.app.mcp.auth import AgentContext
+from backend.app.mcp.tools.base import BaseTool
+from backend.app.mcp.tools.registry import ToolRegistry
+
+ToolSource = Literal["platform", "app", "local", "external"]
+
+
+@dataclass(frozen=True)
+class ToolSearchQuery:
+    query: str
+    source: str = "all"
+    detail: str = "summary"
+    page_size: int = 20
+    cursor: str | None = None
+
+
+class ToolDirectoryService:
+    """Builds discovery/search projections from the full invocation registry."""
+
+    def __init__(self, registry: ToolRegistry):
+        self._registry = registry
+
+    def list_bootstrap_tools(self, agent_context: AgentContext) -> list[dict[str, Any]]:
+        return [
+            self._tool_schema(tool)
+            for tool in self._registry.list_bootstrap_tools()
+            if self._can_discover(agent_context, tool)
+        ]
+
+    async def search(
+        self,
+        agent_context: AgentContext,
+        search_query: ToolSearchQuery,
+    ) -> dict[str, Any]:
+        query = search_query.query.strip()
+        visible_tools = [
+            tool for tool in self._registry.get_all_tools() if self._can_discover(agent_context, tool)
+        ]
+
+        if query == "sources" or search_query.detail == "sources":
+            return {
+                "workspace_key": self._workspace_key(agent_context),
+                "query": query,
+                "sources": self._source_index(visible_tools),
+                "tools": [],
+                "schemas": [],
+                "next_cursor": None,
+                "trace_id": self._trace_id(agent_context, query),
+            }
+
+        if query == "apps":
+            return {
+                "workspace_key": self._workspace_key(agent_context),
+                "query": query,
+                "sources": [],
+                "tools": [],
+                "schemas": [],
+                "next_cursor": None,
+                "trace_id": self._trace_id(agent_context, query),
+            }
+
+        matched_tools = self._match_tools(visible_tools, query, search_query.source)
+        page_size = min(max(search_query.page_size, 1), 50)
+        page = matched_tools[:page_size]
+        has_next = len(matched_tools) > page_size
+
+        return {
+            "workspace_key": self._workspace_key(agent_context),
+            "query": query,
+            "sources": [],
+            "tools": [] if search_query.detail == "schema" else [self._tool_summary(tool) for tool in page],
+            "schemas": [self._tool_schema(tool) for tool in page] if search_query.detail == "schema" else [],
+            "next_cursor": str(page_size) if has_next else None,
+            "trace_id": self._trace_id(agent_context, query),
+        }
+
+    def _match_tools(
+        self,
+        tools: list[BaseTool],
+        query: str,
+        source: str,
+    ) -> list[BaseTool]:
+        source_filtered = [
+            tool for tool in tools if source in ("all", self._source_for_tool(tool))
+        ]
+
+        if query.startswith("tool:"):
+            tool_name = query.removeprefix("tool:")
+            return [tool for tool in source_filtered if tool.name == tool_name]
+
+        if query.startswith("app."):
+            namespace = "hasn." + query.removeprefix("app.")
+            return [tool for tool in source_filtered if tool.name.startswith(f"{namespace}.")]
+
+        if query in {"platform", "app", "local", "external"}:
+            return [tool for tool in source_filtered if self._source_for_tool(tool) == query]
+
+        lowered = query.lower()
+        return [
+            tool
+            for tool in source_filtered
+            if lowered in tool.name.lower() or lowered in tool.description.lower()
+        ]
+
+    def _source_index(self, tools: list[BaseTool]) -> list[dict[str, Any]]:
+        source_counts: dict[tuple[str, str], int] = {}
+        for tool in tools:
+            source = self._source_for_tool(tool)
+            namespace = self._namespace_for_tool(tool)
+            key = (source, namespace)
+            source_counts[key] = source_counts.get(key, 0) + 1
+
+        return [
+            {
+                "source": source,
+                "namespace": namespace,
+                "summary": self._source_summary(source, namespace),
+                "visible_tool_count": count,
+            }
+            for (source, namespace), count in sorted(source_counts.items())
+        ]
+
+    def _tool_summary(self, tool: BaseTool) -> dict[str, Any]:
+        schema_hash = self._schema_hash(tool.input_schema)
+        return {
+            "source": self._source_for_tool(tool),
+            "name": tool.name,
+            "title": tool.name.rsplit(".", maxsplit=1)[-1],
+            "summary": tool.description,
+            "required_scopes": tool.required_scopes,
+            "risk_level": "low",
+            "idempotent": True,
+            "schema_hash": schema_hash,
+            "schema_ref": f"hasn://tool-schema/{tool.name}@{schema_hash}",
+        }
+
+    def _tool_schema(self, tool: BaseTool) -> dict[str, Any]:
+        return {
+            "source": self._source_for_tool(tool),
+            "name": tool.name,
+            "description": tool.description,
+            "input_schema": tool.input_schema,
+            "output_schema": {"type": "object"},
+            "required_scopes": tool.required_scopes,
+            "risk_level": "low",
+            "schema_hash": self._schema_hash(tool.input_schema),
+        }
+
+    def _can_discover(self, agent_context: AgentContext, tool: BaseTool) -> bool:
+        return all(scope in agent_context.scopes for scope in tool.required_scopes)
+
+    def _source_for_tool(self, tool: BaseTool) -> ToolSource:
+        if tool.name.startswith("hasn.ext."):
+            return "external"
+        if tool.name.startswith(("hasn.file.", "hasn.memory.")):
+            return "local"
+        if tool.name.startswith("app."):
+            return "app"
+        return "platform"
+
+    def _namespace_for_tool(self, tool: BaseTool) -> str:
+        parts = tool.name.split(".")
+        if len(parts) < 2:
+            return tool.name
+        if tool.name.startswith("hasn.tool."):
+            return "hasn.tool"
+        if tool.name.startswith("hasn.ext.") and len(parts) >= 3:
+            return ".".join(parts[:3])
+        if tool.name.startswith("hasn.") and len(parts) >= 2:
+            return ".".join(parts[:2])
+        return ".".join(parts[:2])
+
+    def _source_summary(self, source: str, namespace: str) -> str:
+        if namespace == "hasn.tool":
+            return "工具发现与 schema 查询"
+        if source == "platform":
+            return "HASN 云端平台工具"
+        if source == "app":
+            return "当前 workspace 可发现的 App 工具"
+        if source == "external":
+            return "当前 Agent 已绑定的外部 MCP 工具"
+        return "本地工具"
+
+    def _schema_hash(self, schema: dict[str, Any]) -> str:
+        canonical = json.dumps(schema, sort_keys=True, separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _workspace_key(self, agent_context: AgentContext) -> str:
+        workspace_key = agent_context.metadata.get("workspace_key") if agent_context.metadata else None
+        return workspace_key or f"owner:{agent_context.owner_id}"
+
+    def _trace_id(self, agent_context: AgentContext, query: str) -> str:
+        raw = f"{agent_context.hasn_id}:{self._workspace_key(agent_context)}:{query}"
+        return "trace_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]

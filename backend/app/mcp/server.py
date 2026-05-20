@@ -8,11 +8,13 @@ import json
 from typing import Any
 
 from backend.app.mcp.auth import AgentContext
+from backend.app.mcp.tool_directory import ToolDirectoryService
 from backend.app.mcp.tools.registry import ToolRegistry
 from backend.app.mcp.tools.base import BaseTool
 from backend.app.mcp.tools.message import MessageSendTool, MessageListTool
 from backend.app.mcp.tools.contact import ContactListTool
 from backend.app.mcp.tools.app_tools import load_app_tools_for_agent, load_app_tools_for_owner
+from backend.app.mcp.tools.tool_search import ToolSearchTool
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +24,16 @@ class HasnCloudMcpServer:
 
     def __init__(self):
         self.tool_registry = ToolRegistry()
+        self.tool_directory = ToolDirectoryService(self.tool_registry)
 
         # 注册内置工具
         self._register_builtin_tools()
 
     def _register_builtin_tools(self):
         """注册内置工具"""
+        # 平台 bootstrap 工具
+        self.tool_registry.register(ToolSearchTool(self.tool_directory))
+
         # 消息工具
         self.tool_registry.register(MessageSendTool())
         self.tool_registry.register(MessageListTool())
@@ -56,21 +62,7 @@ class HasnCloudMcpServer:
             # 动态加载 App Tools
             await self._load_app_tools(agent_context)
 
-            # 获取所有工具
-            if namespace:
-                tools = self.tool_registry.get_tools_by_namespace(namespace)
-            else:
-                tools = self.tool_registry.get_all_tools()
-
-            # 根据 Agent 权限过滤工具
-            available_tools = []
-            for tool in tools:
-                if self._check_tool_permission(agent_context, tool):
-                    available_tools.append({
-                        "name": tool.name,
-                        "description": tool.description,
-                        "input_schema": tool.input_schema,
-                    })
+            available_tools = self.tool_directory.list_bootstrap_tools(agent_context)
 
             logger.info(
                 f"Agent {agent_context.hasn_id} listed {len(available_tools)} tools"
