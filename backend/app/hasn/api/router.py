@@ -29,12 +29,20 @@ from backend.app.hasn.api.v1.admin.hasn_trade_sessions import router as admin_ha
 from backend.app.hasn.api.v1.admin.hasn_unread_counts import router as admin_hasn_unread_counts_router
 from backend.app.hasn.api.v1.admin.hasn_user_active_workspace import router as admin_hasn_user_active_workspace_router
 from backend.app.hasn.api.v1.admin.hasn_workspace_app import router as admin_hasn_workspace_app_router
+from backend.app.hasn.api.v1.ai_native_app import audit_router as ai_native_audit_router
+from backend.app.hasn.api.v1.ai_native_app import apps_router as ai_native_apps_router
+from backend.app.hasn.api.v1.ai_native_app import runtime_router as ai_native_runtime_router
 from backend.app.hasn.api.v1.message_hub import router as message_hub_router
 
 # --- 管理端（JWT + RBAC） ---
 from backend.app.hasn.api.v1.onboarding import router as onboarding_router
 from backend.app.hasn.api.v1.sync import router as sync_router
 from backend.core.conf import settings
+
+ai_native = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/ai-native', tags=['AI-Native 应用平台'])
+ai_native.include_router(ai_native_apps_router, prefix='/apps', tags=['AI-Native 应用平台-应用'])
+ai_native.include_router(ai_native_runtime_router, prefix='/runtime', tags=['AI-Native 应用平台-运行时'])
+ai_native.include_router(ai_native_audit_router, prefix='/audit', tags=['AI-Native 应用平台-审计'])
 
 v1 = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn', tags=['HASN 管理端'])
 

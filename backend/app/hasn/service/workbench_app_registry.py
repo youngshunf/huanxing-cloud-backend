@@ -16,6 +16,7 @@ class WorkbenchApp:
     scope: tuple[str, ...]
     entry_route: str
     install_policy: str
+    collaboration_mode: str = 'none'
     requires_role: str | None = None
     health_check: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
@@ -26,6 +27,7 @@ class WorkbenchApp:
             'icon': self.icon,
             'description': self.description,
             'scope': list(self.scope),
+            'collaboration_mode': self.collaboration_mode,
             'entry_route': self.entry_route,
             'install_policy': self.install_policy,
             'requires_role': self.requires_role,
@@ -49,6 +51,7 @@ class WorkbenchAppRegistry:
                 icon='book-open',
                 description='在当前工作空间管理知识库、搜索与审计。',
                 scope=('personal', 'enterprise'),
+                collaboration_mode='workspace_shared',
                 entry_route='/workbench/apps/knowledge',
                 install_policy='auto',
             )
