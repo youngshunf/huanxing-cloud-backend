@@ -1,4 +1,4 @@
-from typing import Sequence
+from collections.abc import Sequence
 
 from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +62,7 @@ class CRUDAppTools(CRUDPlus[AppTools]):
         :return:
         """
         return await self.delete_model_by_column(db, allow_multiple=True, id__in=pks)
+
     async def get_by_tool_id(self, db: AsyncSession, tool_id: str) -> AppTools | None:
         """
         根据 tool_id 获取 Tool
@@ -71,6 +72,26 @@ class CRUDAppTools(CRUDPlus[AppTools]):
         :return:
         """
         return await self.select_model_by_column(db, tool_id=tool_id)
+
+    async def get_by_app_id(self, db: AsyncSession, app_id: str) -> list[AppTools]:
+        """
+        根据 app_id 获取该 App 的所有 Tool
+
+        :param db: 数据库会话
+        :param app_id: App ID
+        :return:
+        """
+        return list(await self.select_models(db, app_id=app_id))
+
+    async def get_by_version_id(self, db: AsyncSession, version_id: str) -> list[AppTools]:
+        """
+        根据 version_id 获取该版本的所有 Tool
+
+        :param db: 数据库会话
+        :param version_id: 版本 ID
+        :return:
+        """
+        return list(await self.select_models(db, version_id=version_id))
 
 
 app_tools_dao: CRUDAppTools = CRUDAppTools(AppTools)

@@ -6,23 +6,44 @@
 2. App Tool 创建和属性验证
 3. 多安装场景
 """
-import pytest
 import uuid
 
 from backend.app.mcp.tools.app_tools import AppTool
 
 
-def test_app_tool_e2e_creation():
+def make_app_tool(
+    *,
+    installation_id: str | None = None,
+    app_namespace: str = "community",
+    tool_id: str = "create_post",
+    tool_name: str = "create_post",
+    tool_description: str = "App tool",
+    tool_input_schema: dict | None = None,
+    tool_required_scopes: list[str] | None = None,
+) -> AppTool:
+    return AppTool(
+        installation_id=installation_id or str(uuid.uuid4()),
+        app_id=app_namespace,
+        app_namespace=app_namespace,
+        tool_id=tool_id,
+        tool_name=tool_name,
+        action=tool_name,
+        tool_description=tool_description,
+        tool_input_schema=tool_input_schema or {},
+        tool_required_scopes=tool_required_scopes or [],
+    )
+
+
+def test_app_tool_e2e_creation() -> None:
     """
     端到端测试：App Tool 创建和验证
 
     验证 App Tool 的完整属性和行为
     """
-    installation_id = str(uuid.uuid4())
-
     # 创建 App Tool
-    tool = AppTool(
-        installation_id=installation_id,
+    tool = make_app_tool(
+        app_namespace="notification",
+        tool_id="send_notification",
         tool_name="send_notification",
         tool_description="Send a notification to users",
         tool_input_schema={
@@ -37,7 +58,7 @@ def test_app_tool_e2e_creation():
     )
 
     # 验证基本属性
-    assert tool.name == f"app.{installation_id}.send_notification"
+    assert tool.name == "hasn.notification.send_notification"
     assert tool.description == "Send a notification to users"
     assert tool.required_scopes == ["hasn.im.send"]
 
@@ -54,16 +75,15 @@ def test_app_tool_e2e_creation():
     assert mcp_tool.inputSchema == tool.input_schema
 
 
-def test_app_tool_e2e_multiple_scopes():
+def test_app_tool_e2e_multiple_scopes() -> None:
     """
     端到端测试：多权限 Tool
 
     验证需要多个权限的 Tool
     """
-    installation_id = str(uuid.uuid4())
-
-    tool = AppTool(
-        installation_id=installation_id,
+    tool = make_app_tool(
+        app_namespace="operations",
+        tool_id="complex_operation",
         tool_name="complex_operation",
         tool_description="Complex operation requiring multiple permissions",
         tool_input_schema={
@@ -89,10 +109,10 @@ def test_app_tool_e2e_multiple_scopes():
 
     # 验证 MCP Tool 转换
     mcp_tool = tool.to_mcp_tool()
-    assert mcp_tool.name == f"app.{installation_id}.complex_operation"
+    assert mcp_tool.name == "hasn.operations.complex_operation"
 
 
-def test_app_tool_e2e_multi_installation():
+def test_app_tool_e2e_multi_installation() -> None:
     """
     端到端测试：多安装场景
 
@@ -103,55 +123,54 @@ def test_app_tool_e2e_multi_installation():
     installation_id_2 = str(uuid.uuid4())
 
     # 第一个安装的 Tool
-    tool_1 = AppTool(
+    tool_1 = make_app_tool(
         installation_id=installation_id_1,
+        app_namespace="shared",
+        tool_id="shared_tool",
         tool_name="shared_tool",
         tool_description="Shared tool",
-        tool_input_schema={},
         tool_required_scopes=["hasn.im.send"],
     )
 
     # 第二个安装的 Tool（相同的 tool_name，但不同的 installation_id）
-    tool_2 = AppTool(
+    tool_2 = make_app_tool(
         installation_id=installation_id_2,
+        app_namespace="shared",
+        tool_id="shared_tool",
         tool_name="shared_tool",
         tool_description="Shared tool",
-        tool_input_schema={},
         tool_required_scopes=["hasn.im.send"],
     )
 
-    # 验证两个 Tool 的名称不同（因为 installation_id 不同）
-    assert tool_1.name != tool_2.name
-    assert tool_1.name == f"app.{installation_id_1}.shared_tool"
-    assert tool_2.name == f"app.{installation_id_2}.shared_tool"
+    # canonical name 不编码 installation，运行时上下文由 Gateway 决定
+    assert tool_1.name == tool_2.name
+    assert tool_1.name == "hasn.shared.shared_tool"
 
     # 验证其他属性相同
     assert tool_1.description == tool_2.description
     assert tool_1.required_scopes == tool_2.required_scopes
 
 
-def test_app_tool_e2e_permission_validation():
+def test_app_tool_e2e_permission_validation() -> None:
     """
     端到端测试：权限验证逻辑
 
     模拟 MCP Server 的权限检查流程
     """
-    installation_id = str(uuid.uuid4())
-
     # 创建需要特定权限的 Tool
-    read_tool = AppTool(
-        installation_id=installation_id,
+    read_tool = make_app_tool(
+        app_namespace="data",
+        tool_id="read_data",
         tool_name="read_data",
         tool_description="Read data",
-        tool_input_schema={},
         tool_required_scopes=["hasn.data.read"],
     )
 
-    write_tool = AppTool(
-        installation_id=installation_id,
+    write_tool = make_app_tool(
+        app_namespace="data",
+        tool_id="write_data",
         tool_name="write_data",
         tool_description="Write data",
-        tool_input_schema={},
         tool_required_scopes=["hasn.data.write"],
     )
 
@@ -169,40 +188,39 @@ def test_app_tool_e2e_permission_validation():
     assert can_use_write is False
 
 
-def test_app_tool_e2e_naming_convention():
+def test_app_tool_e2e_naming_convention() -> None:
     """
     端到端测试：Tool 命名规范
 
-    验证 Tool 命名符合规范：app.{installation_id}.{tool_name}
+    验证 Tool 命名符合规范：hasn.{app_namespace}.{action}
     """
     test_cases = [
-        ("inst_123", "send_message", "app.inst_123.send_message"),
-        ("abc-def-456", "query_data", "app.abc-def-456.query_data"),
-        ("550e8400-e29b-41d4-a716-446655440000", "hello", "app.550e8400-e29b-41d4-a716-446655440000.hello"),
+        ("inst_123", "community", "send_message", "hasn.community.send_message"),
+        ("abc-def-456", "data", "query_data", "hasn.data.query_data"),
+        ("550e8400-e29b-41d4-a716-446655440000", "hello", "world", "hasn.hello.world"),
     ]
 
-    for installation_id, tool_name, expected_name in test_cases:
-        tool = AppTool(
+    for installation_id, app_namespace, tool_name, expected_name in test_cases:
+        tool = make_app_tool(
             installation_id=installation_id,
+            app_namespace=app_namespace,
+            tool_id=tool_name,
             tool_name=tool_name,
             tool_description="Test tool",
-            tool_input_schema={},
-            tool_required_scopes=[],
         )
 
         assert tool.name == expected_name
 
 
-def test_app_tool_e2e_mcp_integration():
+def test_app_tool_e2e_mcp_integration() -> None:
     """
     端到端测试：MCP 集成
 
     验证 App Tool 可以正确转换为 MCP Tool 格式
     """
-    installation_id = str(uuid.uuid4())
-
-    tool = AppTool(
-        installation_id=installation_id,
+    tool = make_app_tool(
+        app_namespace="test",
+        tool_id="test_tool",
         tool_name="test_tool",
         tool_description="A test tool for MCP integration",
         tool_input_schema={
@@ -221,7 +239,7 @@ def test_app_tool_e2e_mcp_integration():
     mcp_tool = tool.to_mcp_tool()
 
     # 验证 MCP Tool 的所有字段
-    assert mcp_tool.name == f"app.{installation_id}.test_tool"
+    assert mcp_tool.name == "hasn.test.test_tool"
     assert mcp_tool.description == "A test tool for MCP integration"
 
     # 验证 inputSchema 完整性

@@ -3,11 +3,26 @@ App Tool 动态注册
 
 从应用平台动态加载和注册 App Tools
 """
-import logging
-from typing import Any
+from __future__ import annotations
 
+import logging
+
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
+
+from backend.app.app_platform.crud.crud_app_agent_bindings import app_agent_bindings_dao
+from backend.app.app_platform.crud.crud_app_installations import app_installations_dao
+from backend.app.app_platform.crud.crud_app_manifests import app_manifests_dao
+from backend.app.app_platform.crud.crud_app_tools import app_tools_dao
+from backend.app.app_platform.crud.crud_app_versions import app_versions_dao
+from backend.app.app_platform.service.runtime_gateway import runtime_gateway
 from backend.app.mcp.tools.base import BaseTool
-from backend.app.mcp.context import AgentContext
+from backend.database.db import async_db_session
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from backend.app.mcp.context import AgentContext
 
 logger = logging.getLogger(__name__)
 
@@ -18,21 +33,65 @@ class AppTool(BaseTool):
     def __init__(
         self,
         installation_id: str,
+        app_id: str,
+        app_namespace: str,
+        tool_id: str,
         tool_name: str,
         tool_description: str,
         tool_input_schema: dict[str, Any],
         tool_required_scopes: list[str],
-    ):
+        action: str | None = None,
+        tool_output_schema: dict[str, Any] | None = None,
+        risk_level: str = "low",
+    ) -> None:
         self._installation_id = installation_id
+        self._app_id = app_id
+        self._app_namespace = app_namespace
+        self._tool_id = tool_id
         self._tool_name = tool_name
+        self._action = action or tool_name
         self._tool_description = tool_description
         self._tool_input_schema = tool_input_schema
+        self._tool_output_schema = tool_output_schema or {"type": "object"}
         self._tool_required_scopes = tool_required_scopes
+        self._risk_level = risk_level
+
+    @property
+    def installation_id(self) -> str:
+        return self._installation_id
+
+    @property
+    def app_id(self) -> str:
+        return self._app_id
+
+    @property
+    def app_namespace(self) -> str:
+        return self._app_namespace
+
+    @property
+    def tool_id(self) -> str:
+        return self._tool_id
+
+    @property
+    def tool_name(self) -> str:
+        return self._tool_name
+
+    @property
+    def action(self) -> str:
+        return self._action
+
+    @property
+    def source(self) -> str:
+        return "app"
+
+    @property
+    def namespace(self) -> str:
+        return f"hasn.{self._app_namespace}"
 
     @property
     def name(self) -> str:
-        """工具名称格式: app.{installation_id}.{tool_name}"""
-        return f"app.{self._installation_id}.{self._tool_name}"
+        """工具名称格式: hasn.{app_namespace}.{action}"""
+        return f"hasn.{self._app_namespace}.{self._action}"
 
     @property
     def description(self) -> str:
@@ -43,43 +102,42 @@ class AppTool(BaseTool):
         return self._tool_input_schema
 
     @property
+    def output_schema(self) -> dict[str, Any]:
+        return self._tool_output_schema
+
+    @property
     def required_scopes(self) -> list[str]:
         return self._tool_required_scopes
+
+    @property
+    def risk_level(self) -> str:
+        return self._risk_level
+
+    def to_mcp_tool(self) -> SimpleNamespace:
+        """Compatibility helper for legacy test fixtures and projections."""
+        return SimpleNamespace(
+            name=self.name,
+            description=self.description,
+            inputSchema=self.input_schema,
+            outputSchema=self.output_schema,
+            requiredScopes=self.required_scopes,
+            riskLevel=self.risk_level,
+        )
 
     async def execute(
         self,
         agent_context: AgentContext,
         arguments: dict[str, Any],
     ) -> Any:
-        """
-        执行应用工具
-
-        通过应用平台的 Tool API 网关调用
-        """
-        from backend.database.db import async_db_session
-        from backend.app.app_platform.service.app_service import app_service
-        from backend.app.app_platform.service.permission_validator import permission_validator
-
+        """执行应用工具，通过 Runtime Gateway 调用。"""
         async with async_db_session() as db:
-            # 验证权限
-            await permission_validator.check_installation_scopes(
+            return await runtime_gateway.handle_tool_call(
                 db=db,
                 installation_id=self._installation_id,
-                required_scopes=self._tool_required_scopes,
-            )
-
-            # 调用应用 Tool API
-            result = await app_service.invoke_tool(
-                db=db,
-                installation_id=self._installation_id,
-                tool_name=self._tool_name,
+                tool_id=self._tool_id,
                 input_data=arguments,
-                actor_type="agent",
-                actor_id=agent_context.hasn_id,
-                owner_id=agent_context.owner_id,
+                trace_id=None,
             )
-
-            return result
 
 
 async def load_app_tools_for_agent(
@@ -88,108 +146,173 @@ async def load_app_tools_for_agent(
 ) -> list[AppTool]:
     """
     为指定 Agent 加载所有可用的 App Tools
-
-    Args:
-        agent_id: Agent ID
-        owner_id: Owner ID
-
-    Returns:
-        App Tools 列表
     """
-    from backend.database.db import async_db_session
-    from backend.app.app_platform.service.app_service import app_service
-
-    tools = []
+    tools: list[AppTool] = []
 
     async with async_db_session() as db:
-        # 获取该 Agent 的所有安装
-        installations = await app_service.list_installations_for_target(
+        installations = await _list_target_installations(
             db=db,
-            owner_id=owner_id,
-            target_type="agent",
-            target_id=agent_id,
+            owner_id=str(owner_id),
+            agent_id=agent_id,
         )
 
         for installation in installations:
-            # 只加载 active 状态的安装
-            if installation.status != "active":
+            app = await app_manifests_dao.get_by_app_id(db, installation.app_id)
+            if not app:
                 continue
 
-            # 从 manifest 中提取 tools
-            manifest = installation.manifest
-            if not manifest or "tools" not in manifest:
-                continue
+            tool_defs = list(await app_tools_dao.get_by_app_id(db, installation.app_id))
+            if not tool_defs:
+                tool_defs = await _tool_defs_from_manifest(db, installation.app_id, installation.installed_version)
 
-            for tool_def in manifest["tools"]:
-                try:
-                    app_tool = AppTool(
-                        installation_id=installation.installation_id,
-                        tool_name=tool_def["name"],
-                        tool_description=tool_def.get("description", ""),
-                        tool_input_schema=tool_def.get("input_schema", {}),
-                        tool_required_scopes=tool_def.get("required_scopes", []),
-                    )
-                    tools.append(app_tool)
-                    logger.debug(
-                        f"Loaded app tool: {app_tool.name} for agent {agent_id}"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to load tool {tool_def.get('name')} "
-                        f"from installation {installation.installation_id}: {e}"
-                    )
+            tools.extend(_build_app_tools_for_installation(app, installation, tool_defs, agent_id=agent_id))
 
-    logger.info(f"Loaded {len(tools)} app tools for agent {agent_id}")
+    logger.info("Loaded %s app tools for agent %s", len(tools), agent_id)
     return tools
 
 
 async def load_app_tools_for_owner(owner_id: str) -> list[AppTool]:
     """
     为指定 Owner 加载所有可用的 App Tools
-
-    Args:
-        owner_id: Owner ID
-
-    Returns:
-        App Tools 列表
     """
-    from backend.database.db import async_db_session
-    from backend.app.app_platform.service.app_service import app_service
-
-    tools = []
+    tools: list[AppTool] = []
 
     async with async_db_session() as db:
-        # 获取该 Owner 的所有安装
-        installations = await app_service.list_installations_for_target(
-            db=db,
-            owner_id=owner_id,
-            target_type="owner",
-            target_id=owner_id,
-        )
+        installations = await app_installations_dao.get_by_owner(db, str(owner_id))
 
         for installation in installations:
             if installation.status != "active":
                 continue
 
-            manifest = installation.manifest
-            if not manifest or "tools" not in manifest:
+            app = await app_manifests_dao.get_by_app_id(db, installation.app_id)
+            if not app:
                 continue
 
-            for tool_def in manifest["tools"]:
-                try:
-                    app_tool = AppTool(
-                        installation_id=installation.installation_id,
-                        tool_name=tool_def["name"],
-                        tool_description=tool_def.get("description", ""),
-                        tool_input_schema=tool_def.get("input_schema", {}),
-                        tool_required_scopes=tool_def.get("required_scopes", []),
-                    )
-                    tools.append(app_tool)
-                except Exception as e:
-                    logger.error(
-                        f"Failed to load tool {tool_def.get('name')} "
-                        f"from installation {installation.installation_id}: {e}"
-                    )
+            tool_defs = list(await app_tools_dao.get_by_app_id(db, installation.app_id))
+            if not tool_defs:
+                tool_defs = await _tool_defs_from_manifest(db, installation.app_id, installation.installed_version)
 
-    logger.info(f"Loaded {len(tools)} app tools for owner {owner_id}")
+            tools.extend(_build_app_tools_for_installation(app, installation, tool_defs))
+
+    logger.info("Loaded %s app tools for owner %s", len(tools), owner_id)
     return tools
+
+
+async def _list_target_installations(
+    db: AsyncSession,
+    owner_id: str,
+    agent_id: str,
+) -> list[Any]:
+    owner_installations = await app_installations_dao.get_by_owner(db, owner_id)
+    bound_installation_ids = {
+        binding.installation_id
+        for binding in await app_agent_bindings_dao.get_all(db)
+        if binding.agent_id == agent_id and binding.status == "active"
+    }
+
+    if not bound_installation_ids:
+        return [installation for installation in owner_installations if installation.status == "active"]
+
+    return [
+        installation
+        for installation in owner_installations
+        if installation.status == "active" and installation.installation_id in bound_installation_ids
+    ]
+
+
+async def _tool_defs_from_manifest(
+    db: AsyncSession,
+    app_id: str,
+    installed_version: str,
+) -> list[Any]:
+    version = await app_versions_dao.get_by_app_and_version(
+        db=db,
+        app_id=app_id,
+        version=installed_version,
+    )
+    manifest_tools = (
+        version.manifest_snapshot.get("tools", [])
+        if version and isinstance(version.manifest_snapshot, dict)
+        else []
+    )
+    return [_tool_from_manifest_snapshot(tool_def) for tool_def in manifest_tools]
+
+
+def _build_app_tool(app: Any, installation: Any, tool_def: Any) -> AppTool:
+    tool_name = getattr(tool_def, "tool_name", None) or _tool_name_from_any(tool_def)
+    tool_id = getattr(tool_def, "tool_id", None) or tool_name
+    action = tool_name
+    required_scopes = getattr(tool_def, "required_scopes", None) or []
+    if isinstance(required_scopes, dict):
+        required_scopes = list(required_scopes.values())
+
+    return AppTool(
+        installation_id=installation.installation_id,
+        app_id=app.app_id,
+        app_namespace=app.namespace or app.app_id,
+        tool_id=tool_id,
+        tool_name=tool_name,
+        action=action,
+        tool_description=getattr(tool_def, "description", "") or "",
+        tool_input_schema=getattr(tool_def, "input_schema", {}) or {},
+        tool_output_schema=getattr(tool_def, "output_schema", {}) or {},
+        tool_required_scopes=list(required_scopes),
+        risk_level=getattr(tool_def, "risk_level", "") or "low",
+    )
+
+
+def _build_app_tools_for_installation(
+    app: Any,
+    installation: Any,
+    tool_defs: list[Any],
+    *,
+    agent_id: str | None = None,
+) -> list[AppTool]:
+    tools: list[AppTool] = []
+    for tool_def in tool_defs:
+        app_tool = _try_build_app_tool(app, installation, tool_def)
+        if not app_tool:
+            continue
+        tools.append(app_tool)
+        if agent_id:
+            logger.debug("Loaded app tool: %s for agent %s", app_tool.name, agent_id)
+    return tools
+
+
+def _try_build_app_tool(app: Any, installation: Any, tool_def: Any) -> AppTool | None:
+    try:
+        return _build_app_tool(app, installation, tool_def)
+    except Exception as e:
+        logger.error(
+            "Failed to load tool %s from installation %s: %s",
+            _tool_name_from_any(tool_def),
+            installation.installation_id,
+            e,
+        )
+        return None
+
+
+def _tool_from_manifest_snapshot(tool_def: dict[str, Any]) -> Any:
+    return type(
+        "AppToolSnapshot",
+        (),
+        {
+            "tool_id": tool_def.get("tool_id") or tool_def.get("name") or tool_def.get("tool_name", ""),
+            "tool_name": tool_def.get("tool_name") or tool_def.get("name", ""),
+            "description": tool_def.get("description", ""),
+            "input_schema": tool_def.get("input_schema", {}),
+            "output_schema": tool_def.get("output_schema", {}),
+            "risk_level": tool_def.get("risk_level", "low"),
+            "required_scopes": tool_def.get("required_scopes", []),
+        },
+    )()
+
+
+def _tool_source_namespace(app: Any) -> str:
+    return getattr(app, "namespace", "") or getattr(app, "app_id", "")
+
+
+def _tool_name_from_any(tool_def: Any) -> str:
+    if isinstance(tool_def, dict):
+        return str(tool_def.get("tool_name") or tool_def.get("name") or "")
+    return str(getattr(tool_def, "tool_name", "") or getattr(tool_def, "name", "") or "")

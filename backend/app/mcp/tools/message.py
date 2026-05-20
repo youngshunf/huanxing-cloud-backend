@@ -5,15 +5,19 @@
 """
 from typing import Any
 
-from backend.app.mcp.tools.base import BaseTool
-from backend.app.mcp.auth import AgentContext
-from backend.app.hasn.service.hasn_message_hub_service import HasnMessageHubService
 from backend.app.hasn.schema.hasn_message_hub import MessageHubSendRequest
+from backend.app.hasn.service.hasn_message_hub_service import HasnMessageHubService
+from backend.app.mcp.auth import AgentContext
+from backend.app.mcp.tools.base import BaseTool
 from backend.database.db import async_db_session
 
 
 class MessageSendTool(BaseTool):
     """发送私信工具"""
+
+    @property
+    def source(self) -> str:
+        return "platform"
 
     @property
     def name(self) -> str:
@@ -81,6 +85,10 @@ class MessageListTool(BaseTool):
     """获取消息列表工具（简化版）"""
 
     @property
+    def source(self) -> str:
+        return "platform"
+
+    @property
     def name(self) -> str:
         return "hasn.message.list"
 
@@ -144,6 +152,6 @@ class MessageListTool(BaseTool):
             except Exception as e:
                 # 如果 API 不匹配，返回友好错误
                 return {
-                    "error": f"Message list not available: {str(e)}",
+                    "error": f"Message list not available: {e!s}",
                     "messages": []
                 }

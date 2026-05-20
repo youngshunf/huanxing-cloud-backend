@@ -1,17 +1,23 @@
 """Platform MCP tool discovery."""
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from backend.app.mcp.auth import AgentContext
 from backend.app.mcp.tool_directory import ToolDirectoryService, ToolSearchQuery
 from backend.app.mcp.tools.base import BaseTool
+
+if TYPE_CHECKING:
+    from backend.app.mcp.auth import AgentContext
 
 
 class ToolSearchTool(BaseTool):
     """Search visible MCP tool sources, summaries, and schemas."""
 
-    def __init__(self, directory: ToolDirectoryService):
+    @property
+    def source(self) -> str:
+        return "platform"
+
+    def __init__(self, directory: ToolDirectoryService) -> None:
         self._directory = directory
 
     @property

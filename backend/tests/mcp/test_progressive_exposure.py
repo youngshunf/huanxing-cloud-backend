@@ -2,15 +2,23 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Protocol
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.app.mcp.routes import mcp_router
+from backend.app.mcp.tools.app_tools import AppTool
 from backend.common.exception.exception_handler import register_exception
 from backend.common.security.agent_jwt import jwt_encode_agent
+
+
+class JsonResponse(Protocol):
+    def json(self) -> dict:
+        ...
 
 
 def make_test_app() -> FastAPI:
@@ -74,13 +82,75 @@ def auth_headers(token: str) -> dict[str, str]:
     }
 
 
-def error_message(response) -> str:
+def error_message(response: JsonResponse) -> str:
     data = response.json()
     return data.get("detail") or data.get("msg") or ""
 
 
 class TestMcpProgressiveExposure:
-    def test_list_tools_defaults_to_bootstrap_search_only(self, valid_agent_token, mock_agent):
+    def test_source_index_keeps_platform_tools_out_of_app_namespace(
+        self,
+        valid_agent_token: str,
+        mock_agent: MagicMock,
+    ) -> None:
+        app = make_test_app()
+        client = TestClient(app)
+
+        app_tool = AppTool(
+            installation_id="appi_sample",
+            app_id="sample",
+            app_namespace="sample",
+            tool_id="sample.search",
+            tool_name="search",
+            action="search",
+            tool_description="Search workspace sample data",
+            tool_input_schema={"type": "object"},
+            tool_output_schema={"type": "object"},
+            tool_required_scopes=[],
+        )
+
+        with (
+            patch(
+                "backend.app.mcp.auth.hasn_agents_dao.get_by_hasn_id",
+                new_callable=AsyncMock,
+            ) as mock_get,
+            patch(
+                "backend.app.mcp.server.load_app_tools_for_agent",
+                new_callable=AsyncMock,
+            ) as mock_load_tools,
+            patch(
+                "backend.app.mcp.server.load_app_tools_for_owner",
+                new_callable=AsyncMock,
+            ) as mock_load_owner_tools,
+            patch(
+                "backend.app.mcp.server.HasnCloudMcpServer._log_tool_call",
+                new_callable=AsyncMock,
+            ),
+        ):
+            mock_get.return_value = mock_agent
+            mock_load_tools.return_value = [app_tool]
+            mock_load_owner_tools.return_value = []
+
+            response = client.post(
+                "/mcp/tools/call",
+                json={
+                    "tool_name": "hasn.tool.search",
+                    "arguments": {"query": "sources"},
+                },
+                headers=auth_headers(valid_agent_token),
+            )
+
+        assert response.status_code == 200
+        sources = {(item["source"], item["namespace"]) for item in response.json()["result"]["sources"]}
+        assert ("app", "hasn.sample") in sources
+        assert ("platform", "hasn.contact") in sources
+        assert ("platform", "hasn.message") in sources
+
+    def test_list_tools_defaults_to_bootstrap_search_only(
+        self,
+        valid_agent_token: str,
+        mock_agent: MagicMock,
+    ) -> None:
         app = make_test_app()
         client = TestClient(app)
 
@@ -100,7 +170,11 @@ class TestMcpProgressiveExposure:
         tool_names = [tool["name"] for tool in response.json()["tools"]]
         assert tool_names == ["hasn.tool.search"]
 
-    def test_tool_search_returns_builtin_schema(self, valid_agent_token, mock_agent):
+    def test_tool_search_returns_builtin_schema(
+        self,
+        valid_agent_token: str,
+        mock_agent: MagicMock,
+    ) -> None:
         app = make_test_app()
         client = TestClient(app)
 
@@ -130,7 +204,11 @@ class TestMcpProgressiveExposure:
         assert result["schemas"][0]["input_schema"]["type"] == "object"
         assert result["schemas"][0]["required_scopes"] == ["contact:read"]
 
-    def test_direct_call_does_not_require_prior_exposure(self, valid_agent_token, mock_agent):
+    def test_direct_call_does_not_require_prior_exposure(
+        self,
+        valid_agent_token: str,
+        mock_agent: MagicMock,
+    ) -> None:
         app = make_test_app()
         client = TestClient(app)
 
@@ -172,7 +250,11 @@ class TestMcpProgressiveExposure:
         assert response.status_code == 200
         assert response.json()["result"]["contacts"][0]["contact_hasn_id"] == "h_contact_1"
 
-    def test_direct_call_scope_failure_is_not_exposure_failure(self, readonly_agent_token, mock_agent):
+    def test_direct_call_scope_failure_is_not_exposure_failure(
+        self,
+        readonly_agent_token: str,
+        mock_agent: MagicMock,
+    ) -> None:
         app = make_test_app()
         client = TestClient(app)
 

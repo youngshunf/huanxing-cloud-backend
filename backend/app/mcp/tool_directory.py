@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
-from typing import Any, Literal
 
-from backend.app.mcp.auth import AgentContext
-from backend.app.mcp.tools.base import BaseTool
-from backend.app.mcp.tools.registry import ToolRegistry
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from backend.app.mcp.auth import AgentContext
+    from backend.app.mcp.tools.base import BaseTool
+    from backend.app.mcp.tools.registry import ToolRegistry
 
 ToolSource = Literal["platform", "app", "local", "external"]
 
@@ -25,7 +27,7 @@ class ToolSearchQuery:
 class ToolDirectoryService:
     """Builds discovery/search projections from the full invocation registry."""
 
-    def __init__(self, registry: ToolRegistry):
+    def __init__(self, registry: ToolRegistry) -> None:
         self._registry = registry
 
     def list_bootstrap_tools(self, agent_context: AgentContext) -> list[dict[str, Any]]:
@@ -100,6 +102,9 @@ class ToolDirectoryService:
             namespace = "hasn." + query.removeprefix("app.")
             return [tool for tool in source_filtered if tool.name.startswith(f"{namespace}.")]
 
+        if query.startswith("hasn."):
+            return [tool for tool in source_filtered if tool.name == query or tool.name.startswith(f"{query}.")]
+
         if query in {"platform", "app", "local", "external"}:
             return [tool for tool in source_filtered if self._source_for_tool(tool) == query]
 
@@ -136,7 +141,7 @@ class ToolDirectoryService:
             "title": tool.name.rsplit(".", maxsplit=1)[-1],
             "summary": tool.description,
             "required_scopes": tool.required_scopes,
-            "risk_level": "low",
+            "risk_level": getattr(tool, "risk_level", "low"),
             "idempotent": True,
             "schema_hash": schema_hash,
             "schema_ref": f"hasn://tool-schema/{tool.name}@{schema_hash}",
@@ -148,9 +153,9 @@ class ToolDirectoryService:
             "name": tool.name,
             "description": tool.description,
             "input_schema": tool.input_schema,
-            "output_schema": {"type": "object"},
+            "output_schema": getattr(tool, "output_schema", {"type": "object"}),
             "required_scopes": tool.required_scopes,
-            "risk_level": "low",
+            "risk_level": getattr(tool, "risk_level", "low"),
             "schema_hash": self._schema_hash(tool.input_schema),
         }
 
@@ -158,24 +163,17 @@ class ToolDirectoryService:
         return all(scope in agent_context.scopes for scope in tool.required_scopes)
 
     def _source_for_tool(self, tool: BaseTool) -> ToolSource:
-        if tool.name.startswith("hasn.ext."):
-            return "external"
-        if tool.name.startswith(("hasn.file.", "hasn.memory.")):
-            return "local"
-        if tool.name.startswith("app."):
-            return "app"
-        return "platform"
+        return getattr(tool, "source", "platform")
 
     def _namespace_for_tool(self, tool: BaseTool) -> str:
+        return getattr(tool, "namespace", self._fallback_namespace(tool))
+
+    def _fallback_namespace(self, tool: BaseTool) -> str:
         parts = tool.name.split(".")
         if len(parts) < 2:
             return tool.name
-        if tool.name.startswith("hasn.tool."):
-            return "hasn.tool"
         if tool.name.startswith("hasn.ext.") and len(parts) >= 3:
             return ".".join(parts[:3])
-        if tool.name.startswith("hasn.") and len(parts) >= 2:
-            return ".".join(parts[:2])
         return ".".join(parts[:2])
 
     def _source_summary(self, source: str, namespace: str) -> str:
