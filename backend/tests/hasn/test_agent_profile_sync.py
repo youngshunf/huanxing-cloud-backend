@@ -194,3 +194,45 @@ async def test_sync_agents_returns_latest_cloud_agent_snapshots() -> None:
     assert snapshot.profile_revision == 7
     assert snapshot.agent_name == 'agent'
     assert not hasattr(snapshot, 'nickname')
+
+
+@pytest.mark.asyncio
+async def test_sync_agents_without_after_revision_returns_full_authoritative_set() -> None:
+    from backend.app.hasn.schema.hasn_agents import AgentSyncRequest
+    from backend.app.hasn.service.hasn_agents_service import HasnAgentProfileService
+
+    gateway = _Gateway()
+    gateway.agents = [
+        _Agent(
+            id=1,
+            hasn_id='a_old_revision',
+            agent_name='old-slug',
+            display_name='旧版本云端展示名',
+            avatar='https://cdn.example.com/old.png',
+            profile_revision=1,
+        ),
+        _Agent(
+            id=2,
+            hasn_id='a_new_revision',
+            agent_name='new-slug',
+            display_name='新版本云端展示名',
+            avatar='https://cdn.example.com/new.png',
+            profile_revision=9,
+        ),
+    ]
+    service = HasnAgentProfileService(gateway=gateway)
+
+    response = await service.sync_agents(
+        db=None,
+        request=AgentSyncRequest(owner_id='h_owner', after_revision=None),
+        user_id=100,
+    )
+
+    assert response.server_revision == 9
+    assert [agent.hasn_id for agent in response.agents] == ['a_old_revision', 'a_new_revision']
+    assert [agent.display_name for agent in response.agents] == ['旧版本云端展示名', '新版本云端展示名']
+    assert [agent.avatar for agent in response.agents] == [
+        'https://cdn.example.com/old.png',
+        'https://cdn.example.com/new.png',
+    ]
+    assert [agent.agent_name for agent in response.agents] == ['old-slug', 'new-slug']
