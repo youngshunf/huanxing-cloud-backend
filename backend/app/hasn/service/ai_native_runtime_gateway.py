@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import sqlalchemy as sa
+from fastapi.security.utils import get_authorization_scheme_param
 
 from backend.app.hasn.model import HasnAiNativeAppAudit, HasnWorkspaceApp
 from backend.app.hasn.schema.ai_native_runtime import (
@@ -14,6 +15,8 @@ from backend.app.hasn.service.ai_native_app_registry import ai_native_app_regist
 from backend.app.hasn.service.workbench_domain_service import workbench_domain_service
 from backend.common.dataclasses import AgentTokenPayload
 from backend.common.exception import errors
+from backend.common.security.agent_jwt import jwt_decode_agent
+from backend.database.redis import redis_client
 
 
 class AiNativeRuntimeGateway:
@@ -54,7 +57,7 @@ class AiNativeRuntimeGateway:
         self,
         *,
         workspace: dict[str, Any],
-        agent: AgentTokenPayload,
+        agent: AgentTokenPayload | None,
         manifest: dict[str, Any],
         tools: list[dict[str, Any]],
     ) -> dict[str, Any]:
@@ -74,7 +77,27 @@ class AiNativeRuntimeGateway:
         tool_id: str,
         body: AiNativeToolCallRequest,
     ) -> dict[str, Any]:
-        agent = self._require_agent(request)
+        agent_result = await self._authenticate_runtime_agent(request)
+        if agent_result.get('decision') == 'deny':
+            manifest = await ai_native_app_registry.ensure_builtin_published(db, app_id)
+            tool = self._find_tool(manifest, tool_id)
+            capability = self._find_capability(manifest, tool_id)
+            workspace = self._fallback_personal_workspace(agent_result.get('agent'))
+            audit = await self._write_audit(
+                db,
+                trace_id=body.trace_id,
+                workspace=workspace,
+                agent=agent_result.get('agent'),
+                manifest=manifest,
+                capability=capability,
+                tool=tool,
+                decision='deny',
+                error_code=agent_result['code'],
+                context={'reason': agent_result['message']},
+            )
+            return self._deny_payload(body.trace_id, agent_result['code'], agent_result['message'], audit_id=audit['id'])
+
+        agent = agent_result['agent']
         workspace = await self._resolve_workspace(db, agent=agent, requested_workspace=body.workspace)
         manifest = await ai_native_app_registry.ensure_builtin_published(db, app_id)
         tool = self._find_tool(manifest, tool_id)
@@ -180,11 +203,54 @@ class AiNativeRuntimeGateway:
             raise errors.TokenError(msg='Agent JWT 未认证')
         return agent
 
+    async def _authenticate_runtime_agent(self, request) -> dict[str, Any]:
+        agent = getattr(request.state, 'agent', None)
+        if agent is not None:
+            return {'decision': 'allow', 'agent': agent}
+
+        authorization = request.headers.get('Authorization') or request.headers.get('authorization')
+        scheme, token = get_authorization_scheme_param(authorization)
+        if not token or scheme.lower() != 'bearer':
+            return {'decision': 'deny', 'code': '15010', 'message': 'agent_jwt_missing', 'agent': None}
+
+        try:
+            decoded = jwt_decode_agent(token)
+        except errors.TokenError:
+            return {'decision': 'deny', 'code': '15010', 'message': 'agent_jwt_invalid', 'agent': None}
+
+        redis_token = await redis_client.get(f'agent_token:{decoded.agent_hasn_id}:{decoded.session_uuid}')
+        if not redis_token:
+            return {
+                'decision': 'deny',
+                'code': '15011',
+                'message': 'agent_token_session_revoked',
+                'agent': decoded,
+            }
+        if token != redis_token:
+            return {
+                'decision': 'deny',
+                'code': '15011',
+                'message': 'agent_token_session_mismatch',
+                'agent': decoded,
+            }
+
+        request.state.agent = decoded
+        return {'decision': 'allow', 'agent': decoded}
+
+    def _fallback_personal_workspace(self, agent: AgentTokenPayload | None) -> dict[str, Any]:
+        user_id = agent.owner_user_id if agent is not None else None
+        return {
+            'kind': 'personal',
+            'user_id': user_id,
+            'enterprise_id': None,
+            'workspace_key': f'personal:{user_id}' if user_id is not None else 'personal:unknown',
+        }
+
     async def _resolve_workspace(
         self,
         db,
         *,
-        agent: AgentTokenPayload,
+        agent: AgentTokenPayload | None,
         requested_workspace: dict[str, Any] | None,
     ) -> dict[str, Any]:
         workspace = dict(
@@ -295,15 +361,15 @@ class AiNativeRuntimeGateway:
             app_id=manifest['app_id'],
             app_version=manifest['version'],
             actor_type='agent',
-            agent_hasn_id=agent.agent_hasn_id,
-            owner_hasn_id=agent.owner_hasn_id,
-            session_uuid=agent.session_uuid,
+            agent_hasn_id=agent.agent_hasn_id if agent is not None else None,
+            owner_hasn_id=agent.owner_hasn_id if agent is not None else None,
+            session_uuid=agent.session_uuid if agent is not None else None,
             method='tool_call',
             capability_id=capability.get('capability_id'),
             tool_id=tool.get('tool_id'),
             event_type='tool_call',
             required_scopes=list(tool.get('required_scopes') or []),
-            agent_scopes_snapshot=list(agent.scopes),
+            agent_scopes_snapshot=list(agent.scopes) if agent is not None else [],
             workspace_role=workspace.get('role') or ('owner' if workspace['kind'] == 'personal' else 'member'),
             risk_level=tool.get('risk_level'),
             decision=decision,

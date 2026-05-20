@@ -59,7 +59,6 @@ async def runtime_capabilities(
 @runtime_router.post(
     '/tools/{app_id}/{tool_id}/call',
     summary='AI-Native Tool 调用',
-    dependencies=[DependsAgentJwtAuth],
 )
 async def runtime_tool_call(
     request: Request,

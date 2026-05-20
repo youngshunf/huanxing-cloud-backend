@@ -225,7 +225,12 @@ class _FakeAgent:
     session_uuid = 'session-001'
 
 
-def _make_runtime_test_app(fake_db: _FakeDb, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+def _make_runtime_test_app(
+    fake_db: _FakeDb,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    patch_agent: bool = True,
+) -> FastAPI:
     from backend.app.hasn.api.v1 import ai_native_app as module
     from backend.database.db import get_db, get_db_transaction
 
@@ -242,10 +247,20 @@ def _make_runtime_test_app(fake_db: _FakeDb, monkeypatch: pytest.MonkeyPatch) ->
     async def fake_db_transaction():
         yield fake_db
 
-    app.dependency_overrides[module.DependsAgentJwtAuth.dependency] = fake_agent_auth
+    async def fake_runtime_agent(_request):
+        return {'decision': 'allow', 'agent': _FakeAgent()}
+
+    if patch_agent:
+        app.dependency_overrides[module.DependsAgentJwtAuth.dependency] = fake_agent_auth
     app.dependency_overrides[get_db] = fake_db_session
     app.dependency_overrides[get_db_transaction] = fake_db_transaction
-    monkeypatch.setattr(module.ai_native_runtime_gateway, '_require_agent', lambda _request: _FakeAgent())
+    if patch_agent:
+        monkeypatch.setattr(module.ai_native_runtime_gateway, '_require_agent', lambda _request: _FakeAgent())
+        monkeypatch.setattr(
+            module.ai_native_runtime_gateway,
+            '_authenticate_runtime_agent',
+            fake_runtime_agent,
+        )
     return app
 
 
@@ -404,7 +419,14 @@ def test_runtime_tool_call_scope_denial_writes_audit(monkeypatch: pytest.MonkeyP
     async def fake_active_workspace(_db: Any, *, user_id: int) -> dict[str, Any]:
         return {'kind': 'personal', 'enterprise_id': None}
 
-    monkeypatch.setattr(module.ai_native_runtime_gateway, '_require_agent', lambda _request: NoKnowledgeScopeAgent())
+    async def fake_runtime_agent(_request):
+        return {'decision': 'allow', 'agent': NoKnowledgeScopeAgent()}
+
+    monkeypatch.setattr(
+        module.ai_native_runtime_gateway,
+        '_authenticate_runtime_agent',
+        fake_runtime_agent,
+    )
     monkeypatch.setattr(gateway_module.workbench_domain_service, 'get_active_workspace', fake_active_workspace)
 
     with TestClient(app) as client:
@@ -461,6 +483,72 @@ def test_runtime_tool_call_disabled_app_writes_audit(monkeypatch: pytest.MonkeyP
     audit_row = fake_db.added[-1]
     assert audit_row.decision == 'deny'
     assert audit_row.error_code == '15002'
+
+
+def test_runtime_tool_call_revoked_agent_session_writes_15011_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.hasn.model import HasnWorkspaceApp
+    from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
+    from backend.common.security import agent_jwt as agent_jwt_module
+    from backend.common.security.agent_jwt import jwt_encode_agent
+
+    fake_db = _FakeDb(
+        workspace={'kind': 'personal', 'enterprise_id': None},
+        app_row=HasnWorkspaceApp(
+            workspace_kind='personal',
+            user_id=12345,
+            enterprise_id=None,
+            app_id='knowledge',
+            status='active',
+            config={},
+            enabled_by=12345,
+        ),
+    )
+    app = _make_runtime_test_app(fake_db, monkeypatch, patch_agent=False)
+    token = jwt_encode_agent(
+        {
+            'sub': 'a_001',
+            'token_type': 'agent',
+            'agent_hasn_id': 'a_001',
+            'agent_name': 'Agent',
+            'owner_hasn_id': 'h_001',
+            'owner_user_id': 12345,
+            'scopes': ['knowledge.read'],
+            'session_uuid': 'session-revoked',
+            'exp': datetime.now(timezone.utc).timestamp() + 3600,
+        }
+    )
+
+    class MissingAgentSessionStore:
+        async def get(self, _key: str) -> None:
+            return None
+
+    async def fake_active_workspace(_db: Any, *, user_id: int) -> dict[str, Any]:
+        assert user_id == 12345
+        return {'kind': 'personal', 'enterprise_id': None}
+
+    missing_session_store = MissingAgentSessionStore()
+    monkeypatch.setattr(agent_jwt_module, 'redis_client', missing_session_store)
+    monkeypatch.setattr(gateway_module, 'redis_client', missing_session_store, raising=False)
+    monkeypatch.setattr(gateway_module.workbench_domain_service, 'get_active_workspace', fake_active_workspace)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            '/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call',
+            json={'workspace': None, 'input': {'query': '唤星工作台'}, 'trace_id': 'trace-revoked-session'},
+            headers={'Authorization': f'Bearer {token}'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['decision'] == 'deny'
+    assert data['error'] == {'code': '15011', 'message': 'agent_token_session_revoked'}
+    audit_row = fake_db.added[-1]
+    assert audit_row.trace_id == 'trace-revoked-session'
+    assert audit_row.decision == 'deny'
+    assert audit_row.error_code == '15011'
+    assert audit_row.agent_hasn_id == 'a_001'
+    assert audit_row.session_uuid == 'session-revoked'
+    assert audit_row.context == {'reason': 'agent_token_session_revoked'}
 
 
 def test_runtime_audit_route_applies_query_filters(monkeypatch: pytest.MonkeyPatch) -> None:
