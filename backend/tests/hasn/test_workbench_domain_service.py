@@ -28,6 +28,8 @@ class EnterpriseStub(_Base):
     name: Mapped[str] = mapped_column(sa.String(128), default='')
     slug: Mapped[str] = mapped_column(sa.String(64), default='', unique=True)
     logo: Mapped[str | None] = mapped_column(sa.String(512), default=None)
+    industry: Mapped[str | None] = mapped_column(sa.String(64), default=None)
+    company_size: Mapped[str | None] = mapped_column(sa.String(32), default=None)
     description: Mapped[str | None] = mapped_column(sa.Text, default=None)
     owner_user_id: Mapped[int] = mapped_column(sa.Integer, default=0)
     join_policy: Mapped[str] = mapped_column(sa.String(16), default='invite_only')
@@ -329,12 +331,18 @@ async def test_create_enterprise_approves_owner_and_installs_knowledge(db_sessio
         db_session,
         user_id=11,
         name='Acme',
-        slug='acme',
         description='Ops',
+        logo='https://cdn.example.com/assets/enterprise-logos/acme.png',
+        industry='software',
+        company_size='11-50',
         join_policy='invite_only',
     )
 
     assert enterprise['id'] == 1
+    assert enterprise['slug'] == 'acme'
+    assert enterprise['logo'] == 'https://cdn.example.com/assets/enterprise-logos/acme.png'
+    assert enterprise['industry'] == 'software'
+    assert enterprise['company_size'] == '11-50'
     assert bus.events == [('on_enterprise_created', {'enterprise_id': 1, 'owner_user_id': 11})]
 
     owner = (await db_session.execute(sa.select(MembershipStub).where(MembershipStub.enterprise_id == 1))).scalar_one()
@@ -347,6 +355,33 @@ async def test_create_enterprise_approves_owner_and_installs_knowledge(db_sessio
 
 
 @pytest.mark.asyncio
+async def test_create_enterprise_generates_slug_from_name_without_common_suffix(
+    db_session: AsyncSession,
+) -> None:
+    service = _service()
+
+    first = await service.create_enterprise(db_session, user_id=11, name='未来科技有限责任公司')
+    second = await service.create_enterprise(db_session, user_id=12, name='未来科技')
+
+    assert first['slug'] == 'wlkj'
+    assert second['slug'] == 'wlkj-2'
+
+
+@pytest.mark.asyncio
+async def test_create_enterprise_keeps_optional_profile_fields_empty_when_omitted(
+    db_session: AsyncSession,
+) -> None:
+    service = _service()
+
+    enterprise = await service.create_enterprise(db_session, user_id=11, name='星河科技有限公司')
+
+    assert enterprise['slug'] == 'xhkj'
+    assert enterprise['logo'] is None
+    assert enterprise['industry'] is None
+    assert enterprise['company_size'] is None
+
+
+@pytest.mark.asyncio
 async def test_invite_auto_approve_switches_active_workspace_and_invalidates_used_code(
     db_session: AsyncSession,
 ) -> None:
@@ -356,7 +391,6 @@ async def test_invite_auto_approve_switches_active_workspace_and_invalidates_use
         db_session,
         user_id=11,
         name='Acme',
-        slug='acme',
     )
     invite = await service.create_invite_code(
         db_session,
@@ -415,8 +449,10 @@ async def test_list_user_workspaces_returns_cloud_aggregated_workspace_stats(
         db_session,
         user_id=11,
         name='Acme',
-        slug='acme',
         description='Ops workspace',
+        logo='https://cdn.example.com/assets/enterprise-logos/acme.png',
+        industry='software',
+        company_size='11-50',
     )
     db_session.add_all([
         MembershipStub(enterprise_id=enterprise['id'], user_id=12, role='admin', status='approved'),
@@ -445,6 +481,9 @@ async def test_list_user_workspaces_returns_cloud_aggregated_workspace_stats(
     assert personal['app_count'] == 1
     assert personal['admin_count'] == 1
     assert enterprise_workspace['description'] == 'Ops workspace'
+    assert enterprise_workspace['logo'] == 'https://cdn.example.com/assets/enterprise-logos/acme.png'
+    assert enterprise_workspace['industry'] == 'software'
+    assert enterprise_workspace['company_size'] == '11-50'
     assert enterprise_workspace['member_count'] == 3
     assert enterprise_workspace['app_count'] == 1
     assert enterprise_workspace['admin_count'] == 2
@@ -457,7 +496,6 @@ async def test_invite_codes_reject_revoked_and_expired_codes(db_session: AsyncSe
         db_session,
         user_id=11,
         name='Acme',
-        slug='acme',
     )
     revoked = await service.create_invite_code(
         db_session,
@@ -508,7 +546,6 @@ async def test_remove_current_enterprise_member_falls_back_to_personal_and_emits
         db_session,
         user_id=11,
         name='Acme',
-        slug='acme',
     )
     invite = await service.create_invite_code(
         db_session,
@@ -565,7 +602,6 @@ async def test_delete_enterprise_falls_back_all_active_members_and_emits_disband
         db_session,
         user_id=11,
         name='Acme',
-        slug='acme',
     )
     for user_id in (12, 13):
         invite = await service.create_invite_code(
@@ -619,7 +655,7 @@ async def test_enterprise_workbench_app_enable_disable_uses_current_workspace_an
 ) -> None:
     workbench_bus = CapturingBus()
     service = _service(workbench_bus=workbench_bus)
-    enterprise = await service.create_enterprise(db_session, user_id=21, name='Acme', slug='acme-hooks')
+    enterprise = await service.create_enterprise(db_session, user_id=21, name='Acme')
     await service.switch_active_workspace(
         db_session,
         user_id=21,
@@ -665,7 +701,7 @@ async def test_workbench_rejects_unknown_apps_and_protects_auto_installed_person
 @pytest.mark.asyncio
 async def test_current_knowledge_credentials_follow_active_workspace(db_session: AsyncSession) -> None:
     service = _service()
-    enterprise = await service.create_enterprise(db_session, user_id=31, name='Acme', slug='acme')
+    enterprise = await service.create_enterprise(db_session, user_id=31, name='Acme')
 
     public_instance = RagflowInstanceStub(
         scope='public',
@@ -751,7 +787,7 @@ async def test_refresh_current_knowledge_credentials_triggers_provision_for_acti
 @pytest.mark.asyncio
 async def test_enterprise_ragflow_instance_config_upserts_and_disables(db_session: AsyncSession) -> None:
     service = _service()
-    enterprise = await service.create_enterprise(db_session, user_id=41, name='Acme', slug='acme')
+    enterprise = await service.create_enterprise(db_session, user_id=41, name='Acme')
 
     saved = await service.save_enterprise_ragflow_instance(
         db_session,
@@ -775,7 +811,7 @@ async def test_enterprise_ragflow_instance_config_upserts_and_disables(db_sessio
 @pytest.mark.asyncio
 async def test_enterprise_ragflow_instance_requires_owner_or_approved_admin(db_session: AsyncSession) -> None:
     service = _service()
-    enterprise = await service.create_enterprise(db_session, user_id=51, name='Acme', slug='acme')
+    enterprise = await service.create_enterprise(db_session, user_id=51, name='Acme')
     db_session.add_all([
         MembershipStub(enterprise_id=enterprise['id'], user_id=52, role='admin', status='approved'),
         MembershipStub(enterprise_id=enterprise['id'], user_id=53, role='member', status='approved'),

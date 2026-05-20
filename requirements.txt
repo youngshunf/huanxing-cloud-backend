@@ -287,6 +287,8 @@ pygments==2.19.2
     #   rich
 pymysql==1.1.2
     # via fastapi-best-architecture
+pypinyin==0.55.0
+    # via fastapi-best-architecture
 pyrate-limiter==4.0.2
     # via fastapi-best-architecture
 pytest==9.0.2

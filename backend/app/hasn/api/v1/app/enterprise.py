@@ -1,23 +1,30 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, File, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.app.hasn.service.workbench_domain_service import workbench_domain_service
+from backend.common.exception import errors
 from backend.common.response.response_schema import ResponseModel, response_base
 from backend.common.security.jwt import DependsJwtAuth
 from backend.database.db import CurrentSession, CurrentSessionTransaction  # noqa: TC001
+from backend.plugin.s3.crud.storage import s3_storage_dao
+from backend.plugin.s3.utils.file_ops import build_object_url, write_bytes
+from backend.utils.file_ops import upload_file_verify
 
 router = APIRouter()
 
 
 class CreateEnterpriseRequest(BaseModel):
     name: str = Field(description='企业名称')
-    slug: str = Field(description='企业唯一标识')
     description: str | None = None
+    logo: str | None = None
+    industry: str | None = None
+    company_size: str | None = None
     join_policy: str = 'invite_only'
 
 
@@ -44,11 +51,33 @@ async def create_enterprise(
         db,
         user_id=request.user.id,
         name=body.name,
-        slug=body.slug,
         description=body.description,
+        logo=body.logo,
+        industry=body.industry,
+        company_size=body.company_size,
         join_policy=body.join_policy,
     )
     return response_base.success(data=data)
+
+
+@router.post('/enterprises/logo/upload', dependencies=[DependsJwtAuth], summary='上传企业 Logo')
+async def upload_enterprise_logo(
+    request: Request,
+    db: CurrentSession,
+    file: Annotated[UploadFile, File(description='企业 Logo 文件')],
+) -> ResponseModel:
+    upload_file_verify(file)
+    storages = await s3_storage_dao.get_all(db)
+    s3_storage = storages[0] if storages else None
+    if not s3_storage:
+        raise errors.RequestError(msg='S3 存储配置不存在，无法上传企业 Logo')
+
+    content = await file.read()
+    file_ext = file.filename.split('.')[-1].lower() if file.filename and '.' in file.filename else 'png'
+    file_hash = hashlib.md5(content).hexdigest()[:8]
+    filename = f'enterprise-logos/{request.user.id}_{file_hash}.{file_ext}'
+    await write_bytes(s3_storage, filename, content, file.content_type)
+    return response_base.success(data={'url': build_object_url(s3_storage, filename)})
 
 
 @router.get('/enterprises/search', dependencies=[DependsJwtAuth], summary='搜索企业')

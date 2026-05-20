@@ -17,6 +17,8 @@ class HasnEnterprise(Base):
     name: Mapped[str] = mapped_column(sa.String(128), default='', comment='企业名称')
     slug: Mapped[str] = mapped_column(sa.String(64), default='', unique=True, comment='企业唯一标识')
     logo: Mapped[str | None] = mapped_column(sa.String(512), default=None, comment='企业 Logo')
+    industry: Mapped[str | None] = mapped_column(sa.String(64), default=None, comment='所属行业')
+    company_size: Mapped[str | None] = mapped_column(sa.String(32), default=None, comment='企业规模')
     description: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='企业描述')
     owner_user_id: Mapped[int] = mapped_column(sa.BigInteger(), default=0, comment='企业所有者 sys_user.id')
     join_policy: Mapped[str] = mapped_column(

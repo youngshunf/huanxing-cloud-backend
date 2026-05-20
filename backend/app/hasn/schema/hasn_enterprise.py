@@ -7,8 +7,10 @@ from backend.common.schema import SchemaBase
 
 class HasnEnterpriseSchemaBase(SchemaBase):
     name: str = Field(description='企业名称')
-    slug: str = Field(description='企业唯一标识')
+    slug: str | None = Field(None, description='企业唯一标识')
     logo: str | None = Field(None, description='企业 Logo')
+    industry: str | None = Field(None, description='所属行业')
+    company_size: str | None = Field(None, description='企业规模')
     description: str | None = Field(None, description='企业描述')
     owner_user_id: int = Field(description='企业所有者 sys_user.id')
     join_policy: str = Field('invite_only', description='加入策略')

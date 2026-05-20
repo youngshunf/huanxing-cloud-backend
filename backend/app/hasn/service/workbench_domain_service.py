@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import re
 import secrets
 
 from typing import TYPE_CHECKING, Any
 
 import httpx
 import sqlalchemy as sa
+
+from pypinyin import Style, lazy_pinyin
 
 from backend.app.hasn.model import (
     HasnEnterprise,
@@ -52,10 +55,14 @@ class WorkbenchDomainService:
         *,
         user_id: int,
         name: str,
-        slug: str,
         description: str | None = None,
+        logo: str | None = None,
+        industry: str | None = None,
+        company_size: str | None = None,
         join_policy: str = 'invite_only',
+        slug: str | None = None,
     ) -> dict[str, Any]:
+        slug = slug or await _generate_unique_enterprise_slug(db, name)
         existing = await _scalar(db, sa.select(HasnEnterprise).where(HasnEnterprise.slug == slug))
         if existing:
             raise errors.ConflictError(msg='企业标识已存在')
@@ -63,6 +70,9 @@ class WorkbenchDomainService:
         enterprise = HasnEnterprise(
             name=name,
             slug=slug,
+            logo=logo,
+            industry=industry,
+            company_size=company_size,
             description=description,
             owner_user_id=user_id,
             join_policy=join_policy,
@@ -109,7 +119,7 @@ class WorkbenchDomainService:
         updates: dict[str, Any],
     ) -> dict[str, Any]:
         enterprise = await self._get_enterprise_model(db, enterprise_id)
-        for field in ('name', 'slug', 'logo', 'description', 'join_policy', 'status'):
+        for field in ('name', 'logo', 'industry', 'company_size', 'description', 'join_policy', 'status'):
             if field in updates:
                 setattr(enterprise, field, updates[field])
         if hasattr(enterprise, 'updated_at'):
@@ -411,6 +421,9 @@ class WorkbenchDomainService:
                 'name': enterprise.name,
                 'slug': enterprise.slug,
                 'role': membership.role,
+                'logo': getattr(enterprise, 'logo', None),
+                'industry': getattr(enterprise, 'industry', None),
+                'company_size': getattr(enterprise, 'company_size', None),
                 'description': getattr(enterprise, 'description', None),
                 'created_at': _datetime_payload(getattr(enterprise, 'created_at', None)),
                 'joined_at': _datetime_payload(getattr(membership, 'created_at', None)),
@@ -1182,6 +1195,62 @@ def _empty_workspace_stats() -> dict[str, int]:
     return {'member_count': 0, 'app_count': 0, 'admin_count': 0}
 
 
+_ENTERPRISE_COMMON_SUFFIXES = (
+    '有限责任公司',
+    '股份有限公司',
+    '集团有限公司',
+    '有限公司',
+    '责任公司',
+    '集团公司',
+    '控股集团',
+    '集团',
+    '公司',
+    '企业',
+    '工作室',
+)
+
+
+def _strip_enterprise_common_suffix(name: str) -> str:
+    value = re.sub(r'\s+', '', name.strip())
+    changed = True
+    while changed:
+        changed = False
+        for suffix in _ENTERPRISE_COMMON_SUFFIXES:
+            if value.endswith(suffix) and len(value) > len(suffix):
+                value = value[: -len(suffix)]
+                changed = True
+                break
+    return value or name.strip()
+
+
+def _enterprise_slug_base(name: str) -> str:
+    value = _strip_enterprise_common_suffix(name)
+    pieces: list[str] = []
+    for char in value:
+        if char.isascii() and char.isalnum():
+            pieces.append(char.lower())
+            continue
+        initials = lazy_pinyin(char, style=Style.FIRST_LETTER, errors='ignore')
+        if initials:
+            initial = initials[0].lower()
+            if initial.isascii() and initial.isalnum():
+                pieces.append(initial)
+    slug = ''.join(pieces).strip('-')[:64]
+    return slug or 'enterprise'
+
+
+async def _generate_unique_enterprise_slug(db: AsyncSession, name: str) -> str:
+    base = _enterprise_slug_base(name)
+    index = 1
+    while True:
+        suffix = '' if index == 1 else f'-{index}'
+        candidate = f'{base[: 64 - len(suffix)]}{suffix}'
+        existing = await _scalar(db, sa.select(HasnEnterprise.id).where(HasnEnterprise.slug == candidate))
+        if existing is None:
+            return candidate
+        index += 1
+
+
 def _datetime_payload(value: Any) -> str | None:
     if value is None:
         return None
@@ -1194,10 +1263,14 @@ def _enterprise_payload(enterprise) -> dict[str, Any]:
         'name': enterprise.name,
         'slug': enterprise.slug,
         'logo': getattr(enterprise, 'logo', None),
+        'industry': getattr(enterprise, 'industry', None),
+        'company_size': getattr(enterprise, 'company_size', None),
         'description': getattr(enterprise, 'description', None),
         'owner_user_id': enterprise.owner_user_id,
         'join_policy': enterprise.join_policy,
         'status': enterprise.status,
+        'created_at': _datetime_payload(getattr(enterprise, 'created_at', None)),
+        'updated_at': _datetime_payload(getattr(enterprise, 'updated_at', None)),
     }
 
 
