@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -193,6 +194,12 @@ class _FakeDb:
                 rows = [row for row in rows if row.agent_hasn_id == params['agent_hasn_id_1']]
             if 'trace_id_1' in params:
                 rows = [row for row in rows if row.trace_id == params['trace_id_1']]
+            created_at_from = params.get('created_at_1')
+            created_at_to = params.get('created_at_2')
+            if created_at_from is not None:
+                rows = [row for row in rows if row.created_at >= created_at_from]
+            if created_at_to is not None:
+                rows = [row for row in rows if row.created_at <= created_at_to]
             return _ScalarResult(rows)
         return _ScalarResult([])
 
@@ -526,3 +533,111 @@ def test_runtime_audit_route_applies_query_filters(monkeypatch: pytest.MonkeyPat
     data = resp.json()['data']
     assert data['total'] == 1
     assert data['items'][0]['trace_id'] == 'trace-1'
+
+
+def test_runtime_audit_route_applies_created_at_range_filters(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.hasn.model import HasnAiNativeAppAudit
+
+    older_row = HasnAiNativeAppAudit(
+        trace_id='trace-old',
+        step='runtime',
+        workspace_kind='personal',
+        user_id=12345,
+        enterprise_id=None,
+        app_id='knowledge',
+        app_version='1.0.0',
+        actor_type='agent',
+        agent_hasn_id='a_001',
+        owner_hasn_id='h_001',
+        session_uuid='session-001',
+        method='tool_call',
+        capability_id='knowledge.search.capability',
+        tool_id='knowledge.search',
+        event_type='tool_call',
+        required_scopes=['knowledge.read'],
+        agent_scopes_snapshot=['knowledge.read'],
+        workspace_role='owner',
+        risk_level='low',
+        decision='allow',
+        confirmation_id=None,
+        result_ref='knowledge:knowledge.search:trace-old',
+        error_code=None,
+        context={},
+    )
+    older_row.id = 40
+    older_row.created_at = datetime(2026, 5, 19, 8, 0, tzinfo=timezone.utc)
+
+    matching_row = HasnAiNativeAppAudit(
+        trace_id='trace-in-range',
+        step='runtime',
+        workspace_kind='personal',
+        user_id=12345,
+        enterprise_id=None,
+        app_id='knowledge',
+        app_version='1.0.0',
+        actor_type='agent',
+        agent_hasn_id='a_001',
+        owner_hasn_id='h_001',
+        session_uuid='session-001',
+        method='tool_call',
+        capability_id='knowledge.search.capability',
+        tool_id='knowledge.search',
+        event_type='tool_call',
+        required_scopes=['knowledge.read'],
+        agent_scopes_snapshot=['knowledge.read'],
+        workspace_role='owner',
+        risk_level='low',
+        decision='allow',
+        confirmation_id=None,
+        result_ref='knowledge:knowledge.search:trace-in-range',
+        error_code=None,
+        context={},
+    )
+    matching_row.id = 41
+    matching_row.created_at = datetime(2026, 5, 20, 8, 0, tzinfo=timezone.utc)
+
+    newer_row = HasnAiNativeAppAudit(
+        trace_id='trace-new',
+        step='runtime',
+        workspace_kind='personal',
+        user_id=12345,
+        enterprise_id=None,
+        app_id='knowledge',
+        app_version='1.0.0',
+        actor_type='agent',
+        agent_hasn_id='a_001',
+        owner_hasn_id='h_001',
+        session_uuid='session-001',
+        method='tool_call',
+        capability_id='knowledge.search.capability',
+        tool_id='knowledge.search',
+        event_type='tool_call',
+        required_scopes=['knowledge.read'],
+        agent_scopes_snapshot=['knowledge.read'],
+        workspace_role='owner',
+        risk_level='low',
+        decision='allow',
+        confirmation_id=None,
+        result_ref='knowledge:knowledge.search:trace-new',
+        error_code=None,
+        context={},
+    )
+    newer_row.id = 42
+    newer_row.created_at = datetime(2026, 5, 21, 8, 0, tzinfo=timezone.utc)
+
+    fake_db = _FakeDb(workspace=None, audit_rows=[older_row, matching_row, newer_row])
+    app = _make_runtime_test_app(fake_db, monkeypatch)
+
+    with TestClient(app) as client:
+        resp = client.get(
+            '/api/v1/ai-native/audit',
+            params={
+                'created_at_from': '2026-05-20T00:00:00Z',
+                'created_at_to': '2026-05-20T23:59:59Z',
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['total'] == 1
+    assert data['items'][0]['trace_id'] == 'trace-in-range'

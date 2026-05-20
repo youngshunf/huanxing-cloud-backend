@@ -167,6 +167,10 @@ class AiNativeRuntimeGateway:
             stmt = stmt.where(HasnAiNativeAppAudit.agent_hasn_id == query.agent_hasn_id)
         if query.trace_id:
             stmt = stmt.where(HasnAiNativeAppAudit.trace_id == query.trace_id)
+        if query.created_at_from:
+            stmt = stmt.where(HasnAiNativeAppAudit.created_at >= query.created_at_from)
+        if query.created_at_to:
+            stmt = stmt.where(HasnAiNativeAppAudit.created_at <= query.created_at_to)
         rows = (await db.execute(stmt.order_by(HasnAiNativeAppAudit.id.desc()))).scalars().all()
         return {'items': [self._audit_payload(row) for row in rows], 'total': len(rows)}
 

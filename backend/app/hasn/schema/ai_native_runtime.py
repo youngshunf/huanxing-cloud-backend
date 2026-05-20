@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import Field
 
 from backend.common.schema import SchemaBase
@@ -20,3 +22,5 @@ class AiNativeAuditQuery(SchemaBase):
     app_id: str | None = None
     agent_hasn_id: str | None = None
     trace_id: str | None = None
+    created_at_from: datetime | None = None
+    created_at_to: datetime | None = None
