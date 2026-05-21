@@ -93,12 +93,15 @@ def run_flow(base_url: str, evidence: dict[str, Any]) -> None:
     )
     assert onboarding["human"]["owner_id"] == "h_p0_owner"
     assert onboarding["default_agent"]["hasn_id"] == "a_p0_default"
+    agent_token = onboarding["default_agent"]["access_token"]
+    agent_auth = {"Authorization": f"Bearer {agent_token}"}
     evidence["checks"].append(
         {
             "name": "backend onboarding ensure",
             "owner_id": onboarding["human"]["owner_id"],
             "default_agent": onboarding["default_agent"]["hasn_id"],
             "sandbox_status": onboarding["sandbox"]["status"],
+            "agent_token_prefix": agent_token[:12],
         }
     )
 
@@ -197,6 +200,80 @@ def run_flow(base_url: str, evidence: dict[str, Any]) -> None:
     inbox_kinds = [item["inbox_kind"] for item in inbox["items"]]
     assert {"human_inbox", "agent_inbox", "owner_copy", "suppressed_inbox"}.issubset(set(inbox_kinds))
     evidence["checks"].append({"name": "backend inbox pull", "inbox_kinds": inbox_kinds, "next_cursor": inbox["next_cursor"]})
+
+    capabilities = request_json(
+        base_url,
+        "/api/v1/ai-native/runtime/capabilities",
+        method="POST",
+        headers=agent_auth,
+        payload={"workspace": None, "include_disabled": False, "trace_id": "trace-cap-personal"},
+    )["data"]
+    assert capabilities["workspace"]["workspace_key"] == "personal:7"
+    assert capabilities["tools"][0]["tool_id"] == "knowledge.search"
+    evidence["checks"].append(
+        {
+            "name": "backend ai-native personal capabilities",
+            "workspace": capabilities["workspace"],
+            "tools": [tool["mcp_name"] for tool in capabilities["tools"]],
+        }
+    )
+
+    enterprise_capabilities = request_json(
+        base_url,
+        "/api/v1/ai-native/runtime/capabilities",
+        method="POST",
+        headers=agent_auth,
+        payload={
+            "workspace": {"kind": "enterprise", "enterprise_id": 42},
+            "include_disabled": False,
+            "trace_id": "trace-cap-enterprise",
+        },
+    )["data"]
+    assert enterprise_capabilities["workspace"]["workspace_key"] == "enterprise:42"
+    evidence["checks"].append(
+        {
+            "name": "backend ai-native enterprise capabilities",
+            "workspace": enterprise_capabilities["workspace"],
+            "tools": [tool["tool_id"] for tool in enterprise_capabilities["tools"]],
+        }
+    )
+
+    tool_call = request_json(
+        base_url,
+        "/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call",
+        method="POST",
+        headers=agent_auth,
+        payload={
+            "workspace": {"kind": "enterprise", "enterprise_id": 42},
+            "input": {"query": "唤星工作台", "limit": 10},
+            "trace_id": "trace-tool-enterprise",
+        },
+    )["data"]
+    assert tool_call["decision"] == "allow"
+    assert tool_call["workspace"]["workspace_key"] == "enterprise:42"
+    evidence["checks"].append(
+        {
+            "name": "backend ai-native knowledge.search tool call",
+            "decision": tool_call["decision"],
+            "workspace": tool_call["workspace"],
+            "result_total": tool_call["result"]["total"],
+            "audit_id": tool_call["audit_id"],
+        }
+    )
+
+    audit = request_json(
+        base_url,
+        "/api/v1/ai-native/audit?app_id=knowledge&agent_hasn_id=a_p0_default&trace_id=trace-tool-enterprise",
+    )["data"]
+    assert audit["total"] == 1
+    evidence["checks"].append(
+        {
+            "name": "backend ai-native audit retrieval",
+            "total": audit["total"],
+            "tool_id": audit["items"][0]["tool_id"],
+            "decision": audit["items"][0]["decision"],
+        }
+    )
 
 
 def wait_for_http(base_url: str, evidence: dict[str, Any]) -> None:

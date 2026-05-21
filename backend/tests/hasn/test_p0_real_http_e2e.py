@@ -10,9 +10,13 @@ from fastapi.testclient import TestClient
 from starlette_context.middleware import ContextMiddleware
 from starlette_context.plugins import RequestIdPlugin
 
+from backend.app.hasn.api.v1 import ai_native_app as ai_native_api
 from backend.app.hasn.api.v1 import message_hub as message_hub_api
 from backend.app.hasn.api.v1 import onboarding as onboarding_api
+from backend.app.hasn.api.v1.app import knowledge as knowledge_api
+from backend.app.hasn.api.v1.app import workspace as workspace_api
 from backend.app.hasn.api.v1 import sync as sync_api
+from backend.app.hasn.model import HasnAiNativeAppAudit, HasnUserActiveWorkspace
 from backend.app.hasn.schema.hasn_message_hub import InboxItem, InboxPullRequest, InboxPullResponse
 from backend.app.hasn.schema.hasn_onboarding import SandboxSummary
 from backend.app.hasn.service.hasn_message_hub_service import (
@@ -30,8 +34,15 @@ from backend.app.hasn.service.hasn_onboarding_service import (
     SMS_CODE_PREFIX,
     HasnOnboardingService,
     HasnPhoneAuthService,
+    SqlAlchemyAgentTokenIssuer,
 )
+from backend.app.hasn.model import HasnAiNativeAppAudit
+from backend.app.hasn.service.ragflow_subscriber import RecordingRAGFlowActions, ragflow_subscriber
 from backend.app.hasn.service.hasn_sync_service import HasnSyncService
+from backend.app.hasn.service.workspace_notification_subscriber import (
+    RecordingWorkspaceNotificationActions,
+    workspace_notification_subscriber,
+)
 from backend.common.exception.exception_handler import register_exception
 from backend.database.db import get_db, get_db_transaction
 
@@ -61,6 +72,11 @@ class FakeRedis:
         self.values.pop(key, None)
         self.ttls.pop(key, None)
 
+    async def delete_prefix(self, prefix: str, exclude: str | list[str] | None = None, batch_size: int = 1000) -> None:
+        exclude_set = set(exclude) if isinstance(exclude, list) else {exclude} if isinstance(exclude, str) else set()
+        for key in [key for key in self.values if key.startswith(prefix) and key not in exclude_set]:
+            await self.delete(key)
+
 
 class FakeSms:
     def __init__(self) -> None:
@@ -89,8 +105,94 @@ class FakeUserGateway:
 
 
 class FakeDb:
+    def __init__(self) -> None:
+        self.workspace_apps: dict[tuple[str, int | None, int | None, str], SimpleNamespace] = {}
+        self.active_workspaces: dict[int, SimpleNamespace] = {}
+        self.enterprise_memberships: dict[tuple[int, int], SimpleNamespace] = {}
+        self.audit_rows: list[HasnAiNativeAppAudit] = []
+
+    async def execute(self, stmt: Any) -> Any:
+        sql = str(stmt)
+        params = getattr(stmt.compile(), 'params', {})
+        if 'hasn_workspace_app' in sql:
+            row = self.workspace_apps.get(
+                (
+                    params.get('workspace_kind_1'),
+                    params.get('user_id_1'),
+                    params.get('enterprise_id_1'),
+                    params.get('app_id_1'),
+                )
+            )
+            return _ScalarResult([row] if row is not None else [])
+        if 'hasn_user_active_workspace' in sql:
+            row = self.active_workspaces.get(params.get('user_id_1'))
+            return _ScalarResult([row] if row is not None else [])
+        if 'hasn_enterprise_membership' in sql:
+            row = self.enterprise_memberships.get((params.get('enterprise_id_1'), params.get('user_id_1')))
+            return _ScalarResult([row] if row is not None else [])
+        if 'hasn_ai_native_app_audit' in sql:
+            return _ScalarResult(self._filter_audit_rows(params))
+        if 'hasn_ai_native_app_manifest' in sql:
+            return _ScalarResult([])
+        return _ScalarResult([])
+
+    def add(self, row: Any) -> None:
+        if row.__class__.__name__ == 'HasnUserActiveWorkspace':
+            self.active_workspaces[int(row.user_id)] = row
+            return
+        if isinstance(row, HasnAiNativeAppAudit):
+            if getattr(row, 'id', None) is None:
+                row.id = len(self.audit_rows) + 1
+            if getattr(row, 'created_at', None) is None:
+                row.created_at = datetime(2026, 5, 20, 8, 0, len(self.audit_rows), tzinfo=timezone.utc)
+            self.audit_rows.append(row)
+            return
+        return None
+
     async def flush(self) -> None:
         return None
+
+    async def refresh(self, row: Any) -> None:
+        if isinstance(row, HasnAiNativeAppAudit) and getattr(row, 'id', None) is None:
+            row.id = len(self.audit_rows)
+
+    def _filter_audit_rows(self, params: dict[str, Any]) -> list[HasnAiNativeAppAudit]:
+        rows = list(self.audit_rows)
+        if 'workspace_kind_1' in params:
+            rows = [row for row in rows if row.workspace_kind == params['workspace_kind_1']]
+        if 'app_id_1' in params:
+            rows = [row for row in rows if row.app_id == params['app_id_1']]
+        if 'agent_hasn_id_1' in params:
+            rows = [row for row in rows if row.agent_hasn_id == params['agent_hasn_id_1']]
+        if 'trace_id_1' in params:
+            rows = [row for row in rows if row.trace_id == params['trace_id_1']]
+        created_at_from = params.get('created_at_1')
+        created_at_to = params.get('created_at_2')
+        if created_at_from is not None:
+            rows = [row for row in rows if row.created_at >= created_at_from]
+        if created_at_to is not None:
+            rows = [row for row in rows if row.created_at <= created_at_to]
+        return rows
+
+
+class _ScalarResult:
+    def __init__(self, rows: list[Any]) -> None:
+        self._rows = list(rows)
+
+    def scalars(self) -> '_ScalarResult':
+        return self
+
+    def first(self) -> Any:
+        return self._rows[0] if self._rows else None
+
+    def all(self) -> list[Any]:
+        return list(self._rows)
+
+    def scalar_one_or_none(self) -> Any:
+        return self.first()
+
+    def scalar(self) -> Any:
+        return self.first()
 
 
 class FakeLlmCredentialIssuer:
@@ -98,24 +200,11 @@ class FakeLlmCredentialIssuer:
         return f'sk-p0-{user.id}', 'https://llm.example/v1', 'test-model'
 
 
-class FakeAgentTokenIssuer:
-    async def issue(
-        self,
-        _db: Any,
-        *,
-        agent_hasn_id: str,
-        agent_name: str,
-        owner_hasn_id: str,
-        owner_user_id: int,
-    ) -> SimpleNamespace:
-        return SimpleNamespace(
-            access_token=f'agent-token:{agent_hasn_id}',
-            access_token_expire_time=SimpleNamespace(isoformat=lambda: '2026-05-18T00:00:00+00:00'),
-            scopes=['message.read', 'knowledge.read'],
-        )
-
-
 class FakeOnboardingGateway:
+    def __init__(self) -> None:
+        self.node_id: str | None = None
+        self.owner_star_id = '100001'
+
     async def get_user(self, _db: Any, user_id: int) -> FakeUser | None:
         if user_id != 7:
             return None
@@ -127,14 +216,27 @@ class FakeOnboardingGateway:
     async def ensure_node(self, _db: Any, _user_id: int, owner_id: str, request: Any) -> Any:
         assert owner_id == 'h_p0_owner'
         assert 'workspace_path' not in request.node.model_dump_json()
+        assert request.node.node_id.startswith('n_')
+        self.node_id = request.node.node_id
         return SimpleNamespace(node_id=request.node.node_id)
 
     async def ensure_owner_binding(self, _db: Any, node_id: str, owner_id: str) -> Any:
         return SimpleNamespace(node_id=node_id, owner_id=owner_id, status='active', sync_revision=1)
 
     async def ensure_default_agent(self, _db: Any, owner_id: str, node_id: str | None) -> tuple[Any, bool]:
-        assert node_id == 'n_p0_desktop'
-        return SimpleNamespace(hasn_id='a_p0_default', owner_id=owner_id, name=DEFAULT_AGENT_DISPLAY_NAME), True
+        assert node_id is not None
+        assert node_id.startswith('n_')
+        if self.node_id is not None:
+            assert node_id == self.node_id
+        return (
+            SimpleNamespace(
+                hasn_id='a_p0_default',
+                owner_id=owner_id,
+                name=DEFAULT_AGENT_DISPLAY_NAME,
+                star_id=f'{self.owner_star_id}#assistant',
+            ),
+            True,
+        )
 
     async def consume_pending_intent(self, _db: Any, pending_intent_id: str, owner_id: str, agent_hasn_id: str) -> bool:
         assert (pending_intent_id, owner_id, agent_hasn_id) == ('pi_p0_real', 'h_p0_owner', 'a_p0_default')
@@ -273,11 +375,17 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app.add_middleware(ContextMiddleware, plugins=[RequestIdPlugin(validate=True)])
     register_exception(app)
     app.include_router(onboarding_api.router, prefix='/api/v1/hasn')
+    app.include_router(workspace_api.router, prefix='/api/v1/hasn')
+    app.include_router(knowledge_api.router, prefix='/api/v1/hasn/app')
     app.include_router(sync_api.router, prefix='/api/v1/hasn')
     app.include_router(message_hub_api.router, prefix='/api/v1/hasn')
+    app.include_router(ai_native_api.apps_router, prefix='/api/v1/ai-native/apps')
+    app.include_router(ai_native_api.runtime_router, prefix='/api/v1/ai-native/runtime')
+    app.include_router(ai_native_api.audit_router, prefix='/api/v1/ai-native/audit')
 
+    fake_db_instance = FakeDb()
     async def fake_db():
-        yield FakeDb()
+        yield fake_db_instance
 
     app.dependency_overrides[get_db] = fake_db
     app.dependency_overrides[get_db_transaction] = fake_db
@@ -290,6 +398,18 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
         return SimpleNamespace(access_token='jwt-p0-real-http')
 
     redis = FakeRedis()
+    from backend.common.security import agent_jwt as agent_jwt_module
+    from backend.app.hasn.service import ai_native_runtime_gateway as ai_native_gateway_module
+
+    monkeypatch.setattr(agent_jwt_module, 'redis_client', redis)
+    monkeypatch.setattr(ai_native_gateway_module, 'redis_client', redis)
+    monkeypatch.setattr(agent_jwt_module, 'get_agent_scopes_cached', _fake_agent_scopes_cached)
+    monkeypatch.setattr(
+        ai_native_gateway_module.workbench_domain_service,
+        'search_current_knowledge',
+        _fake_search_current_knowledge,
+    )
+
     phone_auth = HasnPhoneAuthService(
         redis=redis,
         sms=FakeSms(),
@@ -302,8 +422,10 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setattr(
         onboarding_api,
         'hasn_onboarding_service',
-        HasnOnboardingService(gateway=FakeOnboardingGateway(), agent_tokens=FakeAgentTokenIssuer()),
+        HasnOnboardingService(gateway=FakeOnboardingGateway(), agent_tokens=SqlAlchemyAgentTokenIssuer()),
     )
+    monkeypatch.setattr(ragflow_subscriber, 'actions', RecordingRAGFlowActions())
+    monkeypatch.setattr(workspace_notification_subscriber, 'actions', RecordingWorkspaceNotificationActions())
 
     sync_gateway = InMemorySyncGateway()
     monkeypatch.setattr(sync_api, 'hasn_sync_service', HasnSyncService(gateway=sync_gateway))
@@ -339,6 +461,27 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     )
 
     redis.values[f'{SMS_CODE_PREFIX}:13800138000'] = '123456'
+    fake_db_instance.workspace_apps[('personal', 7, None, 'knowledge')] = SimpleNamespace(
+        workspace_kind='personal',
+        user_id=7,
+        enterprise_id=None,
+        app_id='knowledge',
+        status='active',
+    )
+    fake_db_instance.workspace_apps[('enterprise', None, 42, 'knowledge')] = SimpleNamespace(
+        workspace_kind='enterprise',
+        user_id=None,
+        enterprise_id=42,
+        app_id='knowledge',
+        status='active',
+    )
+    fake_db_instance.enterprise_memberships[(42, 7)] = SimpleNamespace(
+        enterprise_id=42,
+        user_id=7,
+        role='admin',
+        status='approved',
+    )
+    fake_db_instance.active_workspaces[7] = HasnUserActiveWorkspace(user_id=7, kind='personal', enterprise_id=None)
     return app
 
 
@@ -365,6 +508,22 @@ def _fake_jwt_user(user_id: int):
         request.scope['user'] = SimpleNamespace(id=user_id)
 
     return fake_jwt
+
+
+async def _fake_agent_scopes_cached(_agent_hasn_id: str, _db: Any) -> dict[str, Any]:
+    return {'scopes': ['message.read', 'knowledge.read'], 'post_needs_review': True}
+
+
+async def _fake_search_current_knowledge(
+    _db: Any,
+    *,
+    user_id: int,
+    query: str,
+    limit: int,
+    dataset_id: str | None,
+) -> dict[str, Any]:
+    assert (user_id, limit, dataset_id) == (7, 10, None)
+    return {'items': [{'id': 'chunk-1', 'content': query}], 'total': 1}
 
 
 def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_and_inbox(
@@ -398,6 +557,7 @@ def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_an
     assert onboarding.status_code == 200
     assert onboarding.json()['human']['owner_id'] == 'h_p0_owner'
     assert onboarding.json()['default_agent']['hasn_id'] == 'a_p0_default'
+    agent_auth = {'Authorization': f"Bearer {onboarding.json()['default_agent']['access_token']}"}
 
     runtime_report = client.post(
         '/api/v1/hasn/runtime/report',
@@ -476,6 +636,67 @@ def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_an
     assert 'agent_inbox' in inbox_kinds
     assert 'owner_copy' in inbox_kinds
     assert 'suppressed_inbox' in inbox_kinds
+
+    capabilities = client.post(
+        '/api/v1/ai-native/runtime/capabilities',
+        headers=agent_auth,
+        json={'workspace': None, 'include_disabled': False, 'trace_id': 'trace-cap-personal'},
+    )
+    assert capabilities.status_code == 200, capabilities.text
+    personal_capabilities = capabilities.json()['data']
+    assert personal_capabilities['workspace'] == {
+        'kind': 'personal',
+        'user_id': 7,
+        'enterprise_id': None,
+        'workspace_key': 'personal:7',
+    }
+    assert personal_capabilities['tools'][0]['tool_id'] == 'knowledge.search'
+
+    workspace_switch = client.post(
+        '/api/v1/hasn/users/me/workspaces/active',
+        headers=agent_auth,
+        json={'kind': 'enterprise', 'enterprise_id': 42},
+    )
+    assert workspace_switch.status_code == 200, workspace_switch.text
+    assert workspace_switch.json()['data']['active'] == {'kind': 'enterprise', 'enterprise_id': 42}
+
+    enterprise_capabilities = client.post(
+        '/api/v1/ai-native/runtime/capabilities',
+        headers=agent_auth,
+        json={
+            'workspace': {'kind': 'enterprise', 'enterprise_id': 42},
+            'include_disabled': False,
+            'trace_id': 'trace-cap-enterprise',
+        },
+    )
+    assert enterprise_capabilities.status_code == 200, enterprise_capabilities.text
+    assert enterprise_capabilities.json()['data']['workspace'] == {
+        'kind': 'enterprise',
+        'user_id': None,
+        'enterprise_id': 42,
+        'workspace_key': 'enterprise:42',
+    }
+
+    tool_call = client.post(
+        '/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call',
+        headers=agent_auth,
+        json={
+            'workspace': {'kind': 'enterprise', 'enterprise_id': 42},
+            'input': {'query': '唤星工作台', 'limit': 10},
+            'trace_id': 'trace-tool-enterprise',
+        },
+    )
+    assert tool_call.status_code == 200, tool_call.text
+    assert tool_call.json()['data']['decision'] == 'allow'
+    assert tool_call.json()['data']['workspace']['workspace_key'] == 'enterprise:42'
+
+    audit = client.get(
+        '/api/v1/ai-native/audit',
+        params={'app_id': 'knowledge', 'agent_hasn_id': 'a_p0_default', 'trace_id': 'trace-tool-enterprise'},
+    )
+    assert audit.status_code == 200, audit.text
+    assert audit.json()['data']['total'] == 1
+    assert audit.json()['data']['items'][0]['tool_id'] == 'knowledge.search'
 
 
 def test_sync_pull_rejects_owner_not_bound_to_authenticated_user(monkeypatch: pytest.MonkeyPatch) -> None:
