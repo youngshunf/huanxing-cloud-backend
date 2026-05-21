@@ -72,12 +72,15 @@ class AgentSnapshot(SchemaBase):
     role: str = Field(default='specialist', description='Agent 角色')
     node_id: str | None = Field(None, description='驻留节点 ID 摘要')
     capabilities: dict[str, Any] | list[Any] | None = Field(None, description='能力摘要')
+    capability_set_id: str | None = Field(None, description='Agent 能力集 ID')
+    persona_ref: str | None = Field(None, description='Agent persona 引用')
+    tags: list[str] = Field(default_factory=list, description='Agent 标签数组')
     template_id: str | None = Field(None, description='模板 ID')
     skills: dict[str, Any] | list[Any] | None = Field(None, description='技能配置')
     soul_md: str | None = Field(None, description='SOUL.md 内容')
     user_md: str | None = Field(None, description='USER.md 内容')
     profile_revision: int = Field(default=1, description='Profile 修订号')
-    status: str = Field(default='active', description='Agent 状态')
+    status: str = Field(default='active', description='Agent 状态/生命周期 (active/disabled/revoked/archived/deleted)')
     social_enabled: bool = Field(default=False, description='是否对外开启社交可见')
     updated_time: datetime | None = Field(None, description='更新时间')
 
@@ -116,12 +119,24 @@ class CloudCreateAgentResponse(SchemaBase):
 
 
 class UpdateAgentProfileRequest(SchemaBase):
-    """daemon 发起的部分字段更新请求（云端为权威源）。"""
+    """daemon 发起的部分字段更新请求（云端为权威源）。
+
+    所有字段都是 partial：未传递的字段保持云端现值。星号字段直接落库 hasn_agents 表，
+    daemon 据返回的 AgentSnapshot 回写本地镜像。
+    """
 
     display_name: str | None = Field(None, min_length=1, max_length=80, description='Agent 显示名')
     description: str | None = Field(None, max_length=280, description='Agent 简介')
     avatar: str | None = Field(None, max_length=500, description='Agent 头像 URL')
     role: str | None = Field(None, min_length=1, max_length=64, description='Agent 角色')
+    star_id: str | None = Field(None, min_length=1, max_length=40, description='Agent 唤星号（同表唯一）')
+    tags: list[str] | None = Field(None, description='Agent 标签数组（覆盖式更新）')
+    capability_set_id: str | None = Field(None, max_length=80, description='Agent 能力集 ID')
+    persona_ref: str | None = Field(None, max_length=120, description='Agent persona 引用')
+    status: str | None = Field(
+        None,
+        description='Agent 状态/生命周期 (active/disabled/revoked/archived/deleted)',
+    )
 
 
 class UpdateAgentProfileResponse(SchemaBase):

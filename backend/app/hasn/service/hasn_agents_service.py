@@ -200,7 +200,7 @@ class HasnAgentProfileService:
         request: UpdateAgentProfileRequest,
         user_id: int | None = None,
     ) -> UpdateAgentProfileResponse:
-        """云端权威更新 Agent profile（display_name / description / avatar）。
+        """云端权威更新 Agent profile。
 
         daemon 调用：云端先落库 → 返回最新快照 → daemon 据此回写本地镜像。
         所有字段都是 partial：只有显式传入的字段才会被写。
@@ -224,6 +224,27 @@ class HasnAgentProfileService:
         if not provided:
             return UpdateAgentProfileResponse(agent=_agent_snapshot(agent))
 
+        if 'status' in provided and provided['status'] is not None:
+            if provided['status'] not in _ALLOWED_STATUS_VALUES:
+                raise errors.RequestError(
+                    msg=f'ERR_HASN_AGENT_STATUS_INVALID:{provided["status"]}'
+                )
+
+        if 'star_id' in provided and provided['star_id'] is not None:
+            new_star_id = provided['star_id']
+            if new_star_id != agent.star_id:
+                conflict = (
+                    await db.execute(
+                        sa.select(HasnAgents.id).where(
+                            HasnAgents.star_id == new_star_id,
+                            HasnAgents.id != agent.id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if conflict is not None:
+                    raise errors.RequestError(msg='ERR_HASN_AGENT_STAR_ID_TAKEN')
+                agent.star_id = new_star_id
+
         if 'display_name' in provided and provided['display_name'] is not None:
             agent.display_name = provided['display_name']
         if 'description' in provided:
@@ -232,6 +253,14 @@ class HasnAgentProfileService:
             agent.avatar = provided['avatar']
         if 'role' in provided and provided['role'] is not None:
             agent.role = provided['role']
+        if 'tags' in provided and provided['tags'] is not None:
+            agent.tags = list(provided['tags'])
+        if 'capability_set_id' in provided:
+            agent.capability_set_id = provided['capability_set_id']
+        if 'persona_ref' in provided:
+            agent.persona_ref = provided['persona_ref']
+        if 'status' in provided and provided['status'] is not None:
+            agent.status = provided['status']
 
         if hasattr(agent, 'profile_revision'):
             agent.profile_revision = (agent.profile_revision or 1) + 1
@@ -293,6 +322,11 @@ def _merge_agent_create_payload(request: CloudCreateAgentRequest, template: Any 
 
 _SLUG_RE = re.compile(r'^[a-z][a-z0-9_-]{0,63}$')
 
+# 云端 hasn_agents.status 的允许值集合：业务态 + 生命周期态合并落同一列。
+_ALLOWED_STATUS_VALUES: frozenset[str] = frozenset(
+    {'active', 'disabled', 'revoked', 'archived', 'deleted'}
+)
+
 
 def _resolve_agent_slug(request: CloudCreateAgentRequest, template: Any | None) -> str:
     if request.agent_name and _SLUG_RE.match(request.agent_name):
@@ -311,6 +345,11 @@ def _resolve_agent_slug(request: CloudCreateAgentRequest, template: Any | None) 
 
 
 def _agent_snapshot(agent: Any) -> AgentSnapshot:
+    raw_tags = getattr(agent, 'tags', None)
+    if isinstance(raw_tags, list):
+        tags = [str(item) for item in raw_tags if item is not None]
+    else:
+        tags = []
     return AgentSnapshot(
         hasn_id=agent.hasn_id,
         star_id=getattr(agent, 'star_id', ''),
@@ -323,6 +362,9 @@ def _agent_snapshot(agent: Any) -> AgentSnapshot:
         role=getattr(agent, 'role', 'specialist') or 'specialist',
         node_id=getattr(agent, 'node_id', None),
         capabilities=getattr(agent, 'capabilities', None),
+        capability_set_id=getattr(agent, 'capability_set_id', None),
+        persona_ref=getattr(agent, 'persona_ref', None),
+        tags=tags,
         template_id=getattr(agent, 'template_id', None),
         skills=getattr(agent, 'skills', None),
         soul_md=getattr(agent, 'soul_md', None),

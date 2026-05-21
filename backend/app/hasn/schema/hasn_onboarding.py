@@ -32,6 +32,8 @@ class PhoneVerifyResponse(SchemaBase):
     access_token: str = Field(description='HASN session access token')
     token_type: Literal['Bearer'] = Field(default='Bearer', description='Token 类型')
     expires_in_sec: int = Field(ge=1, description='访问令牌有效秒数')
+    refresh_token: str | None = Field(default=None, description='刷新令牌（桌面端用于自动续期）')
+    refresh_token_expire_sec: int | None = Field(default=None, description='刷新令牌有效秒数')
     # PR7: per-owner LLM credentials (newapi key + base URL). The daemon
     # writes these into each Hermes profile's `.env` file via
     # `PUT /runtime/v1/profiles/{id}/llm` so all of an owner's agents
@@ -42,6 +44,17 @@ class PhoneVerifyResponse(SchemaBase):
     # profile 的 config.yaml `model.default`。后续支持按用户级别区分模型时
     # 直接改 service 注入逻辑，daemon 端无需变更。
     llm_model: str | None = Field(default=None, description='默认 LLM 模型名，写入 hermes profile config')
+
+
+class HasnTokenRefreshRequest(SchemaBase):
+    refresh_token: str = Field(description='刷新令牌')
+
+
+class HasnTokenRefreshResponse(SchemaBase):
+    access_token: str = Field(description='新的访问令牌')
+    expires_in_sec: int = Field(ge=1, description='访问令牌有效秒数')
+    refresh_token: str = Field(description='新的刷新令牌（轮换）')
+    refresh_token_expire_sec: int = Field(ge=1, description='刷新令牌有效秒数')
 
 
 class NodeClaim(SchemaBase):

@@ -8,10 +8,12 @@ from typing import Any
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+from starlette.responses import Response
 
 from backend.app.mcp.auth import AgentContextDep
 from backend.app.mcp.context import set_current_agent_context, clear_agent_context
 from backend.app.mcp.server import mcp_server
+from backend.app.mcp.streamable import hasn_streamable_server
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +153,25 @@ async def mcp_message_endpoint(
         clear_agent_context()
 
 
+
+
 def register_mcp_routes(app):
     """将 MCP 路由注册到主应用"""
     app.include_router(router)
+
+    # StreamableHTTP 端点作为原生 ASGI app 挂载，
+    # 因为 session_manager.handle_request 直接操作 ASGI send/receive
+    from starlette.routing import Route
+
+    class _StreamableASGI:
+        async def __call__(self, scope, receive, send):
+            await hasn_streamable_server.handle_request_with_auth(scope, receive, send)
+
+    streamable_route = Route(
+        "/api/v1/mcp/streamable",
+        endpoint=_StreamableASGI(),
+        methods=["GET", "POST", "DELETE"],
+    )
+    app.routes.insert(0, streamable_route)
+
     logger.info("MCP routes registered")

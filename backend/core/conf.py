@@ -122,6 +122,7 @@ class Settings(BaseSettings):
     TOKEN_ALGORITHM: str = 'HS256'
     TOKEN_EXPIRE_SECONDS: int = 60 * 60 * 24  # 1 天
     TOKEN_REFRESH_EXPIRE_SECONDS: int = 60 * 60 * 24 * 7  # 7 天
+    HASN_REFRESH_TOKEN_EXPIRE_SECONDS: int = 60 * 60 * 24 * 30  # 30 天（桌面端长期登录）
     TOKEN_REDIS_PREFIX: str = 'fba:token'
     TOKEN_EXTRA_INFO_REDIS_PREFIX: str = 'fba:token_extra_info'
     TOKEN_ONLINE_REDIS_PREFIX: str = 'fba:token_online'
@@ -132,6 +133,7 @@ class Settings(BaseSettings):
         f'{FASTAPI_API_V1_PATH}/auth/phone-login',
         f'{FASTAPI_API_V1_PATH}/hasn/auth/phone/send_code',
         f'{FASTAPI_API_V1_PATH}/hasn/auth/phone/verify',
+        f'{FASTAPI_API_V1_PATH}/hasn/auth/token/refresh',
         f'{FASTAPI_API_V1_PATH}/user_tier/my/subscription/tiers',
         f'{FASTAPI_API_V1_PATH}/user_tier/my/subscription/packages',
     ]

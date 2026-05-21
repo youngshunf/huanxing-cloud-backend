@@ -66,7 +66,11 @@ async def register_init(app: FastAPI) -> AsyncGenerator[None, None]:
     from backend.app.user_tier.service.pay_callbacks import register_callbacks
     register_callbacks()
 
-    yield
+    # 启动 MCP StreamableHTTP session manager
+    from backend.app.mcp.streamable import hasn_streamable_server
+    session_manager = hasn_streamable_server.create_session_manager()
+    async with session_manager.run():
+        yield
 
     # 停止缓存 Pub/Sub 监听器
     await cache_pubsub_manager.stop_listener()

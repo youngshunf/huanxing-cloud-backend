@@ -26,6 +26,9 @@ CREATE TABLE "public"."hasn_agents" (
   "policy_revision" bigint NOT NULL DEFAULT 1,
   "sync_revision" bigint NOT NULL DEFAULT 1,
   "runtime_summary_json" jsonb NOT NULL DEFAULT '{}',
+  "tags"           jsonb NOT NULL DEFAULT '[]',
+  "capability_set_id" varchar(80),
+  "persona_ref"    varchar(120),
   "status"         varchar(20) NOT NULL DEFAULT 'active',
   "created_via"    varchar(20) NOT NULL DEFAULT 'guardian',
   "created_time"   timestamptz(6) NOT NULL DEFAULT now(),
@@ -66,7 +69,10 @@ COMMENT ON COLUMN "public"."hasn_agents"."profile_revision" IS 'Agent Profile �
 COMMENT ON COLUMN "public"."hasn_agents"."policy_revision" IS 'Agent 权限/策略修订号';
 COMMENT ON COLUMN "public"."hasn_agents"."sync_revision" IS '服务端同步修订号';
 COMMENT ON COLUMN "public"."hasn_agents"."runtime_summary_json" IS 'Runtime 脱敏状态摘要缓存；禁止 workspace/endpoint/PID/CLI args/OAuth path';
-COMMENT ON COLUMN "public"."hasn_agents"."status" IS '状态 (active:活跃:green/disabled:已停用:orange/revoked:已吊销:red)';
+COMMENT ON COLUMN "public"."hasn_agents"."tags" IS 'Agent 标签数组（云端权威，daemon 仅镜像）';
+COMMENT ON COLUMN "public"."hasn_agents"."capability_set_id" IS 'Agent 能力集 ID（与 hasn_agent_capabilities 关联，云端权威）';
+COMMENT ON COLUMN "public"."hasn_agents"."persona_ref" IS 'Agent persona 引用（template / persona 资产 ID，云端权威）';
+COMMENT ON COLUMN "public"."hasn_agents"."status" IS '状态/生命周期 (active:活跃:green/disabled:已停用:orange/revoked:已吊销:red/archived:已归档:gray/deleted:已删除:gray)';
 COMMENT ON COLUMN "public"."hasn_agents"."created_via" IS '创建来源 (guardian:Guardian注册:blue/client:客户端创建:green)';
 COMMENT ON COLUMN "public"."hasn_agents"."created_time" IS '创建时间';
 COMMENT ON COLUMN "public"."hasn_agents"."updated_time" IS '更新时间';

@@ -4,6 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from backend.app.hasn.schema.hasn_onboarding import (
+    HasnTokenRefreshRequest,
+    HasnTokenRefreshResponse,
     OnboardingEnsureRequest,
     OnboardingEnsureResponse,
     PhoneSendCodeRequest,
@@ -12,7 +14,8 @@ from backend.app.hasn.schema.hasn_onboarding import (
     PhoneVerifyResponse,
 )
 from backend.app.hasn.service.hasn_onboarding_service import hasn_onboarding_service, hasn_phone_auth_service
-from backend.common.security.jwt import DependsJwtAuth, get_token, jwt_decode
+from backend.common.security.jwt import DependsJwtAuth, create_new_token, get_token, jwt_decode
+from backend.core.conf import settings
 from backend.database.db import CurrentSessionTransaction
 
 router = APIRouter()
@@ -29,6 +32,37 @@ async def verify_phone_code(
     request: PhoneVerifyRequest,
 ) -> PhoneVerifyResponse:
     return await hasn_phone_auth_service.verify(db, request)
+
+
+@router.post('/auth/token/refresh', summary='Refresh HASN access token using refresh_token')
+async def refresh_hasn_token(
+    db: CurrentSessionTransaction,
+    body: HasnTokenRefreshRequest,
+) -> HasnTokenRefreshResponse:
+    token_payload = jwt_decode(body.refresh_token)
+    from backend.app.admin.crud.crud_user import user_dao
+    user = await user_dao.get(db, token_payload.id)
+    if not user:
+        from backend.common.exception import errors
+        raise errors.NotFoundError(msg='用户不存在')
+    if not user.status:
+        from backend.common.exception import errors
+        raise errors.AuthorizationError(msg='用户已被锁定')
+
+    new_token = await create_new_token(
+        body.refresh_token,
+        token_payload.session_uuid,
+        user.id,
+        multi_login=user.is_multi_login,
+        username=user.username,
+        nickname=user.nickname,
+    )
+    return HasnTokenRefreshResponse(
+        access_token=new_token.new_access_token,
+        expires_in_sec=settings.TOKEN_EXPIRE_SECONDS,
+        refresh_token=new_token.new_refresh_token,
+        refresh_token_expire_sec=settings.HASN_REFRESH_TOKEN_EXPIRE_SECONDS,
+    )
 
 
 @router.post(

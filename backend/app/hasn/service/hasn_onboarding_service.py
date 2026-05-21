@@ -36,7 +36,7 @@ from backend.app.hasn.schema.hasn_onboarding import (
 from backend.app.hasn.service import hasn_auth as hasn_auth_service
 from backend.app.hasn.service.hasn_node_bindings_service import hasn_node_bindings_service
 from backend.common.exception import errors
-from backend.common.security.jwt import create_access_token
+from backend.common.security.jwt import create_access_token, create_refresh_token
 from backend.common.sms import sms_service
 from backend.core.conf import settings
 from backend.database.redis import redis_client
@@ -363,9 +363,17 @@ class HasnPhoneAuthService:
         except Exception as exc:
             raise errors.ServerError(msg=f'LLM 服务初始化失败: {exc}') from exc
 
+        refresh_token_data = await create_refresh_token(
+            access_token.session_uuid,
+            user.id,
+            multi_login=user.is_multi_login,
+        )
+
         return PhoneVerifyResponse(
             access_token=access_token.access_token,
             expires_in_sec=self.token_expire_seconds,
+            refresh_token=refresh_token_data.refresh_token,
+            refresh_token_expire_sec=settings.HASN_REFRESH_TOKEN_EXPIRE_SECONDS,
             llm_token=llm_token,
             llm_base_url=llm_base_url,
             llm_model=llm_model,
