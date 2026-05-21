@@ -5,15 +5,19 @@
 """
 from typing import Any
 
-from backend.app.mcp.tools.base import BaseTool
-from backend.app.mcp.auth import AgentContext
-from backend.app.hasn.service.hasn_message_hub_service import HasnMessageHubService
 from backend.app.hasn.schema.hasn_message_hub import MessageHubSendRequest
+from backend.app.hasn.service.hasn_message_hub_service import HasnMessageHubService
+from backend.app.mcp.auth import AgentContext
+from backend.app.mcp.tools.base import BaseTool
 from backend.database.db import async_db_session
 
 
 class MessageSendTool(BaseTool):
     """发送私信工具"""
+
+    @property
+    def source(self) -> str:
+        return "platform"
 
     @property
     def name(self) -> str:
@@ -53,6 +57,15 @@ class MessageSendTool(BaseTool):
         # 检查权限
         agent_context.require_scopes("message:write")
 
+        missing_arguments = [
+            name for name in ("to", "content")
+            if name not in arguments
+        ]
+        if missing_arguments:
+            raise RuntimeError(
+                f"Missing required arguments: {', '.join(missing_arguments)}"
+            )
+
         # 使用消息服务发送消息
         async with async_db_session() as db:
             message_service = HasnMessageHubService()
@@ -79,6 +92,10 @@ class MessageSendTool(BaseTool):
 
 class MessageListTool(BaseTool):
     """获取消息列表工具（简化版）"""
+
+    @property
+    def source(self) -> str:
+        return "platform"
 
     @property
     def name(self) -> str:
@@ -144,6 +161,6 @@ class MessageListTool(BaseTool):
             except Exception as e:
                 # 如果 API 不匹配，返回友好错误
                 return {
-                    "error": f"Message list not available: {str(e)}",
+                    "error": f"Message list not available: {e!s}",
                     "messages": []
                 }

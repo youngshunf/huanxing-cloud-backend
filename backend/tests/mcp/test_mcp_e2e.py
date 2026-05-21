@@ -40,6 +40,28 @@ def make_test_app() -> FastAPI:
     return app
 
 
+@pytest.fixture(autouse=True)
+def isolate_dynamic_app_tools():
+    """避免 e2e 触发真实的 App 工具加载和审计落库。"""
+    with (
+        patch(
+            "backend.app.mcp.server.load_app_tools_for_agent",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "backend.app.mcp.server.load_app_tools_for_owner",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "backend.app.mcp.server.HasnCloudMcpServer._log_tool_call",
+            new_callable=AsyncMock,
+        ),
+    ):
+        yield
+
+
 class TestMcpAuthentication:
     """测试 MCP 认证"""
 
@@ -96,6 +118,7 @@ class TestMcpAuthentication:
 
         response = client.post(
             "/mcp/tools/list",
+            json={},
             headers={
                 "Authorization": f"Bearer {test_agent_token}",
                 "X-HASN-Agent-ID": "a_wrong_agent_id",  # 与 token 中的不匹配
@@ -112,35 +135,35 @@ class TestMcpAuthentication:
 class TestMcpToolsList:
     """测试工具列表接口"""
 
-    @patch("backend.app.mcp.auth.HasnAgentsService")
     @patch("backend.app.mcp.auth.async_db_session")
     def test_list_tools_success(
-        self, mock_db_session, mock_agent_service, test_agent_token
+        self, mock_db_session, test_agent_token
     ):
         """测试成功获取工具列表"""
-        # Mock Agent 查询
         mock_agent = MagicMock()
         mock_agent.status = "active"
         mock_agent.hasn_id = "a_test_agent_001"
 
-        mock_service_instance = AsyncMock()
-        mock_service_instance.get_by_hasn_id = AsyncMock(return_value=mock_agent)
-        mock_agent_service.return_value = mock_service_instance
-
-        # Mock DB session
         mock_db = AsyncMock()
         mock_db_session.return_value.__aenter__.return_value = mock_db
 
         app = make_test_app()
         client = TestClient(app)
 
-        response = client.post(
-            "/mcp/tools/list",
-            headers={
-                "Authorization": f"Bearer {test_agent_token}",
-                "X-HASN-Agent-ID": "a_test_agent_001",
-            },
-        )
+        with patch(
+            "backend.app.mcp.auth.hasn_agents_dao.get_by_hasn_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.return_value = mock_agent
+
+            response = client.post(
+                "/mcp/tools/list",
+                json={},
+                headers={
+                    "Authorization": f"Bearer {test_agent_token}",
+                    "X-HASN-Agent-ID": "a_test_agent_001",
+                },
+            )
 
         assert response.status_code == 200
         data = response.json()
@@ -149,259 +172,249 @@ class TestMcpToolsList:
 
         # 验证内置工具存在
         tool_names = [tool["name"] for tool in data["tools"]]
-        assert "hasn.message.send" in tool_names
-        assert "hasn.message.list" in tool_names
-        assert "hasn.contact.list" in tool_names
+        assert tool_names == ["hasn.tool.search"]
 
-    @patch("backend.app.mcp.auth.HasnAgentsService")
     @patch("backend.app.mcp.auth.async_db_session")
     def test_list_tools_with_namespace_filter(
-        self, mock_db_session, mock_agent_service, test_agent_token
+        self, mock_db_session, test_agent_token
     ):
         """测试按命名空间过滤工具"""
-        # Mock Agent 查询
         mock_agent = MagicMock()
         mock_agent.status = "active"
         mock_agent.hasn_id = "a_test_agent_001"
 
-        mock_service_instance = AsyncMock()
-        mock_service_instance.get_by_hasn_id = AsyncMock(return_value=mock_agent)
-        mock_agent_service.return_value = mock_service_instance
-
-        # Mock DB session
         mock_db = AsyncMock()
         mock_db_session.return_value.__aenter__.return_value = mock_db
 
         app = make_test_app()
         client = TestClient(app)
 
-        response = client.post(
-            "/mcp/tools/list",
-            json={"namespace": "hasn.message"},
-            headers={
-                "Authorization": f"Bearer {test_agent_token}",
-                "X-HASN-Agent-ID": "a_test_agent_001",
-            },
-        )
+        with patch(
+            "backend.app.mcp.auth.hasn_agents_dao.get_by_hasn_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.return_value = mock_agent
+
+            response = client.post(
+                "/mcp/tools/list",
+                json={"namespace": "hasn.message"},
+                headers={
+                    "Authorization": f"Bearer {test_agent_token}",
+                    "X-HASN-Agent-ID": "a_test_agent_001",
+                },
+            )
 
         assert response.status_code == 200
         data = response.json()
         tools = data["tools"]
 
-        # 验证只返回 message 命名空间的工具
-        for tool in tools:
-            assert tool["name"].startswith("hasn.message.")
+        # 验证仍然只返回 bootstrap 工具
+        tool_names = [tool["name"] for tool in tools]
+        assert tool_names == ["hasn.tool.search"]
 
-    @patch("backend.app.mcp.auth.HasnAgentsService")
     @patch("backend.app.mcp.auth.async_db_session")
     def test_list_tools_inactive_agent(
-        self, mock_db_session, mock_agent_service, test_agent_token
+        self, mock_db_session, test_agent_token
     ):
         """测试非活跃 Agent 无法获取工具列表"""
-        # Mock Agent 查询 - 状态为 inactive
         mock_agent = MagicMock()
         mock_agent.status = "inactive"
         mock_agent.hasn_id = "a_test_agent_001"
 
-        mock_service_instance = AsyncMock()
-        mock_service_instance.get_by_hasn_id = AsyncMock(return_value=mock_agent)
-        mock_agent_service.return_value = mock_service_instance
-
-        # Mock DB session
         mock_db = AsyncMock()
         mock_db_session.return_value.__aenter__.return_value = mock_db
 
         app = make_test_app()
         client = TestClient(app)
 
-        response = client.post(
-            "/mcp/tools/list",
-            headers={
-                "Authorization": f"Bearer {test_agent_token}",
-                "X-HASN-Agent-ID": "a_test_agent_001",
-            },
-        )
+        with patch(
+            "backend.app.mcp.auth.hasn_agents_dao.get_by_hasn_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.return_value = mock_agent
+
+            response = client.post(
+                "/mcp/tools/list",
+                json={},
+                headers={
+                    "Authorization": f"Bearer {test_agent_token}",
+                    "X-HASN-Agent-ID": "a_test_agent_001",
+                },
+            )
 
         assert response.status_code == 403
-        assert "Agent is inactive" in response.json()["detail"]
+        assert "Agent is inactive" in response.json()["msg"]
 
 
 class TestMcpToolsCall:
     """测试工具调用接口"""
 
-    @patch("backend.app.mcp.tools.contact.hasn_contacts_service")
-    @patch("backend.app.mcp.auth.HasnAgentsService")
     @patch("backend.app.mcp.auth.async_db_session")
     def test_call_tool_success(
         self,
         mock_db_session,
-        mock_agent_service,
-        mock_contacts_service,
         test_agent_token,
     ):
         """测试成功调用工具"""
-        # Mock Agent 查询
         mock_agent = MagicMock()
         mock_agent.status = "active"
         mock_agent.hasn_id = "a_test_agent_001"
 
-        mock_service_instance = AsyncMock()
-        mock_service_instance.get_by_hasn_id = AsyncMock(return_value=mock_agent)
-        mock_agent_service.return_value = mock_service_instance
-
-        # Mock DB session
         mock_db = AsyncMock()
         mock_db_session.return_value.__aenter__.return_value = mock_db
-
-        # Mock contacts service
-        mock_contacts_service.get_list = AsyncMock(
-            return_value={
-                "contacts": [
-                    {
-                        "hasn_id": "h_contact_001",
-                        "name": "Test Contact",
-                        "relation": "friend",
-                    }
-                ],
-                "total": 1,
-            }
-        )
 
         app = make_test_app()
         client = TestClient(app)
 
-        response = client.post(
-            "/mcp/tools/call",
-            json={
-                "tool_name": "hasn.contact.list",
-                "arguments": {"limit": 10, "offset": 0},
-            },
-            headers={
-                "Authorization": f"Bearer {test_agent_token}",
-                "X-HASN-Agent-ID": "a_test_agent_001",
-            },
-        )
+        with patch(
+            "backend.app.mcp.auth.hasn_agents_dao.get_by_hasn_id",
+            new_callable=AsyncMock,
+        ) as mock_get, patch(
+            "backend.app.mcp.tools.contact.HasnContactsService"
+        ) as mock_contacts_service, patch(
+            "backend.app.mcp.tools.contact.async_db_session",
+        ) as mock_contact_db_session:
+            mock_get.return_value = mock_agent
+            mock_contact_db_session.return_value.__aenter__.return_value = mock_db
+            mock_contact = MagicMock()
+            mock_contact.id = 1
+            mock_contact.contact_id = "h_contact_001"
+            mock_contact.status = "active"
+            mock_contact.created_at = "2024-01-01"
+            mock_contacts_service.return_value.get_list = AsyncMock(
+                return_value={
+                    "data": [mock_contact],
+                }
+            )
+
+            response = client.post(
+                "/mcp/tools/call",
+                json={
+                    "tool_name": "hasn.contact.list",
+                    "arguments": {"limit": 10},
+                },
+                headers={
+                    "Authorization": f"Bearer {test_agent_token}",
+                    "X-HASN-Agent-ID": "a_test_agent_001",
+                },
+            )
 
         assert response.status_code == 200
         data = response.json()
         assert "result" in data
-        assert data["result"]["total"] == 1
+        assert len(data["result"]["contacts"]) == 1
+        assert data["result"]["contacts"][0]["contact_hasn_id"] == "h_contact_001"
 
-    @patch("backend.app.mcp.auth.HasnAgentsService")
     @patch("backend.app.mcp.auth.async_db_session")
     def test_call_tool_not_found(
-        self, mock_db_session, mock_agent_service, test_agent_token
+        self, mock_db_session, test_agent_token
     ):
         """测试调用不存在的工具"""
-        # Mock Agent 查询
         mock_agent = MagicMock()
         mock_agent.status = "active"
         mock_agent.hasn_id = "a_test_agent_001"
 
-        mock_service_instance = AsyncMock()
-        mock_service_instance.get_by_hasn_id = AsyncMock(return_value=mock_agent)
-        mock_agent_service.return_value = mock_service_instance
-
-        # Mock DB session
         mock_db = AsyncMock()
         mock_db_session.return_value.__aenter__.return_value = mock_db
 
         app = make_test_app()
         client = TestClient(app)
 
-        response = client.post(
-            "/mcp/tools/call",
-            json={
-                "tool_name": "hasn.nonexistent.tool",
-                "arguments": {},
-            },
-            headers={
-                "Authorization": f"Bearer {test_agent_token}",
-                "X-HASN-Agent-ID": "a_test_agent_001",
-            },
-        )
+        with patch(
+            "backend.app.mcp.auth.hasn_agents_dao.get_by_hasn_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.return_value = mock_agent
+
+            response = client.post(
+                "/mcp/tools/call",
+                json={
+                    "tool_name": "hasn.nonexistent.tool",
+                    "arguments": {},
+                },
+                headers={
+                    "Authorization": f"Bearer {test_agent_token}",
+                    "X-HASN-Agent-ID": "a_test_agent_001",
+                },
+            )
 
         assert response.status_code == 404
-        assert "Tool not found" in response.json()["detail"]
+        assert "Tool not found" in response.json()["msg"]
 
-    @patch("backend.app.mcp.auth.HasnAgentsService")
     @patch("backend.app.mcp.auth.async_db_session")
     def test_call_tool_permission_denied(
-        self, mock_db_session, mock_agent_service, test_agent_readonly_token
+        self, mock_db_session, test_agent_readonly_token
     ):
         """测试权限不足"""
-        # Mock Agent 查询
         mock_agent = MagicMock()
         mock_agent.status = "active"
         mock_agent.hasn_id = "a_test_agent_002"
 
-        mock_service_instance = AsyncMock()
-        mock_service_instance.get_by_hasn_id = AsyncMock(return_value=mock_agent)
-        mock_agent_service.return_value = mock_service_instance
-
-        # Mock DB session
         mock_db = AsyncMock()
         mock_db_session.return_value.__aenter__.return_value = mock_db
 
         app = make_test_app()
         client = TestClient(app)
 
-        # 尝试调用需要写权限的工具
-        response = client.post(
-            "/mcp/tools/call",
-            json={
-                "tool_name": "hasn.message.send",
-                "arguments": {
-                    "to_hasn_id": "h_recipient_001",
-                    "content": "Test message",
+        with patch(
+            "backend.app.mcp.auth.hasn_agents_dao.get_by_hasn_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.return_value = mock_agent
+
+            response = client.post(
+                "/mcp/tools/call",
+                json={
+                    "tool_name": "hasn.message.send",
+                    "arguments": {
+                        "to_hasn_id": "h_recipient_001",
+                        "content": "Test message",
+                    },
                 },
-            },
-            headers={
-                "Authorization": f"Bearer {test_agent_readonly_token}",
-                "X-HASN-Agent-ID": "a_test_agent_002",
-            },
-        )
+                headers={
+                    "Authorization": f"Bearer {test_agent_readonly_token}",
+                    "X-HASN-Agent-ID": "a_test_agent_002",
+                },
+            )
 
         assert response.status_code == 403
-        assert "Missing required scopes" in response.json()["detail"]
+        assert "Missing required scopes" in response.json()["msg"]
 
-    @patch("backend.app.mcp.auth.HasnAgentsService")
     @patch("backend.app.mcp.auth.async_db_session")
     def test_call_tool_invalid_arguments(
-        self, mock_db_session, mock_agent_service, test_agent_token
+        self, mock_db_session, test_agent_token
     ):
         """测试无效的工具参数"""
-        # Mock Agent 查询
         mock_agent = MagicMock()
         mock_agent.status = "active"
         mock_agent.hasn_id = "a_test_agent_001"
 
-        mock_service_instance = AsyncMock()
-        mock_service_instance.get_by_hasn_id = AsyncMock(return_value=mock_agent)
-        mock_agent_service.return_value = mock_service_instance
-
-        # Mock DB session
         mock_db = AsyncMock()
         mock_db_session.return_value.__aenter__.return_value = mock_db
 
         app = make_test_app()
         client = TestClient(app)
 
-        # 缺少必需参数
-        response = client.post(
-            "/mcp/tools/call",
-            json={
-                "tool_name": "hasn.message.send",
-                "arguments": {},  # 缺少 to_hasn_id 和 content
-            },
-            headers={
-                "Authorization": f"Bearer {test_agent_token}",
-                "X-HASN-Agent-ID": "a_test_agent_001",
-            },
-        )
+        with patch(
+            "backend.app.mcp.auth.hasn_agents_dao.get_by_hasn_id",
+            new_callable=AsyncMock,
+        ) as mock_get:
+            mock_get.return_value = mock_agent
+
+            response = client.post(
+                "/mcp/tools/call",
+                json={
+                    "tool_name": "hasn.message.send",
+                    "arguments": {},  # 缺少 to_hasn_id 和 content
+                },
+                headers={
+                    "Authorization": f"Bearer {test_agent_token}",
+                    "X-HASN-Agent-ID": "a_test_agent_001",
+                },
+            )
 
         assert response.status_code == 400
-        assert "Missing required" in response.json()["detail"]
+        assert "Missing required" in response.json()["msg"]
 
 
 class TestMcpToolRegistry:

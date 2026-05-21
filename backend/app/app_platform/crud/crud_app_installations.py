@@ -1,11 +1,12 @@
-from typing import Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy_crud_plus import CRUDPlus
 
 from backend.app.app_platform.model import AppInstallations
-from backend.app.app_platform.schema.app_installations import CreateAppInstallationsParam, UpdateAppInstallationsParam
+from backend.app.app_platform.schema.app_installations import UpdateAppInstallationsParam
 
 
 class CRUDAppInstallations(CRUDPlus[AppInstallations]):
@@ -32,7 +33,7 @@ class CRUDAppInstallations(CRUDPlus[AppInstallations]):
         """
         return await self.select_models(db)
 
-    async def create(self, db: AsyncSession, obj):
+    async def create(self, db: AsyncSession, obj: Any) -> AppInstallations:
         """
         创建App 安装记录
 
@@ -62,6 +63,7 @@ class CRUDAppInstallations(CRUDPlus[AppInstallations]):
         :return:
         """
         return await self.delete_model_by_column(db, allow_multiple=True, id__in=pks)
+
     async def get_by_installation_id(self, db: AsyncSession, installation_id: str) -> AppInstallations | None:
         """
         根据 installation_id 获取安装记录
@@ -80,7 +82,7 @@ class CRUDAppInstallations(CRUDPlus[AppInstallations]):
         :param owner_id: Owner ID
         :return:
         """
-        return await self.select_models_by_column(db, owner_id=owner_id)
+        return list(await self.select_models(db, owner_id=str(owner_id)))
 
 
 app_installations_dao: CRUDAppInstallations = CRUDAppInstallations(AppInstallations)

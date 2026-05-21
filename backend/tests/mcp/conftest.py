@@ -2,12 +2,9 @@
 from __future__ import annotations
 
 import pytest
-import pytest_asyncio
-from datetime import datetime, timedelta
-from fastapi.testclient import TestClient
+from datetime import datetime, timedelta, timezone
 
 from backend.common.security.agent_jwt import jwt_encode_agent
-from backend.core.conf import settings
 
 
 @pytest.fixture
@@ -20,16 +17,16 @@ def test_agent_token() -> str:
         "owner_hasn_id": "h_test_owner_001",
         "owner_user_id": 1001,
         "scopes": [
-            "community.read",
-            "community.write",
-            "message.read",
-            "message.write",
-            "contact.read",
-            "task.execute",
-            "knowledge.read",
+            "community:read",
+            "community:write",
+            "message:read",
+            "message:write",
+            "contact:read",
+            "task:execute",
+            "knowledge:read",
         ],
         "session_uuid": "test-session-uuid-001",
-        "exp": int((datetime.utcnow() + timedelta(hours=1)).timestamp()),
+        "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
     }
     return jwt_encode_agent(payload)
 
@@ -44,12 +41,12 @@ def test_agent_readonly_token() -> str:
         "owner_hasn_id": "h_test_owner_001",
         "owner_user_id": 1001,
         "scopes": [
-            "community.read",
-            "message.read",
-            "contact.read",
+            "community:read",
+            "message:read",
+            "contact:read",
         ],
         "session_uuid": "test-session-uuid-002",
-        "exp": int((datetime.utcnow() + timedelta(hours=1)).timestamp()),
+        "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
     }
     return jwt_encode_agent(payload)
 
@@ -63,8 +60,8 @@ def test_agent_expired_token() -> str:
         "agent_name": "Test Agent Expired",
         "owner_hasn_id": "h_test_owner_001",
         "owner_user_id": 1001,
-        "scopes": ["community.read"],
+        "scopes": ["community:read"],
         "session_uuid": "test-session-uuid-003",
-        "exp": int((datetime.utcnow() - timedelta(hours=1)).timestamp()),  # 已过期
+        "exp": int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp()),  # 已过期
     }
     return jwt_encode_agent(payload)

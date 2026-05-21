@@ -99,18 +99,16 @@ class TestMcpFunctional:
             assert "tools" in data
             assert isinstance(data["tools"], list)
 
-            # 验证内置工具存在
             tool_names = [tool["name"] for tool in data["tools"]]
-            assert "hasn.message.send" in tool_names
-            assert "hasn.message.list" in tool_names
-            assert "hasn.contact.list" in tool_names
+            assert tool_names == ["hasn.tool.search"]
+            assert data["tools"][0]["input_schema"]["required"] == ["query"]
 
             print(f"✅ Found {len(data['tools'])} tools")
             for tool in data["tools"]:
                 print(f"  - {tool['name']}: {tool['description']}")
 
-    def test_list_tools_with_namespace_filter(self, valid_agent_token, mock_agent):
-        """测试命名空间过滤"""
+    def test_list_tools_with_namespace_filter_stays_bootstrap(self, valid_agent_token, mock_agent):
+        """测试 namespace 参数不会绕过 bootstrap 暴露"""
         app = make_test_app()
         client = TestClient(app)
 
@@ -133,11 +131,10 @@ class TestMcpFunctional:
             data = response.json()
             tools = data["tools"]
 
-            # 验证只返回 message 命名空间的工具
-            for tool in tools:
-                assert tool["name"].startswith("hasn.message.")
+            tool_names = [tool["name"] for tool in tools]
+            assert tool_names == ["hasn.tool.search"]
 
-            print(f"✅ Found {len(tools)} message tools")
+            print(f"✅ Found {len(tools)} bootstrap tools")
 
     def test_call_tool_success(self, valid_agent_token, mock_agent):
         """测试成功调用工具"""
@@ -278,8 +275,14 @@ class TestMcpFunctional:
             mock_get.return_value = mock_agent
 
             response = client.post(
-                "/mcp/tools/list",
-                json={},  # 空 body
+                "/mcp/tools/call",
+                json={
+                    "tool_name": "hasn.tool.search",
+                    "arguments": {
+                        "query": "message",
+                        "detail": "summary",
+                    },
+                },
                 headers={
                     "Authorization": f"Bearer {limited_token}",
                     "X-HASN-Agent-ID": "a_test_agent_functional",
@@ -290,10 +293,10 @@ class TestMcpFunctional:
             print(f"Response: {response.json()}")
 
             assert response.status_code == 200
-            data = response.json()
-            tool_names = [tool["name"] for tool in data["tools"]]
+            result = response.json()["result"]
+            tool_names = [tool["name"] for tool in result["tools"]]
 
-            # 应该能看到 message 工具，但看不到 contact 工具
             assert "hasn.message.list" in tool_names
+            assert "hasn.message.send" not in tool_names
             assert "hasn.contact.list" not in tool_names
             print(f"✅ Permission check working correctly")

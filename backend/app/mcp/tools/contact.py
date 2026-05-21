@@ -5,14 +5,18 @@
 """
 from typing import Any
 
-from backend.app.mcp.tools.base import BaseTool
-from backend.app.mcp.auth import AgentContext
 from backend.app.hasn.service.hasn_contacts_service import HasnContactsService
+from backend.app.mcp.auth import AgentContext
+from backend.app.mcp.tools.base import BaseTool
 from backend.database.db import async_db_session
 
 
 class ContactListTool(BaseTool):
     """获取联系人列表工具"""
+
+    @property
+    def source(self) -> str:
+        return "platform"
 
     @property
     def name(self) -> str:
@@ -75,6 +79,6 @@ class ContactListTool(BaseTool):
                 }
             except Exception as e:
                 return {
-                    "error": f"Failed to list contacts: {str(e)}",
+                    "error": f"Failed to list contacts: {e!s}",
                     "contacts": []
                 }
