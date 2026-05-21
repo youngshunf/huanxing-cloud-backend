@@ -39,7 +39,7 @@ COMMENT ON COLUMN "public"."hermes_agent"."id" IS '主键 ID';
 COMMENT ON COLUMN "public"."hermes_agent"."agent_id" IS 'Agent 业务 ID';
 COMMENT ON COLUMN "public"."hermes_agent"."user_id" IS '用户 ID';
 COMMENT ON COLUMN "public"."hermes_agent"."agent_name" IS 'Agent 名称';
-COMMENT ON COLUMN "public"."hermes_agent"."template" IS '模板 ID（云端 marketplace_app.app_id 快照，例：assistant / media-creator / finance / side-hustle / custom）';
+COMMENT ON COLUMN "public"."hermes_agent"."template" IS '模板 ID (assistant:助手:blue/media-creator:媒体创作:purple/finance:财务:green/side-hustle:副业:orange/custom:自定义:gray)';
 COMMENT ON COLUMN "public"."hermes_agent"."timezone" IS '时区';
 COMMENT ON COLUMN "public"."hermes_agent"."status" IS 'Agent状态 (creating:创建中:orange/created:已创建:blue/ready:就绪:cyan/running:运行中:green/stopped:已停止:gray/error:异常:red/deleting:删除中:orange/deleted:已删除:gray)';
 COMMENT ON COLUMN "public"."hermes_agent"."runtime_id" IS 'Runtime 实例 ID';
