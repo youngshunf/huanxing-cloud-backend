@@ -144,6 +144,22 @@ class AiNativeRuntimeGateway:
             )
             return self._deny_payload(body.trace_id, '15002', 'app_not_enabled', audit_id=audit['id'])
 
+        collaboration_denial = self._collaboration_denial(workspace=workspace, manifest=manifest)
+        if collaboration_denial is not None:
+            audit = await self._write_audit(
+                db,
+                trace_id=body.trace_id,
+                workspace=workspace,
+                agent=agent,
+                manifest=manifest,
+                capability=capability,
+                tool=tool,
+                decision='deny',
+                error_code='15005',
+                context={'reason': collaboration_denial},
+            )
+            return self._deny_payload(body.trace_id, '15005', collaboration_denial, audit_id=audit['id'])
+
         required_scopes = list(tool.get('required_scopes') or [])
         if not self._has_required_scopes(agent, required_scopes):
             audit = await self._write_audit(
@@ -159,6 +175,22 @@ class AiNativeRuntimeGateway:
                 context={'reason': 'agent_scope_missing'},
             )
             return self._deny_payload(body.trace_id, '15012', 'agent_scope_missing', audit_id=audit['id'])
+
+        role_denial = self._enterprise_role_denial(workspace=workspace, capability=capability)
+        if role_denial is not None:
+            audit = await self._write_audit(
+                db,
+                trace_id=body.trace_id,
+                workspace=workspace,
+                agent=agent,
+                manifest=manifest,
+                capability=capability,
+                tool=tool,
+                decision='deny',
+                error_code='15004',
+                context={'reason': role_denial},
+            )
+            return self._deny_payload(body.trace_id, '15004', role_denial, audit_id=audit['id'])
 
         input_payload = dict(body.input or {})
         if not self._valid_search_input(input_payload):
@@ -373,13 +405,28 @@ class AiNativeRuntimeGateway:
         workspace_scope = set(manifest.get('workspace_scope') or manifest_json.get('workspace_scope') or [])
         if workspace_scope and workspace['kind'] not in workspace_scope:
             return False
-        collaboration_mode = str(manifest.get('collaboration_mode') or manifest_json.get('collaboration_mode') or 'none')
-        if workspace['kind'] == 'enterprise' and collaboration_mode == 'none':
+        if self._collaboration_denial(workspace=workspace, manifest=manifest) is not None:
             return False
-        workspace_roles = set(capability.get('workspace_roles') or [])
-        if workspace_roles and self._workspace_role(workspace) not in workspace_roles:
+        if self._enterprise_role_denial(workspace=workspace, capability=capability) is not None:
             return False
         return True
+
+    def _collaboration_denial(self, *, workspace: dict[str, Any], manifest: dict[str, Any]) -> str | None:
+        if workspace['kind'] != 'enterprise':
+            return None
+        manifest_json = manifest.get('manifest_json') or {}
+        collaboration_mode = str(manifest.get('collaboration_mode') or manifest_json.get('collaboration_mode') or 'none')
+        if collaboration_mode != 'workspace_shared':
+            return 'app_not_support_enterprise_collaboration'
+        return None
+
+    def _enterprise_role_denial(self, *, workspace: dict[str, Any], capability: dict[str, Any]) -> str | None:
+        if workspace['kind'] != 'enterprise':
+            return None
+        workspace_roles = set(capability.get('workspace_roles') or [])
+        if workspace_roles and self._workspace_role(workspace) not in workspace_roles:
+            return 'enterprise_role_insufficient'
+        return None
 
     def _workspace_role(self, workspace: dict[str, Any]) -> str:
         return workspace.get('role') or ('owner' if workspace['kind'] == 'personal' else 'member')

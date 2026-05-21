@@ -609,6 +609,112 @@ def test_runtime_tool_call_disabled_app_writes_audit(monkeypatch: pytest.MonkeyP
     assert audit_row.error_code == '15002'
 
 
+def test_enterprise_runtime_tool_call_role_denial_writes_15004_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.hasn.model import HasnWorkspaceApp
+    from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
+
+    fake_db = _FakeDb(
+        workspace=None,
+        app_row=HasnWorkspaceApp(
+            workspace_kind='enterprise',
+            user_id=None,
+            enterprise_id=7,
+            app_id='knowledge',
+            status='active',
+            config={},
+            enabled_by=12345,
+        ),
+    )
+    app = _make_runtime_test_app(fake_db, monkeypatch)
+
+    async def fake_membership(_db: Any, *, enterprise_id: int, user_id: int) -> _FakeMembership:
+        assert (enterprise_id, user_id) == (7, 12345)
+        return _FakeMembership(role='member')
+
+    async def fake_manifest(_db: Any, _app_id: str) -> dict[str, Any]:
+        return _knowledge_manifest_payload(workspace_roles=['owner', 'admin'])
+
+    monkeypatch.setattr(gateway_module.workbench_domain_service, '_approved_membership', fake_membership)
+    monkeypatch.setattr(gateway_module.ai_native_app_registry, 'ensure_builtin_published', fake_manifest)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            '/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call',
+            json={
+                'workspace': {'kind': 'enterprise', 'enterprise_id': 7},
+                'input': {'query': '唤星工作台'},
+                'trace_id': 'trace-enterprise-role-denied',
+            },
+            headers={'Authorization': 'Bearer test-agent'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['decision'] == 'deny'
+    assert data['error'] == {'code': '15004', 'message': 'enterprise_role_insufficient'}
+    audit_row = fake_db.added[-1]
+    assert audit_row.trace_id == 'trace-enterprise-role-denied'
+    assert audit_row.workspace_kind == 'enterprise'
+    assert audit_row.enterprise_id == 7
+    assert audit_row.workspace_role == 'member'
+    assert audit_row.decision == 'deny'
+    assert audit_row.error_code == '15004'
+    assert audit_row.context == {'reason': 'enterprise_role_insufficient'}
+
+
+def test_enterprise_runtime_tool_call_collaboration_denial_writes_15005_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.hasn.model import HasnWorkspaceApp
+    from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
+
+    fake_db = _FakeDb(
+        workspace=None,
+        app_row=HasnWorkspaceApp(
+            workspace_kind='enterprise',
+            user_id=None,
+            enterprise_id=7,
+            app_id='knowledge',
+            status='active',
+            config={},
+            enabled_by=12345,
+        ),
+    )
+    app = _make_runtime_test_app(fake_db, monkeypatch)
+
+    async def fake_membership(_db: Any, *, enterprise_id: int, user_id: int) -> _FakeMembership:
+        assert (enterprise_id, user_id) == (7, 12345)
+        return _FakeMembership(role='admin')
+
+    async def fake_manifest(_db: Any, _app_id: str) -> dict[str, Any]:
+        return _knowledge_manifest_payload(collaboration_mode='none')
+
+    monkeypatch.setattr(gateway_module.workbench_domain_service, '_approved_membership', fake_membership)
+    monkeypatch.setattr(gateway_module.ai_native_app_registry, 'ensure_builtin_published', fake_manifest)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            '/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call',
+            json={
+                'workspace': {'kind': 'enterprise', 'enterprise_id': 7},
+                'input': {'query': '唤星工作台'},
+                'trace_id': 'trace-enterprise-collaboration-denied',
+            },
+            headers={'Authorization': 'Bearer test-agent'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['decision'] == 'deny'
+    assert data['error'] == {'code': '15005', 'message': 'app_not_support_enterprise_collaboration'}
+    audit_row = fake_db.added[-1]
+    assert audit_row.trace_id == 'trace-enterprise-collaboration-denied'
+    assert audit_row.workspace_kind == 'enterprise'
+    assert audit_row.enterprise_id == 7
+    assert audit_row.workspace_role == 'admin'
+    assert audit_row.decision == 'deny'
+    assert audit_row.error_code == '15005'
+    assert audit_row.context == {'reason': 'app_not_support_enterprise_collaboration'}
+
+
 def test_runtime_tool_call_invalid_input_writes_15020_audit(monkeypatch: pytest.MonkeyPatch) -> None:
     from backend.app.hasn.model import HasnWorkspaceApp
     from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
