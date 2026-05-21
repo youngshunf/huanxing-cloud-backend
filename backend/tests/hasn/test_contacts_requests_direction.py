@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 
-from backend.app.hasn.api.v1.app.contacts import list_pending_requests
+from backend.app.hasn.api.v1.app.contacts import list_contacts, list_pending_requests
 
 
 SELF = "h_aaaaaaaaaaaaaaaaaa"
@@ -36,6 +36,37 @@ def _request(req_id: int, owner_id: str, peer_id: str, message: str = '') -> Sim
         status='pending',
         request_message=message,
     )
+
+
+def _connected_contact(contact_id: int, owner_id: str, peer_id: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=contact_id,
+        owner_id=owner_id,
+        peer_id=peer_id,
+        peer_type='human',
+        relation_type='social',
+        trust_level=2,
+        nickname=None,
+        tags=None,
+        subscription=False,
+        status='connected',
+        custom_permissions=None,
+        scope=None,
+        connected_at=None,
+        last_interaction_at=None,
+        interaction_count=0,
+        request_message=None,
+        auto_expire=None,
+        peer_owner_id=None,
+    )
+
+
+class _EmptyAgentResult:
+    def scalars(self) -> '_EmptyAgentResult':
+        return self
+
+    def all(self) -> list:
+        return []
 
 
 @pytest.mark.asyncio
@@ -152,3 +183,83 @@ async def test_sent_peer_resolution_falls_back_to_stub() -> None:
     # 解析失败时 stub 用空串 (schema 要求 str), 不是 None
     assert resp.data[0]['target']['name'] == ''
     assert resp.data[0]['target']['star_id'] == ''
+
+
+@pytest.mark.asyncio
+async def test_contact_list_returns_peer_profile_fields_from_sys_user() -> None:
+    """联系人列表返回 sys_user 权威 profile 字段, 供本地 daemon 缓存。"""
+    human = SimpleNamespace(
+        hasn_id=PEER,
+        star_id='100004',
+        nickname='瘦瘦福仔',
+        avatar='https://cdn.example/avatar.png',
+        user_id=77,
+    )
+    user = SimpleNamespace(
+        bio='设计师',
+        gender='female',
+        province='云南',
+        city='昆明',
+        district='五华区',
+    )
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_EmptyAgentResult())
+
+    with patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.list_contacts',
+        new=AsyncMock(return_value=[_connected_contact(505, SELF, PEER)]),
+    ), patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
+        new=AsyncMock(return_value=human),
+    ), patch(
+        'backend.app.hasn.api.v1.app.contacts.user_dao.get',
+        new=AsyncMock(return_value=user),
+    ):
+        resp = await list_contacts(
+            db=db,
+            auth={'hasn_id': SELF},
+            relation_type='social',
+        )
+
+    item = resp.data['items'][0]
+    assert item['peer']['hasn_id'] == PEER
+    assert item['peer']['name'] == '瘦瘦福仔'
+    assert item['bio'] == '设计师'
+    assert item['gender'] == 'female'
+    assert item['province'] == '云南'
+    assert item['city'] == '昆明'
+    assert item['district'] == '五华区'
+
+
+@pytest.mark.asyncio
+async def test_contact_list_allows_unfiltered_full_snapshot() -> None:
+    """联系人列表不传 relation_type 时返回完整联系人快照。"""
+    human = SimpleNamespace(
+        hasn_id=PEER,
+        star_id='100004',
+        nickname='瘦瘦福仔',
+        avatar='https://cdn.example/avatar.png',
+        user_id=77,
+    )
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_EmptyAgentResult())
+
+    with patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.list_contacts',
+        new=AsyncMock(return_value=[_connected_contact(505, SELF, PEER)]),
+    ) as mock_list_contacts, patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
+        new=AsyncMock(return_value=human),
+    ), patch(
+        'backend.app.hasn.api.v1.app.contacts.user_dao.get',
+        new=AsyncMock(return_value=SimpleNamespace()),
+    ):
+        resp = await list_contacts(
+            db=db,
+            auth={'hasn_id': SELF},
+            relation_type=None,
+        )
+
+    item = resp.data['items'][0]
+    assert mock_list_contacts.await_args.kwargs['relation_type'] is None
+    assert item['peer']['hasn_id'] == PEER

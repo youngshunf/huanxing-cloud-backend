@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.app.admin.crud.crud_user import user_dao
 from backend.app.hasn.constants import (
     ERR_TRUST_LEVEL_INVALID,
     IronLawViolation,
@@ -43,6 +44,15 @@ def _peer_display_name(peer_info, *, peer_type: str) -> str:
     if peer_type == 'human':
         return getattr(peer_info, 'nickname', None) or getattr(peer_info, 'name', '') or ''
     return getattr(peer_info, 'display_name', None) or getattr(peer_info, 'name', '') or ''
+
+
+async def _resolve_peer_user_profile(db, peer_info, *, peer_type: str):
+    if peer_type != 'human':
+        return None
+    user_id = getattr(peer_info, 'user_id', None)
+    if not user_id:
+        return None
+    return await user_dao.get(db, user_id)
 
 
 async def _push_contact_event(target_hasn_id: str, payload: dict) -> None:
@@ -274,7 +284,7 @@ async def respond_to_request(
 async def list_contacts(
     db: CurrentSession,
     auth: Annotated[dict, Depends(hasn_auth)],
-    relation_type: Annotated[str, Query(description='关系类型筛选')] = 'social',
+    relation_type: Annotated[str | None, Query(description='关系类型筛选；不传则返回全部联系人')] = None,
 ) -> ResponseModel:
     hasn_id = auth.get('effective_id', auth['hasn_id'])
     contacts = await hasn_contacts_dao.list_contacts(db, hasn_id, relation_type=relation_type)
@@ -313,6 +323,7 @@ async def list_contacts(
 
         # HasnHumans 使用 nickname，HasnAgents 使用 display_name
         peer_name = peer_info.nickname if c.peer_type == 'human' else peer_info.display_name
+        peer_user = await _resolve_peer_user_profile(db, peer_info, peer_type=c.peer_type)
         items.append(
             HasnContactOut(
                 id=c.id,
@@ -327,6 +338,11 @@ async def list_contacts(
                 trust_level=c.trust_level,
                 trust_level_label=TRUST_LEVEL_LABELS.get(c.trust_level, ''),
                 nickname=c.nickname,
+                bio=getattr(peer_user, 'bio', None),
+                gender=getattr(peer_user, 'gender', None),
+                province=getattr(peer_user, 'province', None),
+                city=getattr(peer_user, 'city', None),
+                district=getattr(peer_user, 'district', None),
                 tags=c.tags,
                 subscription=c.subscription,
                 status=c.status,

@@ -63,6 +63,11 @@ class HasnContactOut(BaseModel):
     trust_level: int
     trust_level_label: str = ''
     nickname: str | None = None
+    bio: str | None = None
+    gender: str | None = None
+    province: str | None = None
+    city: str | None = None
+    district: str | None = None
     tags: list[str] | None = None
     subscription: bool = False
     status: str = 'connected'
