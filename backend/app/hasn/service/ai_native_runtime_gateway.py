@@ -36,6 +36,8 @@ class AiNativeRuntimeGateway:
         capability = manifest['manifest_json']['capabilities'][0]
         if not await self._is_workspace_app_enabled(db, workspace=workspace, app_id=manifest['app_id']):
             return self._capabilities_payload(workspace=workspace, agent=agent, manifest=manifest, tools=[])
+        if not self._can_discover_tool(workspace=workspace, manifest=manifest, capability=capability):
+            return self._capabilities_payload(workspace=workspace, agent=agent, manifest=manifest, tools=[])
         if not self._has_required_scopes(agent, tool['required_scopes']):
             return self._capabilities_payload(workspace=workspace, agent=agent, manifest=manifest, tools=[])
 
@@ -360,6 +362,28 @@ class AiNativeRuntimeGateway:
     def _has_required_scopes(self, agent: AgentTokenPayload, required_scopes: list[str]) -> bool:
         return set(required_scopes).issubset(set(agent.scopes))
 
+    def _can_discover_tool(
+        self,
+        *,
+        workspace: dict[str, Any],
+        manifest: dict[str, Any],
+        capability: dict[str, Any],
+    ) -> bool:
+        manifest_json = manifest.get('manifest_json') or {}
+        workspace_scope = set(manifest.get('workspace_scope') or manifest_json.get('workspace_scope') or [])
+        if workspace_scope and workspace['kind'] not in workspace_scope:
+            return False
+        collaboration_mode = str(manifest.get('collaboration_mode') or manifest_json.get('collaboration_mode') or 'none')
+        if workspace['kind'] == 'enterprise' and collaboration_mode == 'none':
+            return False
+        workspace_roles = set(capability.get('workspace_roles') or [])
+        if workspace_roles and self._workspace_role(workspace) not in workspace_roles:
+            return False
+        return True
+
+    def _workspace_role(self, workspace: dict[str, Any]) -> str:
+        return workspace.get('role') or ('owner' if workspace['kind'] == 'personal' else 'member')
+
     def _valid_search_input(self, data: dict[str, Any]) -> bool:
         query = data.get('query')
         if not isinstance(query, str) or not query.strip():
@@ -415,7 +439,7 @@ class AiNativeRuntimeGateway:
             event_type='tool_call',
             required_scopes=list(tool.get('required_scopes') or []),
             agent_scopes_snapshot=list(agent.scopes) if agent is not None else [],
-            workspace_role=workspace.get('role') or ('owner' if workspace['kind'] == 'personal' else 'member'),
+            workspace_role=self._workspace_role(workspace),
             risk_level=tool.get('risk_level'),
             decision=decision,
             confirmation_id=None,

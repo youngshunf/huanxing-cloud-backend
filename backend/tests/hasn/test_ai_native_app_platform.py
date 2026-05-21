@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -225,6 +226,36 @@ class _FakeAgent:
     session_uuid = 'session-001'
 
 
+class _FakeMembership:
+    def __init__(self, *, role: str) -> None:
+        self.role = role
+
+
+def _knowledge_manifest_payload(
+    *,
+    collaboration_mode: str = 'workspace_shared',
+    workspace_roles: list[str] | None = None,
+) -> dict[str, Any]:
+    from backend.app.hasn.service.ai_native_app_registry import _manifest_hash
+    from backend.app.hasn.service.ai_native_builtin_manifests import KNOWLEDGE_AI_NATIVE_MANIFEST
+    from backend.utils.timezone import timezone
+
+    manifest = deepcopy(KNOWLEDGE_AI_NATIVE_MANIFEST)
+    manifest['collaboration_mode'] = collaboration_mode
+    manifest['capabilities'][0]['workspace_roles'] = workspace_roles or ['owner', 'admin', 'member']
+    return {
+        'id': None,
+        'app_id': manifest['app_id'],
+        'version': manifest['version'],
+        'status': 'published',
+        'workspace_scope': list(manifest.get('workspace_scope') or []),
+        'collaboration_mode': collaboration_mode,
+        'manifest_json': manifest,
+        'manifest_hash': _manifest_hash(manifest),
+        'published_at': timezone.now(),
+    }
+
+
 def _make_runtime_test_app(
     fake_db: _FakeDb,
     monkeypatch: pytest.MonkeyPatch,
@@ -336,6 +367,99 @@ def test_runtime_capabilities_filters_disabled_workspace_app(monkeypatch: pytest
         resp = client.post(
             '/api/v1/ai-native/runtime/capabilities',
             json={'workspace': None, 'include_disabled': False, 'trace_id': 'trace-disabled-discovery'},
+            headers={'Authorization': 'Bearer test-agent'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()['data']['tools'] == []
+
+
+def test_enterprise_runtime_capabilities_filter_by_workspace_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.hasn.model import HasnWorkspaceApp
+    from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
+
+    fake_db = _FakeDb(
+        workspace=None,
+        app_row=HasnWorkspaceApp(
+            workspace_kind='enterprise',
+            user_id=None,
+            enterprise_id=7,
+            app_id='knowledge',
+            status='active',
+            config={},
+            enabled_by=12345,
+        ),
+    )
+    app = _make_runtime_test_app(fake_db, monkeypatch)
+
+    async def fake_membership(_db: Any, *, enterprise_id: int, user_id: int) -> _FakeMembership:
+        assert (enterprise_id, user_id) == (7, 12345)
+        return _FakeMembership(role='member')
+
+    async def fake_manifest(_db: Any, _app_id: str) -> dict[str, Any]:
+        return _knowledge_manifest_payload(workspace_roles=['owner', 'admin'])
+
+    monkeypatch.setattr(gateway_module.workbench_domain_service, '_approved_membership', fake_membership)
+    monkeypatch.setattr(gateway_module.ai_native_app_registry, 'ensure_builtin_published', fake_manifest)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            '/api/v1/ai-native/runtime/capabilities',
+            json={
+                'workspace': {'kind': 'enterprise', 'enterprise_id': 7},
+                'include_disabled': False,
+                'trace_id': 'trace-enterprise-role-filter',
+            },
+            headers={'Authorization': 'Bearer test-agent'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['workspace'] == {
+        'kind': 'enterprise',
+        'user_id': None,
+        'enterprise_id': 7,
+        'workspace_key': 'enterprise:7',
+    }
+    assert data['tools'] == []
+
+
+def test_enterprise_runtime_capabilities_filters_collaboration_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.hasn.model import HasnWorkspaceApp
+    from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
+
+    fake_db = _FakeDb(
+        workspace=None,
+        app_row=HasnWorkspaceApp(
+            workspace_kind='enterprise',
+            user_id=None,
+            enterprise_id=7,
+            app_id='knowledge',
+            status='active',
+            config={},
+            enabled_by=12345,
+        ),
+    )
+    app = _make_runtime_test_app(fake_db, monkeypatch)
+
+    async def fake_membership(_db: Any, *, enterprise_id: int, user_id: int) -> _FakeMembership:
+        assert (enterprise_id, user_id) == (7, 12345)
+        return _FakeMembership(role='admin')
+
+    async def fake_manifest(_db: Any, _app_id: str) -> dict[str, Any]:
+        return _knowledge_manifest_payload(collaboration_mode='none')
+
+    monkeypatch.setattr(gateway_module.workbench_domain_service, '_approved_membership', fake_membership)
+    monkeypatch.setattr(gateway_module.ai_native_app_registry, 'ensure_builtin_published', fake_manifest)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            '/api/v1/ai-native/runtime/capabilities',
+            json={
+                'workspace': {'kind': 'enterprise', 'enterprise_id': 7},
+                'include_disabled': False,
+                'trace_id': 'trace-enterprise-collaboration-filter',
+            },
             headers={'Authorization': 'Bearer test-agent'},
         )
 
