@@ -275,6 +275,34 @@ def run_flow(base_url: str, evidence: dict[str, Any]) -> None:
         }
     )
 
+    invalid_input = request_json(
+        base_url,
+        "/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call",
+        method="POST",
+        headers=agent_auth,
+        payload={
+            "workspace": {"kind": "enterprise", "enterprise_id": 42},
+            "input": {"query": "", "limit": 0},
+            "trace_id": "trace-tool-invalid-input",
+        },
+    )["data"]
+    assert invalid_input["decision"] == "deny"
+    assert invalid_input["error"] == {"code": "15020", "message": "input_schema_invalid"}
+
+    invalid_input_audit = request_json(
+        base_url,
+        "/api/v1/ai-native/audit?app_id=knowledge&agent_hasn_id=a_p0_default&trace_id=trace-tool-invalid-input",
+    )["data"]
+    assert invalid_input_audit["total"] == 1
+    evidence["checks"].append(
+        {
+            "name": "backend ai-native invalid input audit",
+            "decision": invalid_input["decision"],
+            "error": invalid_input["error"],
+            "audit_total": invalid_input_audit["total"],
+        }
+    )
+
 
 def wait_for_http(base_url: str, evidence: dict[str, Any]) -> None:
     deadline = time.time() + 20

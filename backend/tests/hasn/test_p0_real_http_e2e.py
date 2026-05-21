@@ -698,6 +698,27 @@ def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_an
     assert audit.json()['data']['total'] == 1
     assert audit.json()['data']['items'][0]['tool_id'] == 'knowledge.search'
 
+    invalid_input = client.post(
+        '/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call',
+        headers=agent_auth,
+        json={
+            'workspace': {'kind': 'enterprise', 'enterprise_id': 42},
+            'input': {'query': '', 'limit': 0},
+            'trace_id': 'trace-tool-invalid-input',
+        },
+    )
+    assert invalid_input.status_code == 200, invalid_input.text
+    assert invalid_input.json()['data']['decision'] == 'deny'
+    assert invalid_input.json()['data']['error'] == {'code': '15020', 'message': 'input_schema_invalid'}
+
+    invalid_input_audit = client.get(
+        '/api/v1/ai-native/audit',
+        params={'app_id': 'knowledge', 'agent_hasn_id': 'a_p0_default', 'trace_id': 'trace-tool-invalid-input'},
+    )
+    assert invalid_input_audit.status_code == 200, invalid_input_audit.text
+    assert invalid_input_audit.json()['data']['total'] == 1
+    assert invalid_input_audit.json()['data']['items'][0]['error_code'] == '15020'
+
 
 def test_sync_pull_rejects_owner_not_bound_to_authenticated_user(monkeypatch: pytest.MonkeyPatch) -> None:
     app, _sync_gateway = make_sync_auth_app(monkeypatch, user_id=7)

@@ -485,6 +485,51 @@ def test_runtime_tool_call_disabled_app_writes_audit(monkeypatch: pytest.MonkeyP
     assert audit_row.error_code == '15002'
 
 
+def test_runtime_tool_call_invalid_input_writes_15020_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.hasn.model import HasnWorkspaceApp
+    from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
+
+    fake_db = _FakeDb(
+        workspace={'kind': 'personal', 'enterprise_id': None},
+        app_row=HasnWorkspaceApp(
+            workspace_kind='personal',
+            user_id=12345,
+            enterprise_id=None,
+            app_id='knowledge',
+            status='active',
+            config={},
+            enabled_by=12345,
+        ),
+    )
+    app = _make_runtime_test_app(fake_db, monkeypatch)
+
+    async def fake_active_workspace(_db: Any, *, user_id: int) -> dict[str, Any]:
+        return {'kind': 'personal', 'enterprise_id': None}
+
+    monkeypatch.setattr(gateway_module.workbench_domain_service, 'get_active_workspace', fake_active_workspace)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            '/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call',
+            json={
+                'workspace': None,
+                'input': {'query': '', 'limit': 0},
+                'trace_id': 'trace-invalid-input',
+            },
+            headers={'Authorization': 'Bearer test-agent'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['decision'] == 'deny'
+    assert data['error'] == {'code': '15020', 'message': 'input_schema_invalid'}
+    audit_row = fake_db.added[-1]
+    assert audit_row.trace_id == 'trace-invalid-input'
+    assert audit_row.decision == 'deny'
+    assert audit_row.error_code == '15020'
+    assert audit_row.context == {'reason': 'input_schema_invalid'}
+
+
 def test_runtime_tool_call_revoked_agent_session_writes_15011_audit(monkeypatch: pytest.MonkeyPatch) -> None:
     from backend.app.hasn.model import HasnWorkspaceApp
     from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
