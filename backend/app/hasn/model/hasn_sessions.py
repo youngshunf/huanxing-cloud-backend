@@ -12,7 +12,7 @@ class HasnSessions(Base):
 
     __tablename__ = 'hasn_sessions'
 
-    id: Mapped[str] = mapped_column(sa.String(40), primary_key=True, comment='会话 ID (ULID 格式)')
+    id: Mapped[str] = mapped_column(sa.String(40), primary_key=True, init=False, comment='会话 ID (ULID 格式)')
     conversation_id: Mapped[UUID | None] = mapped_column(sa.UUID(), default=None, comment='关联的 conversation ID')
     session_kind: Mapped[str] = mapped_column(sa.String(20), default='conversation', comment='会话类型 (conversation/task/temporary/external/system)')
     session_scope: Mapped[str] = mapped_column(sa.String(20), default='conversation_visible', comment='同步范围 (conversation_visible/summary_only/local_only)')
@@ -25,8 +25,10 @@ class HasnSessions(Base):
     last_message_id: Mapped[int | None] = mapped_column(sa.BIGINT(), default=None, comment='最后一条消息 ID')
     last_message_at: Mapped[datetime | None] = mapped_column(TimeZone, default=None, comment='最后消息时间')
     message_count: Mapped[int] = mapped_column(sa.INTEGER(), default=0, comment='消息总数')
-    created_time: Mapped[datetime] = mapped_column(TimeZone, default=datetime.now, comment='创建时间')
-    updated_time: Mapped[datetime] = mapped_column(TimeZone, default=datetime.now, onupdate=datetime.now, comment='更新时间')
+    created_time: Mapped[datetime] = mapped_column(TimeZone, init=False, default=datetime.now, comment='创建时间')
+    updated_time: Mapped[datetime] = mapped_column(
+        TimeZone, init=False, default=datetime.now, onupdate=datetime.now, comment='更新时间'
+    )
 
 
 class HasnSessionEvents(Base):
@@ -34,13 +36,13 @@ class HasnSessionEvents(Base):
 
     __tablename__ = 'hasn_session_events'
 
-    id: Mapped[int] = mapped_column(sa.BIGINT(), primary_key=True, autoincrement=True, comment='事件 ID')
+    id: Mapped[int] = mapped_column(sa.BIGINT(), primary_key=True, autoincrement=True, init=False, comment='事件 ID')
     session_id: Mapped[str] = mapped_column(sa.String(40), nullable=False, comment='会话 ID')
     event_type: Mapped[str] = mapped_column(sa.String(50), nullable=False, comment='事件类型 (session.created/session.paused/task.started/tool.called)')
     event_seq: Mapped[int] = mapped_column(sa.INTEGER(), default=0, comment='会话内事件序号')
     payload_json: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='事件载荷 (JSON)')
-    occurred_at: Mapped[datetime] = mapped_column(TimeZone, default=datetime.now, comment='事件发生时间')
-    created_time: Mapped[datetime] = mapped_column(TimeZone, default=datetime.now, comment='创建时间')
+    occurred_at: Mapped[datetime] = mapped_column(TimeZone, init=False, default=datetime.now, comment='事件发生时间')
+    created_time: Mapped[datetime] = mapped_column(TimeZone, init=False, default=datetime.now, comment='创建时间')
 
 
 class HasnSessionArtifacts(Base):
@@ -48,11 +50,11 @@ class HasnSessionArtifacts(Base):
 
     __tablename__ = 'hasn_session_artifacts'
 
-    id: Mapped[int] = mapped_column(sa.BIGINT(), primary_key=True, autoincrement=True, comment='产物 ID')
+    id: Mapped[int] = mapped_column(sa.BIGINT(), primary_key=True, autoincrement=True, init=False, comment='产物 ID')
     session_id: Mapped[str] = mapped_column(sa.String(40), nullable=False, comment='会话 ID')
     artifact_kind: Mapped[str] = mapped_column(sa.String(50), nullable=False, comment='产物类型 (file/code/report/data)')
     artifact_name: Mapped[str | None] = mapped_column(sa.String(200), default=None, comment='产物名称')
     artifact_path: Mapped[str | None] = mapped_column(sa.String(500), default=None, comment='产物路径')
     summary_json: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='产物摘要 (JSON)')
     sync_policy: Mapped[str] = mapped_column(sa.String(20), default='local_only', comment='同步策略 (full/metadata_only/local_only)')
-    created_time: Mapped[datetime] = mapped_column(TimeZone, default=datetime.now, comment='创建时间')
+    created_time: Mapped[datetime] = mapped_column(TimeZone, init=False, default=datetime.now, comment='创建时间')
