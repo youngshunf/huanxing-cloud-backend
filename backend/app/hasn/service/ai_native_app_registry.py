@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn.crud.crud_hasn_ai_native_app_manifest import hasn_ai_native_app_manifest_dao
 from backend.app.hasn.model import HasnAiNativeAppManifest
-from backend.app.hasn.service.ai_native_builtin_manifests import KNOWLEDGE_AI_NATIVE_MANIFEST
+from backend.app.hasn.service.ai_native_builtin_manifests import COMMUNITY_AI_NATIVE_MANIFEST, KNOWLEDGE_AI_NATIVE_MANIFEST
 from backend.app.hasn.service.workbench_app_registry import WorkbenchAppRegistry, workbench_app_registry
 from backend.common.exception import errors
 from backend.common.pagination import paging_data
@@ -24,7 +24,10 @@ class ManifestValidationResult:
 class AINativeAppRegistry:
     def __init__(self, *, workbench_registry: WorkbenchAppRegistry | None = None) -> None:
         self.workbench_registry = workbench_registry or workbench_app_registry
-        self._builtin_manifests = {'knowledge': KNOWLEDGE_AI_NATIVE_MANIFEST}
+        self._builtin_manifests = {
+            'knowledge': KNOWLEDGE_AI_NATIVE_MANIFEST,
+            'community': COMMUNITY_AI_NATIVE_MANIFEST,
+        }
 
     def list_builtin_apps(self) -> list[dict[str, Any]]:
         return list(self._builtin_manifests.values())
