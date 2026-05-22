@@ -684,7 +684,36 @@ async def route_message(
 
     await db.commit()
 
-    # 6. 构建推送 payload（对齐协议 01-传输层 §3.6 hasn.message.received 事件帧）
+    # 写入同步事件，供接收方登录时通过 sync/pull 恢复历史消息
+    recipient_owner_id = target_info.get('owner_id') if to_id.startswith('a_') else to_id
+    if recipient_owner_id:
+        from backend.app.hasn.service.hasn_sync_service import SqlAlchemySyncGateway
+        _sync_gw = SqlAlchemySyncGateway()
+        content_type_str = {1: 'text', 2: 'image/*', 3: 'application/octet-stream', 4: 'audio/*', 5: 'application/x.card+json'}.get(content_type, 'text')
+        await _sync_gw._append_sync_event(
+            db,
+            owner_id=recipient_owner_id,
+            hasn_id=to_id,
+            event_type='message.received',
+            aggregate_type='message',
+            aggregate_id=str(msg.id),
+            payload={
+                'message_id': str(msg.id),
+                'conversation_id': str(conv.id),
+                'owner_id': recipient_owner_id,
+                'hasn_id': to_id,
+                'sender_hasn_id': from_id,
+                'recipient_hasn_id': to_id,
+                'direction': 'inbound',
+                'content_type': content_type_str,
+                'content_body': content,
+                'local_id': local_id,
+                'created_at': int(msg.created_time.timestamp()) if msg.created_time else 0,
+            },
+        )
+        await db.commit()
+
+（对齐协议 01-传输层 §3.6 hasn.message.received 事件帧）
     from_entity_type = 'human' if from_id.startswith('h_') else ('agent' if from_id.startswith('a_') else 'system')
     to_entity_type = 'human' if to_id.startswith('h_') else ('agent' if to_id.startswith('a_') else 'system')
 
