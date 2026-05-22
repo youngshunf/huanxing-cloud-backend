@@ -312,6 +312,10 @@ class HasnAgentProfileService:
             raise errors.NotFoundError(msg=f'agent {hasn_id} not found')
         if user_id is not None and not await self.gateway.owns_owner(db, owner_id=agent.owner_id, user_id=user_id):
             raise errors.AuthorizationError(msg='ERR_HASN_OWNER_ACCESS_DENIED')
+        if request.binding_status not in _ALLOWED_BINDING_STATUS_VALUES:
+            raise errors.RequestError(
+                msg=f'ERR_HASN_AGENT_BINDING_STATUS_INVALID:{request.binding_status}'
+            )
 
         now_unix = int(tz.now().timestamp())
         await db.execute(
@@ -359,6 +363,9 @@ _SLUG_RE = re.compile(r'^[a-z][a-z0-9_-]{0,63}$')
 # 云端 hasn_agents.status 的允许值集合：业务态 + 生命周期态合并落同一列。
 _ALLOWED_STATUS_VALUES: frozenset[str] = frozenset(
     {'active', 'disabled', 'revoked', 'archived', 'deleted'}
+)
+_ALLOWED_BINDING_STATUS_VALUES: frozenset[str] = frozenset(
+    {'unbound', 'binding', 'bound', 'failed'}
 )
 
 

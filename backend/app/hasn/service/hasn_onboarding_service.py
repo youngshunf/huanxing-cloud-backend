@@ -151,7 +151,44 @@ class SqlAlchemyPlatformUserGateway:
         db.add(user)
         await db.flush()
         await db.refresh(user)
+
+        # 用户注册钩子：异步触发 RAGFlow provisioning
+        await self._trigger_ragflow_provisioning(user.id)
+
         return user, True
+
+    async def _trigger_ragflow_provisioning(self, user_id: int) -> None:
+        """异步触发 RAGFlow provisioning（fire-and-forget）"""
+        import asyncio
+        from backend.app.hasn.service.ragflow_provisioning_service import RAGFlowProvisioningService
+        from backend.app.hasn.model import HasnRagflowInstance
+        from backend.database.db import async_db_session
+
+        async def _provision():
+            try:
+                async with async_db_session() as provision_db:
+                    # 查询公共 RAGFlow 实例
+                    result = await provision_db.execute(
+                        sa.select(HasnRagflowInstance)
+                        .where(
+                            HasnRagflowInstance.scope == 'public',
+                            HasnRagflowInstance.status == 'active'
+                        )
+                        .limit(1)
+                    )
+                    public_instance = result.scalar_one_or_none()
+
+                    if public_instance:
+                        provisioning = RAGFlowProvisioningService()
+                        await provisioning.provision_one(user_id, public_instance.id)
+                        log.info(f'RAGFlow provisioning triggered for user {user_id}')
+                    else:
+                        log.warning(f'No active public RAGFlow instance found for user {user_id}')
+            except Exception as exc:
+                log.error(f'RAGFlow provisioning failed for user {user_id}: {exc}')
+
+        # Fire-and-forget: 不阻塞用户注册流程
+        asyncio.create_task(_provision())
 
 
 class SqlAlchemyLlmCredentialIssuer:
