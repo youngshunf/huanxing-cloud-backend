@@ -225,11 +225,15 @@ from backend.app.hasn.api.v1.app.hasn_follows import router as app_hasn_follows_
 from backend.app.hasn.api.v1.app.hasn_likes import router as app_hasn_likes_router
 from backend.app.hasn.api.v1.app.hasn_collections import router as app_hasn_collections_router
 from backend.app.hasn.api.v1.app.hasn_collection_items import router as app_hasn_collection_items_router
+from backend.app.hasn.api.v1.app.community import router as app_community_router
 
 app.include_router(app_hasn_im_router, prefix='/im', tags=['HASN IM 业务'])
 app.include_router(app_hasn_api_keys_router, tags=['HASN API Key'])
 app.include_router(app_hasn_nodes_router, prefix='/hasn/nodess', tags=['HASN Node 主-HASN Node 主'])
 app.include_router(
+    app_hasn_owner_api_keys_router, prefix='/hasn/owner/api/keyss', tags=['HASN Owner API Key -HASN Owner API Key ']
+)
+app.include_router(app_community_router, prefix='/community', tags=['社区'])
 app.include_router(app_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
 app.include_router(app_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
 app.include_router(app_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
@@ -237,8 +241,6 @@ app.include_router(app_hasn_follows_router, prefix='/hasn/followss', tags=['社�
 app.include_router(app_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
 app.include_router(app_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
 app.include_router(app_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
-    app_hasn_owner_api_keys_router, prefix='/hasn/owner/api/keyss', tags=['HASN Owner API Key -HASN Owner API Key ']
-)
 v1.include_router(node_control_router, tags=['HASN Node 控制平面'])
 v1.include_router(admin_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
 v1.include_router(admin_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
