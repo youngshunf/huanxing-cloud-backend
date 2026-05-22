@@ -156,12 +156,13 @@ agent.include_router(agent_hasn_trade_sessions_router, prefix='/trade/sessions',
 agent.include_router(agent_hasn_notifications_router, prefix='/notifications', tags=['通知管理'])
 agent.include_router(agent_hasn_audit_log_router, prefix='/audit/logs', tags=['审计日志'])
 agent.include_router(agent_hasn_nodes_router, prefix='/hasn/nodess', tags=['HASN Node 主-HASN Node 主'])
-agent.include_router(agent_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
-agent.include_router(agent_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
-agent.include_router(agent_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
-agent.include_router(agent_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
-agent.include_router(agent_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
-agent.include_router(agent_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
+# 注释掉 codegen 生成的社区表 agent 路由
+# agent.include_router(agent_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
+# agent.include_router(agent_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
+# agent.include_router(agent_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
+# agent.include_router(agent_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
+# agent.include_router(agent_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
+# agent.include_router(agent_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
 agent.include_router(agent_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
 
 # --- 公开（无需认证，仅 Agent 能力发现） ---
@@ -177,12 +178,13 @@ from backend.app.hasn.api.v1.open.hasn_collection_items import router as open_ha
 open_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn/open', tags=['HASN 公开接口'])
 
 open_api.include_router(open_hasn_agent_capabilities_router, prefix='/agent/capabilities', tags=['Agent能力发现'])
-open_api.include_router(open_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
-open_api.include_router(open_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
-open_api.include_router(open_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
-open_api.include_router(open_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
-open_api.include_router(open_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
-open_api.include_router(open_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
+# 注释掉 codegen 生成的社区表 open_api 路由
+# open_api.include_router(open_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
+# open_api.include_router(open_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
+# open_api.include_router(open_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
+# open_api.include_router(open_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
+# open_api.include_router(open_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
+# open_api.include_router(open_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
 open_api.include_router(open_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
 # open_hasn_nodes_router 已移除（v2.1: 节点注册在 WS 建连时自动完成）
 
@@ -233,19 +235,22 @@ app.include_router(app_hasn_nodes_router, prefix='/hasn/nodess', tags=['HASN Nod
 app.include_router(
     app_hasn_owner_api_keys_router, prefix='/hasn/owner/api/keyss', tags=['HASN Owner API Key -HASN Owner API Key ']
 )
+# 社区自定义 API（替代 codegen 生成的 CRUD）
 app.include_router(app_community_router, prefix='/community', tags=['社区'])
-app.include_router(app_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
-app.include_router(app_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
-app.include_router(app_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
-app.include_router(app_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
-app.include_router(app_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
-app.include_router(app_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
-app.include_router(app_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
+# 注释掉 codegen 生成的社区表 CRUD 路由，使用自定义社区 API
+# app.include_router(app_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
+# app.include_router(app_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
+# app.include_router(app_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
+# app.include_router(app_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
+# app.include_router(app_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
+# app.include_router(app_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
+# app.include_router(app_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
 v1.include_router(node_control_router, tags=['HASN Node 控制平面'])
-v1.include_router(admin_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
-v1.include_router(admin_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
-v1.include_router(admin_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
-v1.include_router(admin_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
-v1.include_router(admin_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
+# 注释掉 codegen 生成的社区表 admin 路由
+# v1.include_router(admin_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
+# v1.include_router(admin_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
+# v1.include_router(admin_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
+# v1.include_router(admin_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
+# v1.include_router(admin_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
 v1.include_router(admin_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
 v1.include_router(admin_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
