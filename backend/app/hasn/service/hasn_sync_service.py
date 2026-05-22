@@ -172,7 +172,22 @@ class SqlAlchemySyncGateway:
 
     async def save_client_event(
         self, db: AsyncSession, *, owner_id: str, node_id: str, event: ClientEvent
-    ) -> None:
+    ) -> int | None:
+        server_revision = None
+        if event.event_type.startswith('memory.'):
+            server_revision = await self._append_sync_event(
+                db,
+                owner_id=owner_id,
+                hasn_id=event.hasn_id or owner_id,
+                event_type=event.event_type,
+                aggregate_type='memory',
+                aggregate_id=_memory_aggregate_id(event),
+                payload={
+                    **event.payload,
+                    'client_event_id': event.client_event_id,
+                    'node_id': node_id,
+                },
+            )
         await db.execute(
             sa.text(
                 '''
@@ -185,6 +200,7 @@ class SqlAlchemySyncGateway:
                     payload,
                     dedupe_key,
                     status,
+                    server_revision,
                     received_at,
                     created_time,
                     updated_time
@@ -196,7 +212,8 @@ class SqlAlchemySyncGateway:
                     :event_type,
                     CAST(:payload AS jsonb),
                     :dedupe_key,
-                    'accepted',
+                    :status,
+                    :server_revision,
                     now(),
                     now(),
                     now()
@@ -212,8 +229,11 @@ class SqlAlchemySyncGateway:
                 'event_type': event.event_type,
                 'payload': json.dumps(event.payload, ensure_ascii=False, sort_keys=True, default=str),
                 'dedupe_key': event.dedupe_key,
+                'status': 'applied' if server_revision is not None else 'accepted',
+                'server_revision': server_revision,
             },
         )
+        return server_revision
 
     async def _append_sync_event(
         self,
@@ -225,7 +245,7 @@ class SqlAlchemySyncGateway:
         aggregate_type: str,
         aggregate_id: str,
         payload: dict[str, Any],
-    ) -> None:
+    ) -> int:
         revision_result = await db.execute(
             sa.text(
                 '''
@@ -278,6 +298,7 @@ class SqlAlchemySyncGateway:
                 'revision': revision,
             },
         )
+        return revision
 
 
 @dataclass(slots=True)
@@ -306,18 +327,21 @@ class HasnSyncService:
         await self._assert_owner_access(db, owner_id=request.owner_id, user_id=user_id)
         rejected: list[ErrorObject] = []
         node_id = request.node_id or 'unknown'
+        max_server_revision = 0
         for event in request.events:
             if _contains_private_runtime_key(event.payload):
                 rejected.append(_PRIVATE_METADATA_ERROR)
                 continue
             save_client_event = getattr(self.gateway, 'save_client_event', None)
             if save_client_event:
-                await save_client_event(db, owner_id=request.owner_id, node_id=node_id, event=event)
+                server_revision = await save_client_event(db, owner_id=request.owner_id, node_id=node_id, event=event)
+                if server_revision is not None:
+                    max_server_revision = max(max_server_revision, int(server_revision))
         accepted = len(request.events) - len(rejected)
         return SyncPushResponse(
             accepted=accepted,
             rejected=rejected,
-            next_cursor=_owner_cursor(request.owner_id, 0),
+            next_cursor=_owner_cursor(request.owner_id, max_server_revision),
         )
 
     async def report_runtime(
@@ -375,6 +399,18 @@ def _parse_owner_cursor(cursor: str | None) -> int:
 
 def _owner_cursor(owner_id: str, revision: int) -> str:
     return f'owner:{owner_id}:{max(int(revision), 0)}'
+
+
+def _memory_aggregate_id(event: ClientEvent) -> str:
+    record_id = event.payload.get('record_id')
+    namespace = event.payload.get('namespace')
+    sync_scope_kind = event.payload.get('sync_scope_kind')
+    sync_scope_id = event.payload.get('sync_scope_id')
+    if record_id:
+        return str(record_id)
+    if namespace and sync_scope_kind and sync_scope_id:
+        return f'{sync_scope_kind}:{sync_scope_id}:{namespace}'
+    return event.client_event_id
 
 
 def _report_id(owner_id: str, node_id: str, summary: RuntimeSummary) -> str:

@@ -196,12 +196,31 @@ async def test_runtime_dispatch_failure_after_accept_is_not_message_delivery_fai
 class CapturingSyncGateway:
     reports: list[dict[str, Any]] = field(default_factory=list)
     sync_events: list[Any] = field(default_factory=list)
+    client_events: list[Any] = field(default_factory=list)
 
     async def save_runtime_report(self, db: Any, report: dict[str, Any]) -> None:
         self.reports.append(report)
 
     async def pull_events(self, db: Any, *, owner_id: str, after_revision: int, limit: int) -> list[Any]:
         return [event for event in self.sync_events if event.revision > after_revision][:limit]
+
+    async def save_client_event(self, db: Any, *, owner_id: str, node_id: str, event: Any) -> int | None:
+        self.client_events.append((owner_id, node_id, event))
+        if event.event_type.startswith('memory.'):
+            from backend.app.hasn.schema.hasn_sync import SyncEventRecord
+
+            revision = len(self.sync_events) + 1
+            self.sync_events.append(
+                SyncEventRecord(
+                    event_id=f'se_memory_{revision}',
+                    event_type=event.event_type,
+                    revision=revision,
+                    created_at=datetime(2026, 5, 1, 9, revision, tzinfo=timezone.utc),
+                    payload=dict(event.payload),
+                )
+            )
+            return revision
+        return None
 
 
 @pytest.mark.asyncio
@@ -272,3 +291,42 @@ async def test_runtime_report_rejects_private_runtime_metadata() -> None:
                 ],
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_sync_push_memory_event_becomes_pullable_owner_sync_event() -> None:
+    from backend.app.hasn.schema.hasn_sync import ClientEvent, SyncPullRequest, SyncPushRequest
+    from backend.app.hasn.service.hasn_sync_service import HasnSyncService
+
+    gateway = CapturingSyncGateway()
+    service = HasnSyncService(gateway=gateway)
+
+    push_response = await service.push(
+        None,
+        SyncPushRequest(
+            owner_id='h_owner',
+            node_id='n_runtime',
+            events=[
+                ClientEvent(
+                    client_event_id='ce_memory_owner_portrait_1',
+                    event_type='memory.owner_portrait.upserted',
+                    hasn_id='h_owner',
+                    dedupe_key='memory:owner_portrait:h_owner:1',
+                    payload={
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_owner',
+                        'namespace': 'portraits',
+                        'record_id': 'owner_portrait:h_owner',
+                        'revision': 1,
+                    },
+                )
+            ],
+        ),
+    )
+    pull_response = await service.pull(None, SyncPullRequest(owner_id='h_owner', cursor='owner:h_owner:0'))
+
+    assert push_response.accepted == 1
+    assert push_response.next_cursor == 'owner:h_owner:1'
+    assert [event.event_type for event in pull_response.events] == ['memory.owner_portrait.upserted']
+    assert pull_response.events[0].payload['namespace'] == 'portraits'
+    assert pull_response.next_cursor == 'owner:h_owner:1'

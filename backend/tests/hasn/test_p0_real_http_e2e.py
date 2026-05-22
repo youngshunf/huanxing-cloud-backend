@@ -252,6 +252,7 @@ class FakeOnboardingGateway:
 class InMemorySyncGateway:
     reports: list[dict[str, Any]] = field(default_factory=list)
     client_events: list[Any] = field(default_factory=list)
+    sync_events: list[Any] = field(default_factory=list)
     owner_user_ids: dict[str, int] = field(default_factory=lambda: {'h_p0_owner': 7})
 
     async def owns_owner(self, _db: Any, *, owner_id: str, user_id: int) -> bool:
@@ -263,18 +264,32 @@ class InMemorySyncGateway:
     async def pull_events(self, _db: Any, *, owner_id: str, after_revision: int, limit: int) -> list[Any]:
         from backend.app.hasn.schema.hasn_sync import SyncEventRecord
 
-        return [
-            SyncEventRecord(
+        events = [event for event in self.sync_events if event.revision > after_revision]
+        if self.reports and not events:
+            events.append(SyncEventRecord(
                 event_id='se_runtime_reported',
                 event_type='runtime.reported',
                 revision=max(after_revision + 1, 1),
                 created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
                 payload={'owner_id': owner_id, 'reports': len(self.reports), 'limit': limit},
-            )
-        ]
+            ))
+        return events[:limit]
 
-    async def save_client_event(self, _db: Any, *, owner_id: str, node_id: str, event: Any) -> None:
+    async def save_client_event(self, _db: Any, *, owner_id: str, node_id: str, event: Any) -> int | None:
+        from backend.app.hasn.schema.hasn_sync import SyncEventRecord
+
         self.client_events.append((owner_id, node_id, event))
+        if not event.event_type.startswith('memory.'):
+            return None
+        revision = len(self.sync_events) + 1
+        self.sync_events.append(SyncEventRecord(
+            event_id=f'se_memory_{revision}',
+            event_type=event.event_type,
+            revision=revision,
+            created_at=datetime(2026, 5, 1, 0, revision, tzinfo=timezone.utc),
+            payload={**event.payload, 'client_event_id': event.client_event_id, 'node_id': node_id},
+        ))
+        return revision
 
 
 @dataclass
@@ -597,6 +612,43 @@ def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_an
     )
     assert sync_push.status_code == 200
     assert sync_push.json()['accepted'] == 1
+
+    memory_push = client.post(
+        '/api/v1/hasn/sync/push',
+        headers=auth,
+        json={
+            'owner_id': 'h_p0_owner',
+            'node_id': 'n_p0_desktop',
+            'events': [
+                {
+                    'client_event_id': 'ce_memory_owner_portrait_1',
+                    'event_type': 'memory.owner_portrait.upserted',
+                    'hasn_id': 'h_p0_owner',
+                    'dedupe_key': 'memory:owner_portrait:h_p0_owner:1',
+                    'payload': {
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_p0_owner',
+                        'namespace': 'portraits',
+                        'record_id': 'owner_portrait:h_p0_owner',
+                        'revision': 1,
+                    },
+                }
+            ],
+        },
+    )
+    assert memory_push.status_code == 200
+    assert memory_push.json()['accepted'] == 1
+    assert memory_push.json()['next_cursor'] == 'owner:h_p0_owner:1'
+
+    memory_pull = client.post(
+        '/api/v1/hasn/sync/pull',
+        headers=auth,
+        json={'owner_id': 'h_p0_owner', 'cursor': 'owner:h_p0_owner:0'},
+    )
+    assert memory_pull.status_code == 200
+    assert [event['event_type'] for event in memory_pull.json()['events']] == ['memory.owner_portrait.upserted']
+    assert memory_pull.json()['events'][0]['payload']['namespace'] == 'portraits'
+    assert memory_pull.json()['next_cursor'] == 'owner:h_p0_owner:1'
 
     human_message = client.post(
         '/api/v1/hasn/messages/send',
