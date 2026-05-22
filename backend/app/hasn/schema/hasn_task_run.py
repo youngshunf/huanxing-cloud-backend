@@ -1,19 +1,30 @@
 from datetime import datetime
+
 from pydantic import ConfigDict, Field
 
 from backend.common.schema import SchemaBase
 
+TASK_RUN_STATUS_DESCRIPTION = (
+    '执行状态 (pending:待执行:blue/running:执行中:orange/success:成功:green/'
+    'error:失败:red/timeout:超时:orange/silent:静默:gray)'
+)
+PROMPT_SNAPSHOT_DESCRIPTION = '执行时的完整 prompt（包含加载的 skill bundle 和 skill 内容）'
+
 
 class HasnTaskRunSchemaBase(SchemaBase):
     """任务执行记录基础模型"""
+
     task_id: int = Field(description='关联任务 ID')
     agent_id: str = Field(description='执行 agent ID')
+    session_id: str | None = Field(None, description='任务执行逻辑 session ID')
+    source_conversation_id: str | None = Field(None, description='任务来源会话 ID')
+    source_message_id: str | None = Field(None, description='任务来源消息 ID')
     runtime_node_id: str | None = Field(None, description='执行的 hasn-node 节点 ID')
-    status: str = Field(description='执行状态 (pending:待执行:blue/running:执行中:orange/success:成功:green/error:失败:red/timeout:超时:orange/silent:静默:gray)')
+    status: str = Field(description=TASK_RUN_STATUS_DESCRIPTION)
     started_at: datetime | None = Field(None, description='开始执行时间')
     finished_at: datetime | None = Field(None, description='完成时间')
     duration_ms: int | None = Field(None, description='执行耗时（毫秒）')
-    prompt_snapshot: str | None = Field(None, description='执行时的完整 prompt（包含加载的 skill bundle 和 skill 内容）')
+    prompt_snapshot: str | None = Field(None, description=PROMPT_SNAPSHOT_DESCRIPTION)
     output: str | None = Field(None, description='Agent 最终输出')
     error: str | None = Field(None, description='错误信息')
     model: str | None = Field(None, description='使用的模型')

@@ -9,19 +9,20 @@
 """
 
 import asyncio
-import json
 import logging
-from datetime import datetime, timedelta, timezone as tz
-from typing import Any, Dict, List, Optional
-from croniter import croniter
 
-from sqlalchemy import select, update
+from datetime import datetime, timedelta
+from datetime import timezone as tz
+from typing import Any
+
+from croniter import croniter
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database.db import async_session_factory
 from backend.app.hasn.model.hasn_task import HasnTask
 from backend.app.hasn.model.hasn_task_run import HasnTaskRun
 from backend.app.hasn.service.ws_router import ws_router
+from backend.database.db import async_db_session
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class TaskSchedulerService:
 
     def __init__(self) -> None:
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """启动调度器"""
@@ -78,27 +79,32 @@ class TaskSchedulerService:
         now = datetime.now(tz.utc)
         dispatched = 0
 
-        async with async_session_factory() as session:
+        async with async_db_session() as session:
             # 1. 查找到期任务
-            stmt = (
-                select(HasnTask)
-                .where(HasnTask.enabled.is_(True))
-                .where(HasnTask.next_run_at <= now)
-                .limit(100)
-            )
+            stmt = select(HasnTask).where(HasnTask.enabled.is_(True)).where(HasnTask.next_run_at <= now).limit(100)
             result = await session.execute(stmt)
             tasks = result.scalars().all()
 
             for task in tasks:
-                try:
-                    await self._dispatch_task(session, task, now)
+                if await self._dispatch_task_safely(session, task, now):
                     dispatched += 1
-                except Exception:
-                    logger.exception(f'[TaskScheduler] dispatch task {task.id} failed')
 
             await session.commit()
 
         return dispatched
+
+    async def _dispatch_task_safely(
+        self,
+        session: AsyncSession,
+        task: HasnTask,
+        now: datetime,
+    ) -> bool:
+        try:
+            await self._dispatch_task(session, task, now)
+        except Exception:
+            logger.exception(f'[TaskScheduler] dispatch task {task.id} failed')
+            return False
+        return True
 
     async def _dispatch_task(
         self,
@@ -115,16 +121,15 @@ class TaskSchedulerService:
         task.repeat_completed = (task.repeat_completed or 0) + 1
 
         # 检查是否需要标记 completed
-        if task.schedule_type == 'once':
-            task.enabled = False
-            task.state = 'completed'
-        elif task.repeat_times is not None and task.repeat_completed >= task.repeat_times:
+        if task.schedule_type == 'once' or (
+            task.repeat_times is not None and task.repeat_completed >= task.repeat_times
+        ):
             task.enabled = False
             task.state = 'completed'
 
         # 2. 构建 prompt（含链式上下文）
         prompt = task.prompt
-        context: Dict[str, Any] = {}
+        context: dict[str, Any] = {}
         if task.context_from_task_id:
             ctx = await self._load_context_from(session, task.context_from_task_id)
             if ctx:
@@ -134,18 +139,24 @@ class TaskSchedulerService:
         task_run = HasnTaskRun(
             task_id=task.id,
             agent_id=task.agent_id,
+            source_conversation_id=None,
+            source_message_id=None,
             status='pending',
             prompt_snapshot=prompt,
             create_time=now,
         )
         session.add(task_run)
         await session.flush()  # 获取 task_run.id
+        task_run.session_id = f'sess_task_{task_run.id}'
 
         # 4. 发送 TaskExec 消息到 Agent
         task_exec_msg = {
             'type': 'task_exec',
             'task_id': task.id,
             'run_id': task_run.id,
+            'session_id': task_run.session_id,
+            'source_conversation_id': task_run.source_conversation_id,
+            'source_message_id': task_run.source_message_id,
             'agent_id': task.agent_id,
             'prompt': prompt,
             'skill_bundles': task.skill_bundle_ids or [],
@@ -156,12 +167,9 @@ class TaskSchedulerService:
 
         pushed = await ws_router.push_message_to(task.agent_id, task_exec_msg)
         if not pushed:
-            logger.warning(
-                f'[TaskScheduler] task {task.id} agent {task.agent_id} offline, '
-                f'message queued'
-            )
+            logger.warning(f'[TaskScheduler] task {task.id} agent {task.agent_id} offline, message queued')
 
-    def _calc_next_run(self, task: HasnTask, now: datetime) -> Optional[datetime]:
+    def _calc_next_run(self, task: HasnTask, now: datetime) -> datetime | None:
         """根据 schedule_type 计算下一次执行时间"""
         config = task.schedule_config or {}
 
@@ -183,9 +191,7 @@ class TaskSchedulerService:
 
         return None
 
-    async def _load_context_from(
-        self, session: AsyncSession, task_id: int
-    ) -> Optional[str]:
+    async def _load_context_from(self, session: AsyncSession, task_id: int) -> str | None:
         """加载链式任务的上下文（上一次执行结果）"""
         stmt = (
             select(HasnTaskRun)
@@ -202,14 +208,14 @@ class TaskSchedulerService:
         self,
         run_id: int,
         status: str,
-        output: Optional[str] = None,
-        error: Optional[str] = None,
-        model: Optional[str] = None,
-        token_usage: Optional[Dict[str, int]] = None,
-        duration_ms: Optional[int] = None,
+        output: str | None = None,
+        error: str | None = None,
+        model: str | None = None,
+        token_usage: dict[str, int] | None = None,
+        duration_ms: int | None = None,
     ) -> bool:
         """处理 hasn-node 回传的 TaskResult"""
-        async with async_session_factory() as session:
+        async with async_db_session() as session:
             stmt = select(HasnTaskRun).where(HasnTaskRun.id == run_id)
             result = await session.execute(stmt)
             task_run = result.scalar_one_or_none()
