@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Seed 本地 RAGFlow 实例到数据库
 
@@ -21,14 +22,20 @@ async def seed_public_ragflow():
 
     # 从配置文件读取
     url = settings.RAGFLOW_PUBLIC_URL
-    admin_api_key = settings.RAGFLOW_PUBLIC_ADMIN_API_KEY
+    public_key = settings.RAGFLOW_PUBLIC_RSA_PUBLIC_KEY
     default_embd_id = settings.RAGFLOW_DEFAULT_EMBD_ID
     default_llm_id = settings.RAGFLOW_DEFAULT_LLM_ID
 
-    if not url or not admin_api_key:
-        print("⚠️  未配置 RAGFlow 公共实例（RAGFLOW_PUBLIC_URL 或 RAGFLOW_PUBLIC_ADMIN_API_KEY 为空）")
+    if not url:
+        print("⚠️  未配置 RAGFlow 公共实例（RAGFLOW_PUBLIC_URL 为空）")
         print("   请在 .env 中配置后重试")
         return None
+
+    if not public_key:
+        print("⚠️  未配置 RAGFlow RSA 公钥（RAGFLOW_PUBLIC_RSA_PUBLIC_KEY 为空）")
+        print("   注意：RAGFlow 注册需要 RSA 公钥来加密密码")
+        print("   请从 RAGFlow 管理后台获取公钥并配置到 .env")
+        # 继续创建记录，但 provision 会失败直到配置公钥
 
     async with async_db_session() as db:
         # 检查是否已存在相同 URL 的实例
@@ -38,13 +45,24 @@ async def seed_public_ragflow():
         )).scalar_one_or_none()
 
         if existing:
+            # 检查是否需要更新公钥
+            needs_update = False
+            if public_key and existing.public_pem != public_key:
+                needs_update = True
+                existing.public_pem = public_key
+                await db.commit()
+                await db.refresh(existing)
+
             print(f"✓ RAGFlow 公共实例已存在 (ID: {existing.id})")
             print(f"  URL: {url}")
             print(f"  Status: {existing.status}")
+            print(f"  Public Key: {'已配置' if existing.public_pem else '未配置'}")
+            if needs_update:
+                print(f"  ✓ 已更新 RSA 公钥")
             return existing.id
 
-        # 加密管理员 API Key
-        encrypted_key = encrypt_ragflow_secret(admin_api_key)
+        # 创建新实例（admin_api_key_encrypted 使用占位符，因为不需要管理员 key）
+        placeholder_key = encrypt_ragflow_secret('not-used')
 
         # 创建新实例
         now = datetime.now(timezone.utc)
@@ -52,8 +70,8 @@ async def seed_public_ragflow():
             scope='public',
             enterprise_id=None,
             url=url,
-            admin_api_key_encrypted=encrypted_key,
-            public_pem=None,
+            admin_api_key_encrypted=placeholder_key,  # 占位符，实际不使用
+            public_pem=public_key or None,  # RSA 公钥
             default_embd_id=default_embd_id,
             default_llm_id=default_llm_id,
             status='active',
@@ -71,6 +89,7 @@ async def seed_public_ragflow():
         print(f"  Status: active")
         print(f"  Default Embedding: {default_embd_id}")
         print(f"  Default LLM: {default_llm_id}")
+        print(f"  Public Key: {'已配置' if public_key else '未配置（需要配置才能正常 provision）'}")
 
         return instance.id
 

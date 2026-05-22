@@ -120,7 +120,7 @@ class Settings(BaseSettings):
 
     # RAGFlow 公共实例配置
     RAGFLOW_PUBLIC_URL: str = ''  # RAGFlow 服务地址，如 http://127.0.0.1:18082
-    RAGFLOW_PUBLIC_ADMIN_API_KEY: str = ''  # RAGFlow 管理员 API Key
+    RAGFLOW_PUBLIC_RSA_PUBLIC_KEY: str = ''  # RAGFlow RSA 公钥（PEM 格式），用于加密注册密码
     RAGFLOW_DEFAULT_EMBD_ID: str = 'BAAI/bge-large-zh-v1.5'  # 默认 embedding 模型
     RAGFLOW_DEFAULT_LLM_ID: str = 'deepseek-chat'  # 默认 LLM 模型
 
