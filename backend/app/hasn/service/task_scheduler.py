@@ -150,7 +150,7 @@ class TaskSchedulerService:
         task_run.session_id = f'sess_task_{task_run.id}'
 
         # 4. 发送 TaskExec 消息到 Agent
-        task_exec_msg = {
+        task_exec_params = {
             'type': 'task_exec',
             'task_id': task.id,
             'run_id': task_run.id,
@@ -163,6 +163,11 @@ class TaskSchedulerService:
             'skills': task.skill_ids or [],
             'enabled_toolsets': task.enabled_toolsets,
             'context': context,
+        }
+        task_exec_msg = {
+            'hasn': 'hasn/0.2',
+            'method': 'hasn.task.exec',
+            'params': task_exec_params,
         }
 
         pushed = await ws_router.push_message_to(task.agent_id, task_exec_msg)
