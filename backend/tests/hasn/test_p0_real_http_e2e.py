@@ -544,6 +544,7 @@ def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_an
     )
     assert verify.status_code == 200
     assert verify.json()['access_token'] == 'jwt-p0-real-http'
+    assert 'agent_tokens' in verify.json()
 
     onboarding = client.post(
         '/api/v1/hasn/onboarding/ensure',

@@ -28,6 +28,15 @@ class PhoneVerifyRequest(SchemaBase):
     pending_intent_id: str | None = Field(default=None, description='反向 onboarding pending intent ID')
 
 
+class AgentTokenInfo(SchemaBase):
+    agent_hasn_id: str = Field(description='Agent HASN ID')
+    agent_name: str = Field(description='Agent 显示名')
+    access_token: str = Field(description='Agent JWT')
+    scopes: list[str] = Field(description='Agent 权限列表')
+    expire_time: str | None = Field(default=None, description='Token 过期时间 ISO8601 格式')
+    expires_at_unix: int | None = Field(default=None, description='Token 过期 Unix 时间戳')
+
+
 class PhoneVerifyResponse(SchemaBase):
     access_token: str = Field(description='HASN session access token')
     token_type: Literal['Bearer'] = Field(default='Bearer', description='Token 类型')
@@ -44,6 +53,7 @@ class PhoneVerifyResponse(SchemaBase):
     # profile 的 config.yaml `model.default`。后续支持按用户级别区分模型时
     # 直接改 service 注入逻辑，daemon 端无需变更。
     llm_model: str | None = Field(default=None, description='默认 LLM 模型名，写入 hermes profile config')
+    agent_tokens: list[AgentTokenInfo] = Field(default_factory=list, description='Agent JWT 列表')
 
 
 class HasnTokenRefreshRequest(SchemaBase):

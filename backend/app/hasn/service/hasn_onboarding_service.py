@@ -22,6 +22,7 @@ import sqlalchemy as sa
 from backend.app.admin.crud.crud_user import user_dao
 from backend.app.admin.model import User
 from backend.app.hasn.schema.hasn_onboarding import (
+    AgentTokenInfo,
     AgentSummary,
     HumanSummary,
     OnboardingEnsureRequest,
@@ -33,9 +34,12 @@ from backend.app.hasn.schema.hasn_onboarding import (
     PhoneVerifyResponse,
     SandboxSummary,
 )
+from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
+from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
 from backend.app.hasn.service import hasn_auth as hasn_auth_service
 from backend.app.hasn.service.hasn_node_bindings_service import hasn_node_bindings_service
 from backend.common.exception import errors
+from backend.common.log import log
 from backend.common.security.jwt import create_access_token, create_refresh_token
 from backend.common.sms import sms_service
 from backend.core.conf import settings
@@ -311,6 +315,7 @@ class HasnPhoneAuthService:
     code_generator: Any | None = None
     token_creator: Any = create_access_token
     llm_credentials: LlmCredentialIssuer = field(default_factory=SqlAlchemyLlmCredentialIssuer)
+    agent_tokens: AgentTokenIssuer = field(default_factory=SqlAlchemyAgentTokenIssuer)
 
     async def send_code(self, request: PhoneSendCodeRequest) -> PhoneSendCodeResponse:
         phone = request.phone
@@ -368,6 +373,11 @@ class HasnPhoneAuthService:
             user.id,
             multi_login=user.is_multi_login,
         )
+        agent_tokens = await _issue_phone_verify_agent_tokens(
+            db,
+            user=user,
+            agent_tokens=self.agent_tokens,
+        )
 
         return PhoneVerifyResponse(
             access_token=access_token.access_token,
@@ -377,6 +387,7 @@ class HasnPhoneAuthService:
             llm_token=llm_token,
             llm_base_url=llm_base_url,
             llm_model=llm_model,
+            agent_tokens=agent_tokens,
         )
 
 
@@ -491,6 +502,51 @@ def _sandbox_status(state: str) -> str:
     if state in {'creating', 'active', 'sleeping', 'deleted', 'failed'}:
         return state
     return 'sleeping'
+
+
+async def _issue_phone_verify_agent_tokens(
+    db: AsyncSession,
+    *,
+    user: User,
+    agent_tokens: AgentTokenIssuer,
+) -> list[AgentTokenInfo]:
+    try:
+        human = await hasn_humans_dao.get_by_user_id(db, user.id)
+        if not human or not human.hasn_id:
+            return []
+
+        agents = await hasn_agents_dao.get_active_agents_by_owner(db, human.hasn_id)
+    except Exception as exc:
+        log.error(f'批量签发 Agent JWT 失败: {exc}')
+        return []
+
+    issued_agent_tokens: list[AgentTokenInfo] = []
+    for agent in agents:
+        try:
+            token = await agent_tokens.issue(
+                db,
+                agent_hasn_id=agent.hasn_id,
+                agent_name=getattr(agent, 'display_name', None) or getattr(agent, 'agent_name', None),
+                owner_hasn_id=human.hasn_id,
+                owner_user_id=user.id,
+            )
+            issued_agent_tokens.append(
+                AgentTokenInfo(
+                    agent_hasn_id=agent.hasn_id,
+                    agent_name=getattr(agent, 'display_name', None) or getattr(agent, 'agent_name', None),
+                    access_token=token.access_token,
+                    scopes=token.scopes,
+                    expire_time=getattr(token, 'access_token_expire_time', None).isoformat()
+                    if getattr(token, 'access_token_expire_time', None)
+                    else None,
+                    expires_at_unix=getattr(token, 'expires_at_unix', None),
+                )
+            )
+        except Exception as exc:
+            log.error(f'为 Agent {agent.hasn_id} 签发 JWT 失败: {exc}')
+            continue
+
+    return issued_agent_tokens
 
 
 hasn_phone_auth_service = HasnPhoneAuthService()

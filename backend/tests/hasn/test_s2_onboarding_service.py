@@ -108,6 +108,7 @@ class FakeAgentTokenIssuer:
         return SimpleNamespace(
             access_token=f'agent-token:{agent_hasn_id}',
             access_token_expire_time=SimpleNamespace(isoformat=lambda: '2026-05-18T00:00:00+00:00'),
+            expires_at_unix=1779062400,
             scopes=['message.read', 'knowledge.read'],
         )
 
@@ -169,6 +170,59 @@ async def test_phone_verify_creates_platform_user_and_issues_bearer_token(monkey
     assert db.flush_count == 1
     assert captured_token_kwargs['pending_intent_id'] == 'pi_123'
     assert captured_token_kwargs['hasn_onboarding'] is True
+
+
+@pytest.mark.asyncio
+async def test_phone_verify_returns_agent_tokens_when_owner_has_active_agents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis = FakeRedis()
+    await redis.setex(f'{SMS_CODE_PREFIX}:13800138000', 1800, b'654321')
+    users = FakeUserGateway()
+    db = FakeDb()
+
+    async def fake_token_creator(user_id: int, *, multi_login: bool, **kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(access_token='jwt-token', session_uuid='session-phone-verify')
+
+    async def fake_refresh_token_creator(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(refresh_token='refresh-token')
+
+    async def fake_get_human(_db: Any, user_id: int) -> SimpleNamespace | None:
+        if user_id != 1:
+            return None
+        return SimpleNamespace(hasn_id='h_owner_1')
+
+    async def fake_get_active_agents(_db: Any, owner_hasn_id: str) -> list[SimpleNamespace]:
+        assert owner_hasn_id == 'h_owner_1'
+        return [
+            SimpleNamespace(hasn_id='a_1', display_name='一号 Agent', agent_name='agent_one'),
+            SimpleNamespace(hasn_id='a_2', display_name='', agent_name='agent_two'),
+        ]
+
+    monkeypatch.setattr(onboarding_service_module, 'create_refresh_token', fake_refresh_token_creator)
+    monkeypatch.setattr(onboarding_service_module.hasn_humans_dao, 'get_by_user_id', fake_get_human)
+    monkeypatch.setattr(onboarding_service_module.hasn_agents_dao, 'get_active_agents_by_owner', fake_get_active_agents)
+
+    service = HasnPhoneAuthService(
+        redis=redis,
+        sms=FakeSms(),
+        users=users,
+        token_expire_seconds=86400,
+        token_creator=fake_token_creator,
+        llm_credentials=FakeLlmCredentialIssuer(),
+        agent_tokens=FakeAgentTokenIssuer(),
+    )
+
+    response = await service.verify(db, PhoneVerifyRequest(phone='13800138000', code='654321'))
+
+    assert [item.agent_hasn_id for item in response.agent_tokens] == ['a_1', 'a_2']
+    assert response.agent_tokens[0].agent_name == '一号 Agent'
+    assert response.agent_tokens[0].access_token == 'agent-token:a_1'
+    assert response.agent_tokens[0].scopes == ['message.read', 'knowledge.read']
+    assert response.agent_tokens[0].expire_time == '2026-05-18T00:00:00+00:00'
+    assert response.agent_tokens[0].expires_at_unix == 1779062400
+    assert response.agent_tokens[1].agent_name == 'agent_two'
+    assert response.agent_tokens[1].access_token == 'agent-token:a_2'
 
 
 @dataclass
