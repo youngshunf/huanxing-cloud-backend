@@ -60,6 +60,9 @@ class SyncGateway(Protocol):
         self, db: AsyncSession, *, owner_id: str, after_revision: int, limit: int
     ) -> list[SyncEventRecord]: ...
     async def owns_owner(self, db: AsyncSession, *, owner_id: str, user_id: int) -> bool: ...
+    async def save_session(self, db: AsyncSession, session: dict[str, Any]) -> None: ...
+    async def save_session_event(self, db: AsyncSession, event: dict[str, Any]) -> None: ...
+    async def save_session_artifact(self, db: AsyncSession, artifact: dict[str, Any]) -> None: ...
 
 
 class SqlAlchemySyncGateway:
@@ -279,6 +282,124 @@ class SqlAlchemySyncGateway:
             },
         )
 
+    async def save_session(self, db: AsyncSession, session: dict[str, Any]) -> None:
+        """保存或更新 session 到云端投影表"""
+        await db.execute(
+            sa.text(
+                '''
+                INSERT INTO public.hasn_sessions (
+                    id,
+                    conversation_id,
+                    session_kind,
+                    session_scope,
+                    session_status,
+                    origin_type,
+                    origin_ref,
+                    parent_session_id,
+                    fork_point_message_id,
+                    summary_checkpoint_json,
+                    last_message_id,
+                    last_message_at,
+                    message_count,
+                    created_time,
+                    updated_time
+                ) VALUES (
+                    :id,
+                    :conversation_id,
+                    :session_kind,
+                    :session_scope,
+                    :session_status,
+                    :origin_type,
+                    :origin_ref,
+                    :parent_session_id,
+                    :fork_point_message_id,
+                    :summary_checkpoint_json,
+                    :last_message_id,
+                    :last_message_at,
+                    :message_count,
+                    now(),
+                    now()
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    session_status = EXCLUDED.session_status,
+                    summary_checkpoint_json = EXCLUDED.summary_checkpoint_json,
+                    last_message_id = EXCLUDED.last_message_id,
+                    last_message_at = EXCLUDED.last_message_at,
+                    message_count = EXCLUDED.message_count,
+                    updated_time = now()
+                '''
+            ),
+            session,
+        )
+        # 只有 conversation_visible 和 summary_only 的 session 才发送同步事件
+        if session.get('session_scope') in ('conversation_visible', 'summary_only'):
+            await self._append_sync_event(
+                db,
+                owner_id=session.get('owner_id', ''),
+                hasn_id=session.get('owner_id', ''),
+                event_type='session.updated',
+                aggregate_type='session',
+                aggregate_id=session['id'],
+                payload={
+                    'session_id': session['id'],
+                    'conversation_id': str(session.get('conversation_id')) if session.get('conversation_id') else None,
+                    'session_kind': session.get('session_kind'),
+                    'session_status': session.get('session_status'),
+                },
+            )
+
+    async def save_session_event(self, db: AsyncSession, event: dict[str, Any]) -> None:
+        """保存 session event 到云端投影表（仅 summary_only 和 conversation_visible）"""
+        await db.execute(
+            sa.text(
+                '''
+                INSERT INTO public.hasn_session_events (
+                    session_id,
+                    event_type,
+                    event_seq,
+                    payload_json,
+                    occurred_at,
+                    created_time
+                ) VALUES (
+                    :session_id,
+                    :event_type,
+                    :event_seq,
+                    :payload_json,
+                    :occurred_at,
+                    now()
+                )
+                '''
+            ),
+            event,
+        )
+
+    async def save_session_artifact(self, db: AsyncSession, artifact: dict[str, Any]) -> None:
+        """保存 session artifact 到云端投影表（按 sync_policy 决定）"""
+        await db.execute(
+            sa.text(
+                '''
+                INSERT INTO public.hasn_session_artifacts (
+                    session_id,
+                    artifact_kind,
+                    artifact_name,
+                    artifact_path,
+                    summary_json,
+                    sync_policy,
+                    created_time
+                ) VALUES (
+                    :session_id,
+                    :artifact_kind,
+                    :artifact_name,
+                    :artifact_path,
+                    :summary_json,
+                    :sync_policy,
+                    now()
+                )
+                '''
+            ),
+            artifact,
+        )
+
 
 @dataclass(slots=True)
 class HasnSyncService:
@@ -310,9 +431,27 @@ class HasnSyncService:
             if _contains_private_runtime_key(event.payload):
                 rejected.append(_PRIVATE_METADATA_ERROR)
                 continue
-            save_client_event = getattr(self.gateway, 'save_client_event', None)
-            if save_client_event:
-                await save_client_event(db, owner_id=request.owner_id, node_id=node_id, event=event)
+
+            # 处理 session 相关事件
+            if event.event_type == 'session.sync':
+                save_session = getattr(self.gateway, 'save_session', None)
+                if save_session and event.payload:
+                    session_data = dict(event.payload)
+                    session_data['owner_id'] = request.owner_id
+                    await save_session(db, session_data)
+            elif event.event_type == 'session_event.sync':
+                save_session_event = getattr(self.gateway, 'save_session_event', None)
+                if save_session_event and event.payload:
+                    await save_session_event(db, event.payload)
+            elif event.event_type == 'session_artifact.sync':
+                save_session_artifact = getattr(self.gateway, 'save_session_artifact', None)
+                if save_session_artifact and event.payload:
+                    await save_session_artifact(db, event.payload)
+            else:
+                # 其他事件类型使用原有逻辑
+                save_client_event = getattr(self.gateway, 'save_client_event', None)
+                if save_client_event:
+                    await save_client_event(db, owner_id=request.owner_id, node_id=node_id, event=event)
         accepted = len(request.events) - len(rejected)
         return SyncPushResponse(
             accepted=accepted,

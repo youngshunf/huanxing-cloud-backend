@@ -118,6 +118,12 @@ class Settings(BaseSettings):
     HUANXING_HERMES_PLATFORM_LLM_MODEL: str = 'openai/gpt-5.5'
     HUANXING_HERMES_PLATFORM_LLM_PLAN_ID: str = 'pro_monthly'
 
+    # RAGFlow 公共实例配置
+    RAGFLOW_PUBLIC_URL: str = ''  # RAGFlow 服务地址，如 http://127.0.0.1:18082
+    RAGFLOW_PUBLIC_ADMIN_API_KEY: str = ''  # RAGFlow 管理员 API Key
+    RAGFLOW_DEFAULT_EMBD_ID: str = 'BAAI/bge-large-zh-v1.5'  # 默认 embedding 模型
+    RAGFLOW_DEFAULT_LLM_ID: str = 'deepseek-chat'  # 默认 LLM 模型
+
     # Token
     TOKEN_ALGORITHM: str = 'HS256'
     TOKEN_EXPIRE_SECONDS: int = 60 * 60 * 24  # 1 天

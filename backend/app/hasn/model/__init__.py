@@ -8,6 +8,9 @@ from backend.app.hasn.model.hasn_clients import HasnClients as HasnClients
 from backend.app.hasn.model.hasn_contacts import HasnContacts as HasnContacts
 from backend.app.hasn.model.hasn_conversations import HasnConversations as HasnConversations
 from backend.app.hasn.model.hasn_enterprise import HasnEnterprise as HasnEnterprise
+from backend.app.hasn.model.hasn_sessions import HasnSessions as HasnSessions
+from backend.app.hasn.model.hasn_sessions import HasnSessionEvents as HasnSessionEvents
+from backend.app.hasn.model.hasn_sessions import HasnSessionArtifacts as HasnSessionArtifacts
 from backend.app.hasn.model.hasn_enterprise_invite_code import HasnEnterpriseInviteCode as HasnEnterpriseInviteCode
 from backend.app.hasn.model.hasn_enterprise_membership import HasnEnterpriseMembership as HasnEnterpriseMembership
 from backend.app.hasn.model.hasn_group_members import HasnGroupMembers as HasnGroupMembers

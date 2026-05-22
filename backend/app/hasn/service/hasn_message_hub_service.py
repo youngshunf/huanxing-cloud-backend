@@ -305,6 +305,8 @@ class SqlAlchemyMessageHubGateway:
                     dispatch_status,
                     owner_copy_of_message_id,
                     context,
+                    session_id,
+                    session_seq,
                     server_received_at,
                     created_time
                 ) VALUES (
@@ -331,6 +333,8 @@ class SqlAlchemyMessageHubGateway:
                     :dispatch_status,
                     CAST(:owner_copy_of_message_id AS bigint),
                     CAST(:context AS jsonb),
+                    :session_id,
+                    :session_seq,
                     now(),
                     now()
                 )
@@ -359,6 +363,8 @@ class SqlAlchemyMessageHubGateway:
                 'dispatch_status': record.dispatch_status,
                 'owner_copy_of_message_id': record.owner_copy_of_message_id,
                 'context': json.dumps(context, ensure_ascii=False, sort_keys=True, default=str),
+                'session_id': getattr(record, 'session_id', None),
+                'session_seq': getattr(record, 'session_seq', None),
             },
         )
         row = result.mappings().one()
