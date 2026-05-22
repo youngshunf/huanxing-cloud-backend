@@ -163,7 +163,7 @@ agent.include_router(agent_hasn_nodes_router, prefix='/hasn/nodess', tags=['HASN
 # agent.include_router(agent_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
 # agent.include_router(agent_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
 # agent.include_router(agent_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
-agent.include_router(agent_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
+# agent.include_router(agent_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
 
 # --- 公开（无需认证，仅 Agent 能力发现） ---
 from backend.app.hasn.api.v1.open.hasn_agent_capabilities import router as open_hasn_agent_capabilities_router
@@ -185,7 +185,7 @@ open_api.include_router(open_hasn_agent_capabilities_router, prefix='/agent/capa
 # open_api.include_router(open_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
 # open_api.include_router(open_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
 # open_api.include_router(open_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
-open_api.include_router(open_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
+# open_api.include_router(open_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
 # open_hasn_nodes_router 已移除（v2.1: 节点注册在 WS 建连时自动完成）
 
 # --- WebSocket 端点（统一节点） ---
@@ -252,5 +252,5 @@ v1.include_router(node_control_router, tags=['HASN Node 控制平面'])
 # v1.include_router(admin_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
 # v1.include_router(admin_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
 # v1.include_router(admin_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
-v1.include_router(admin_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
-v1.include_router(admin_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
+# v1.include_router(admin_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
+# v1.include_router(admin_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])

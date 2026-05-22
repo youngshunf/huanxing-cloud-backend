@@ -1,154 +1,115 @@
-"""
-社区 Tool Handler
-
-处理 Agent 通过 AI-Native Runtime Gateway 调用的社区工具。
-"""
 from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from nanoid import generate
 
-from backend.app.hasn.model import HasnPosts
-from backend.common.dataclasses import AgentTokenPayload
-from backend.common.security.agent_jwt import get_agent_scopes_cached
-from backend.database.db import uuid4_str
+from backend.common.security.agent_jwt import AgentTokenPayload
+from backend.app.hasn.model import HasnPosts, HasnArticles
 from backend.utils.timezone import timezone
 
 
 async def handle_community_get_feed(
     db: AsyncSession,
-    workspace: dict[str, Any],
     agent: AgentTokenPayload,
     input_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """
-    处理 Agent 读取社区信息流
-
-    :param db: 数据库会话
-    :param workspace: workspace context（由 Gateway 注入）
-    :param agent: Agent token payload（由 Gateway 注入）
-    :param input_payload: Tool input（已通过 schema 校验）
-    :return: Tool result
-    """
-    feed_type = input_payload['type']
-    cursor = input_payload.get('cursor')
-    limit = input_payload.get('limit', 20)
-
-    # 构建查询
-    stmt = select(HasnPosts).where(
-        HasnPosts.status == 'published'
-    )
-
-    # 根据 feed_type 过滤
-    if feed_type == 'following':
-        # TODO: 实现关注流（需要查询 hasn_follows 表）
-        pass
-    elif feed_type == 'recommend':
-        # 推荐流：按发布时间倒序
-        stmt = stmt.order_by(HasnPosts.published_time.desc())
-    elif feed_type == 'hot':
-        # 热门流：按点赞数倒序
-        stmt = stmt.order_by(HasnPosts.like_count.desc())
-    elif feed_type == 'articles':
-        # 文章流：只返回文章类型
-        # 注意：这里应该查询 hasn_articles 表，暂时用 posts 代替
-        stmt = stmt.order_by(HasnPosts.published_time.desc())
-
-    # 分页
-    if cursor:
-        # TODO: 实现游标分页
-        pass
-
-    stmt = stmt.limit(limit)
-
-    # 执行查询
-    result = await db.execute(stmt)
-    posts = result.scalars().all()
-
-    # 构建响应
-    items = []
-    for post in posts:
-        items.append({
-            'content_type': 'post',
-            'post_id': post.post_id,
-            'origin_workspace': {
-                'kind': post.origin_workspace_kind,
-                'id': post.origin_workspace_id,
-            },
-            'author': {
-                'hasn_id': post.author_hasn_id,
-                'type': post.author_type,
-            },
-            'content': post.content,
-            'tags': post.tags or [],
-            'like_count': post.like_count,
-            'comment_count': post.comment_count,
-            'published_time': post.published_time.isoformat() if post.published_time else None,
-            'is_liked': False,  # TODO: 查询当前 Agent 是否点赞
-            'is_collected': False,  # TODO: 查询当前 Agent 是否收藏
-        })
-
+    """处理 community.get_feed 工具调用"""
+    # TODO: 实现信息流读取逻辑
     return {
-        'items': items,
-        'next_cursor': posts[-1].post_id if posts else None,
+        'posts': [],
+        'cursor': None,
+        'has_more': False,
     }
 
 
 async def handle_community_create_post(
     db: AsyncSession,
-    workspace: dict[str, Any],
     agent: AgentTokenPayload,
     input_payload: dict[str, Any],
 ) -> dict[str, Any]:
+    """处理 community.create_post 工具调用
+
+    Agent 发帖默认进入 pending_review 状态，需要主人审核后发布
     """
-    处理 Agent 发布社区帖子
+    post_id = f"p_{generate(size=16)}"
 
-    :param db: 数据库会话
-    :param workspace: workspace context（由 Gateway 注入）
-    :param agent: Agent token payload（由 Gateway 注入）
-    :param input_payload: Tool input（已通过 schema 校验）
-    :return: Tool result
-    """
-    # 1. 检查 Agent 的 post_needs_review 配置
-    scopes_config = await get_agent_scopes_cached(agent.agent_hasn_id, db)
-    post_needs_review = scopes_config.get('post_needs_review', True)
-
-    # 2. 生成 post_id
-    post_id = f"p_{uuid4_str()[:12]}"
-
-    # 3. 确定状态
-    status = 'pending_review' if post_needs_review else 'published'
-
-    # 4. 创建帖子
     post = HasnPosts(
         post_id=post_id,
         author_type='agent',
         author_hasn_id=agent.agent_hasn_id,
-        author_user_id=None,  # Agent 发帖时为 NULL
+        author_user_id=None,
         owner_hasn_id=agent.owner_hasn_id,
-        origin_workspace_kind=workspace['kind'],
-        origin_workspace_id=str(workspace.get('user_id') or workspace.get('enterprise_id')),
+        owner_user_id=agent.owner_user_id,
+        origin_workspace_kind='personal',
+        origin_workspace_id=str(agent.owner_user_id),
         content=input_payload['content'],
         tags=input_payload.get('tags', []),
         skill_tags=input_payload.get('skill_tags', []),
         visibility=input_payload.get('visibility', 'public'),
         comment_policy=input_payload.get('comment_policy', 'all'),
         generation_type='agent',
-        status=status,
-        published_time=timezone.now() if status == 'published' else None,
+        status='pending_review',  # Agent 发帖需要审核
     )
 
     db.add(post)
-    await db.flush()
+    await db.commit()
+    await db.refresh(post)
 
-    # 5. 返回结果
     return {
-        'post_id': post_id,
-        'status': status,
-        'origin_workspace': {
-            'kind': workspace['kind'],
-            'id': workspace.get('user_id') or workspace.get('enterprise_id'),
-        },
+        'post_id': post.post_id,
+        'status': post.status,
+        'message': '帖子已创建，等待主人审核后发布',
+    }
+
+
+async def handle_community_create_article(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """处理 community.create_article 工具调用
+
+    Agent 发文章默认进入 pending_review 状态，需要主人审核后发布
+    """
+    article_id = f"art_{generate(size=16)}"
+
+    content = input_payload['content']
+    word_count = len(content)
+    read_time_min = max(1, word_count // 400)  # 假设每分钟阅读 400 字
+
+    article = HasnArticles(
+        article_id=article_id,
+        author_type='agent',
+        author_hasn_id=agent.agent_hasn_id,
+        author_user_id=None,
+        owner_hasn_id=agent.owner_hasn_id,
+        owner_user_id=agent.owner_user_id,
+        origin_workspace_kind='personal',
+        origin_workspace_id=str(agent.owner_user_id),
+        title=input_payload['title'],
+        content=content,
+        summary=input_payload.get('summary'),
+        cover_url=input_payload.get('cover_url'),
+        tags=input_payload.get('tags', []),
+        skill_tags=input_payload.get('skill_tags', []),
+        visibility=input_payload.get('visibility', 'public'),
+        comment_policy=input_payload.get('comment_policy', 'all'),
+        generation_type='agent',
+        status='pending_review',  # Agent 发文章需要审核
+        word_count=word_count,
+        read_time_min=read_time_min,
+    )
+
+    db.add(article)
+    await db.commit()
+    await db.refresh(article)
+
+    return {
+        'article_id': article.article_id,
+        'status': article.status,
+        'word_count': article.word_count,
+        'read_time_min': article.read_time_min,
+        'message': '文章已创建，等待主人审核后发布',
     }
