@@ -1,0 +1,118 @@
+"""社区评论 - Agent API
+
+认证方式: Agent JWT (Bearer token)
+Agent 信息: 通过 request.state.agent 获取
+"""
+from typing import Annotated
+
+from fastapi import APIRouter, Path, Request
+
+from backend.app.hasn.schema.hasn_comments import (
+    CreateHasnCommentsParam,
+    UpdateHasnCommentsParam,
+)
+from backend.app.hasn.service.hasn_comments_service import hasn_comments_service
+from backend.common.dataclasses import AgentTokenPayload
+from backend.common.exception import errors
+from backend.common.response.response_schema import ResponseModel, response_base
+from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
+from backend.database.db import CurrentSession, CurrentSessionTransaction
+
+router = APIRouter()
+
+
+@router.get(
+    '',
+    summary='社区评论列表',
+    dependencies=[DependsAgentJwtAuth],
+    name='agent_list_hasn_comments',
+)
+async def agent_list_hasn_comments(
+    request: Request,
+    db: CurrentSession,
+) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+    # 可以使用 agent.agent_hasn_id, agent.owner_hasn_id, agent.scopes
+    data = await hasn_comments_service.get_list(db=db)
+    return response_base.success(data=data)
+
+
+@router.post(
+    '',
+    summary='创建社区评论',
+    dependencies=[DependsAgentJwtAuth],
+    name='agent_create_hasn_comments',
+)
+async def agent_create_hasn_comments(
+    request: Request,
+    db: CurrentSessionTransaction,
+    obj: CreateHasnCommentsParam,
+) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+    result = await hasn_comments_service.create(db=db, obj=obj)
+    return response_base.success(data=result)
+
+
+@router.get(
+    '/{pk}',
+    summary='获取社区评论详情',
+    dependencies=[DependsAgentJwtAuth],
+    name='agent_get_hasn_comments',
+)
+async def agent_get_hasn_comments(
+    request: Request,
+    db: CurrentSession,
+    pk: Annotated[int, Path(description='社区评论 ID')],
+) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+    hasn_comments = await hasn_comments_service.get(db=db, pk=pk)
+    # TODO: 根据实际业务需求添加权限检查
+    # if hasn_comments.owner_id != agent.owner_hasn_id:
+    #     raise errors.ForbiddenError(msg='无权访问该社区评论')
+    return response_base.success(data=hasn_comments)
+
+
+@router.put(
+    '/{pk}',
+    summary='更新社区评论',
+    dependencies=[DependsAgentJwtAuth],
+    name='agent_update_hasn_comments',
+)
+async def agent_update_hasn_comments(
+    request: Request,
+    db: CurrentSessionTransaction,
+    pk: Annotated[int, Path(description='社区评论 ID')],
+    obj: UpdateHasnCommentsParam,
+) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+    hasn_comments = await hasn_comments_service.get(db=db, pk=pk)
+    # TODO: 根据实际业务需求添加权限检查
+    # if hasn_comments.owner_id != agent.owner_hasn_id:
+    #     raise errors.ForbiddenError(msg='无权修改该社区评论')
+    count = await hasn_comments_service.update(db=db, pk=pk, obj=obj)
+    if count > 0:
+        return response_base.success()
+    return response_base.fail()
+
+
+@router.delete(
+    '/{pk}',
+    summary='删除社区评论',
+    dependencies=[DependsAgentJwtAuth],
+    name='agent_delete_hasn_comments',
+)
+async def agent_delete_hasn_comments(
+    request: Request,
+    db: CurrentSessionTransaction,
+    pk: Annotated[int, Path(description='社区评论 ID')],
+) -> ResponseModel:
+    agent: AgentTokenPayload = request.state.agent
+    hasn_comments = await hasn_comments_service.get(db=db, pk=pk)
+    # TODO: 根据实际业务需求添加权限检查
+    # if hasn_comments.owner_id != agent.owner_hasn_id:
+    #     raise errors.ForbiddenError(msg='无权删除该社区评论')
+    from backend.app.hasn.schema.hasn_comments import DeleteHasnCommentsParam
+    count = await hasn_comments_service.delete(db=db, obj=DeleteHasnCommentsParam(pks=[pk]))
+    if count > 0:
+        return response_base.success()
+    return response_base.fail()
