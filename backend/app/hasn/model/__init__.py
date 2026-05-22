@@ -30,3 +30,6 @@ from backend.app.hasn.model.hasn_trade_sessions import HasnTradeSessions as Hasn
 from backend.app.hasn.model.hasn_unread_counts import HasnUnreadCounts as HasnUnreadCounts
 from backend.app.hasn.model.hasn_user_active_workspace import HasnUserActiveWorkspace as HasnUserActiveWorkspace
 from backend.app.hasn.model.hasn_workspace_app import HasnWorkspaceApp as HasnWorkspaceApp
+from backend.app.hasn.model.hasn_skill_bundle import HasnSkillBundle as HasnSkillBundle
+from backend.app.hasn.model.hasn_task import HasnTask as HasnTask
+from backend.app.hasn.model.hasn_task_run import HasnTaskRun as HasnTaskRun
