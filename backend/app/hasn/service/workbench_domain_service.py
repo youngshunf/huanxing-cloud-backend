@@ -19,6 +19,7 @@ from backend.app.hasn.model import (
     HasnUserActiveWorkspace,
     HasnWorkspaceApp,
 )
+from backend.app.admin.model.user import User
 from backend.app.hasn.service import ragflow_subscriber as _ragflow_subscriber  # noqa: F401
 from backend.app.hasn.service import workspace_notification_subscriber as _workspace_notifications  # noqa: F401
 from backend.app.hasn.service.enterprise_application_service import InviteCodePolicy
@@ -168,15 +169,18 @@ class WorkbenchDomainService:
             (
                 await db.execute(
                     sa
-                    .select(HasnEnterpriseMembership)
+                    .select(HasnEnterpriseMembership, User)
+                    .outerjoin(User, User.id == HasnEnterpriseMembership.user_id)
                     .where(HasnEnterpriseMembership.enterprise_id == enterprise_id)
                     .order_by(HasnEnterpriseMembership.id.asc())
                 )
             )
-            .scalars()
             .all()
         )
-        return {'items': [_membership_payload(member) for member in members], 'enterprise_id': enterprise_id}
+        return {
+            'items': [_membership_payload(member, user) for member, user in members],
+            'enterprise_id': enterprise_id,
+        }
 
     async def apply_enterprise(
         self,
@@ -1274,11 +1278,13 @@ def _enterprise_payload(enterprise) -> dict[str, Any]:
     }
 
 
-def _membership_payload(membership) -> dict[str, Any]:
+def _membership_payload(membership, user=None) -> dict[str, Any]:
     return {
         'id': membership.id,
         'enterprise_id': membership.enterprise_id,
         'user_id': membership.user_id,
+        'nickname': getattr(user, 'nickname', None),
+        'phone': getattr(user, 'phone', None),
         'role': membership.role,
         'status': membership.status,
         'apply_message': membership.apply_message,

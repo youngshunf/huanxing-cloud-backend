@@ -52,6 +52,15 @@ class MembershipStub(_Base):
     decision_note: Mapped[str | None] = mapped_column(sa.Text, default=None)
 
 
+class UserStub(_Base):
+    __tablename__ = 'sys_user'
+
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(sa.String(64), default='')
+    nickname: Mapped[str] = mapped_column(sa.String(64), default='')
+    phone: Mapped[str | None] = mapped_column(sa.String(11), default=None)
+
+
 class InviteCodeStub(_Base):
     __tablename__ = 'hasn_enterprise_invite_code'
 
@@ -249,6 +258,7 @@ async def db_session(monkeypatch) -> AsyncGenerator[AsyncSession, None]:
         'HasnWorkspaceApp': WorkspaceAppStub,
         'HasnRagflowInstance': RagflowInstanceStub,
         'HasnRagflowCredential': RagflowCredentialStub,
+        'User': UserStub,
     }
     for name, replacement in replacements.items():
         monkeypatch.setattr(service_mod, name, replacement, raising=True)
@@ -487,6 +497,26 @@ async def test_list_user_workspaces_returns_cloud_aggregated_workspace_stats(
     assert enterprise_workspace['member_count'] == 3
     assert enterprise_workspace['app_count'] == 1
     assert enterprise_workspace['admin_count'] == 2
+
+
+@pytest.mark.asyncio
+async def test_list_members_returns_cloud_user_profile_fields(db_session: AsyncSession) -> None:
+    service = _service()
+    enterprise = await service.create_enterprise(db_session, user_id=11, name='Acme')
+    db_session.add_all([
+        UserStub(id=11, username='owner', nickname='阿月', phone='13800138000'),
+        UserStub(id=12, username='member', nickname='小林', phone='13900139000'),
+        MembershipStub(enterprise_id=enterprise['id'], user_id=12, role='member', status='approved'),
+    ])
+    await db_session.flush()
+
+    members = await service.list_members(db_session, enterprise_id=enterprise['id'])
+
+    by_user_id = {item['user_id']: item for item in members['items']}
+    assert by_user_id[11]['nickname'] == '阿月'
+    assert by_user_id[11]['phone'] == '13800138000'
+    assert by_user_id[12]['nickname'] == '小林'
+    assert by_user_id[12]['phone'] == '13900139000'
 
 
 @pytest.mark.asyncio
