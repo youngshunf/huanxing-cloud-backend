@@ -17,6 +17,7 @@ from backend.app.hasn.schema.hasn_agents import (
     CloudCreateAgentResponse,
     CreateHasnAgentsParam,
     DeleteHasnAgentsParam,
+    UpdateAgentBindingRequest,
     UpdateAgentProfileRequest,
     UpdateAgentProfileResponse,
     UpdateHasnAgentsParam,
@@ -292,6 +293,39 @@ class HasnAgentProfileService:
         )
         return AgentSyncResponse(owner_id=request.owner_id, server_revision=server_revision, agents=snapshots)
 
+    async def update_binding(
+        self,
+        db: AsyncSession,
+        hasn_id: str,
+        request: UpdateAgentBindingRequest,
+        *,
+        user_id: int | None = None,
+    ) -> AgentSnapshot:
+        import sqlalchemy as sa
+        from backend.utils.timezone import timezone as tz
+
+        result = await db.execute(
+            sa.select(HasnAgents).where(HasnAgents.hasn_id == hasn_id).limit(1)
+        )
+        agent = result.scalar_one_or_none()
+        if agent is None:
+            raise errors.NotFoundError(msg=f'agent {hasn_id} not found')
+        if user_id is not None and not await self.gateway.owns_owner(db, owner_id=agent.owner_id, user_id=user_id):
+            raise errors.AuthorizationError(msg='ERR_HASN_OWNER_ACCESS_DENIED')
+
+        now_unix = int(tz.now().timestamp())
+        await db.execute(
+            sa.update(HasnAgents)
+            .where(HasnAgents.hasn_id == hasn_id)
+            .values(
+                binding_node_id=request.binding_node_id,
+                binding_status=request.binding_status,
+                binding_updated_at=now_unix,
+            )
+        )
+        await db.refresh(agent)
+        return _agent_snapshot(agent)
+
     async def _assert_owner_access(self, db: AsyncSession, *, owner_id: str, user_id: int | None) -> None:
         if user_id is None:
             return
@@ -372,6 +406,9 @@ def _agent_snapshot(agent: Any) -> AgentSnapshot:
         profile_revision=int(getattr(agent, 'profile_revision', 1) or 1),
         status=getattr(agent, 'status', 'active') or 'active',
         social_enabled=bool(getattr(agent, 'social_enabled', False)),
+        binding_node_id=getattr(agent, 'binding_node_id', None),
+        binding_status=getattr(agent, 'binding_status', 'unbound') or 'unbound',
+        binding_updated_at=getattr(agent, 'binding_updated_at', None),
         updated_time=getattr(agent, 'updated_time', None),
     )
 

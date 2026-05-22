@@ -13,12 +13,14 @@ from pydantic import BaseModel, Field
 
 from backend.app.hasn.model import HasnAgents, HasnHumans
 from backend.app.hasn.schema.hasn_agents import (
+    AgentSnapshot,
     AgentSyncRequest,
     AgentSyncResponse,
     CloudCreateAgentRequest,
     CloudCreateAgentResponse,
     CreateHasnAgentsParam,
     GetHasnAgentsDetail,
+    UpdateAgentBindingRequest,
     UpdateAgentProfileRequest,
     UpdateAgentProfileResponse,
     UpdateHasnAgentsParam,
@@ -159,6 +161,27 @@ async def update_my_hasn_agent_profile(
         hasn_id=hasn_id,
         request=body,
         user_id=user_id,
+    )
+    return response_base.success(data=result)
+
+
+@router.patch(
+    '/by-hasn-id/{hasn_id}/binding',
+    summary='daemon 端更新 Agent binding 状态',
+    dependencies=[DependsJwtAuth],
+)
+async def update_my_hasn_agent_binding(
+    request: Request,
+    db: CurrentSessionTransaction,
+    hasn_id: Annotated[str, Path(description='Agent HASN ID, 如 a_xxx')],
+    body: UpdateAgentBindingRequest,
+) -> ResponseSchemaModel[AgentSnapshot]:
+    """daemon 在 activate binding 后调用，同步 binding_node_id 和 binding_status 到云端。"""
+    result = await agent_profile_service.update_binding(
+        db,
+        hasn_id=hasn_id,
+        request=body,
+        user_id=request.user.id,
     )
     return response_base.success(data=result)
 

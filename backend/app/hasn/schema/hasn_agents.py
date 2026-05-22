@@ -32,6 +32,9 @@ class HasnAgentsSchemaBase(SchemaBase):
     status: str = Field(description='状态 (active:活跃:green/disabled:已停用:orange/revoked:已吊销:red)')
     created_via: str = Field(description='创建来源 (guardian:Guardian注册:blue/client:客户端创建:green)')
     social_enabled: bool = Field(default=False, description='是否对外开启社交可见')
+    binding_node_id: str | None = Field(None, description='Agent 当前绑定的 node ID')
+    binding_status: str = Field(default='unbound', description='binding 状态 (unbound/binding/bound/failed)')
+    binding_updated_at: int | None = Field(None, description='binding 状态更新时间（Unix 秒）')
 
 
 class CreateHasnAgentsParam(HasnAgentsSchemaBase):
@@ -82,6 +85,9 @@ class AgentSnapshot(SchemaBase):
     profile_revision: int = Field(default=1, description='Profile 修订号')
     status: str = Field(default='active', description='Agent 状态/生命周期 (active/disabled/revoked/archived/deleted)')
     social_enabled: bool = Field(default=False, description='是否对外开启社交可见')
+    binding_node_id: str | None = Field(None, description='Agent 当前绑定的 node ID')
+    binding_status: str = Field(default='unbound', description='binding 状态 (unbound/binding/bound/failed)')
+    binding_updated_at: int | None = Field(None, description='binding 状态更新时间（Unix 秒）')
     updated_time: datetime | None = Field(None, description='更新时间')
 
 
@@ -153,3 +159,10 @@ class AgentSyncResponse(SchemaBase):
     owner_id: str = Field(description='Owner HASN ID')
     server_revision: int = Field(ge=0, description='当前最大 Profile revision')
     agents: list[AgentSnapshot] = Field(default_factory=list, description='Agent 快照列表')
+
+
+class UpdateAgentBindingRequest(SchemaBase):
+    """daemon 发起的 binding 状态更新请求。"""
+
+    binding_node_id: str = Field(description='绑定的 node ID')
+    binding_status: str = Field(description='binding 状态 (unbound/binding/bound/failed)')

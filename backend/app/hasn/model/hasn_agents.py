@@ -38,4 +38,7 @@ class HasnAgents(Base):
     status: Mapped[str] = mapped_column(sa.String(20), default='', comment='状态/生命周期 (active:活跃:green/disabled:已停用:orange/revoked:已吊销:red/archived:已归档:gray/deleted:已删除:gray)')
     created_via: Mapped[str] = mapped_column(sa.String(20), default='', comment='创建来源 (guardian:Guardian注册:blue/client:客户端创建:green/ws:WS实时注册:purple)')
     social_enabled: Mapped[bool] = mapped_column(sa.Boolean, default=False, comment='是否对外开启社交可见 (true:社交可见/false:仅自用)')
+    binding_node_id: Mapped[str | None] = mapped_column(sa.String(64), default=None, comment='Agent 当前绑定的 node ID')
+    binding_status: Mapped[str] = mapped_column(sa.String(32), default='unbound', comment='binding 状态 (unbound:未绑定:gray/binding:绑定中:blue/bound:已绑定:green/failed:绑定失败:red)')
+    binding_updated_at: Mapped[int | None] = mapped_column(sa.BigInteger, default=None, comment='binding 状态更新时间（Unix 秒）')
     deleted_at: Mapped[datetime | None] = mapped_column(default=None, comment='软删除时间')
