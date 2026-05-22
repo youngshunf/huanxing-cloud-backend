@@ -17,6 +17,8 @@ from backend.app.hasn.model.hasn_node_bindings import HasnNodeBindings as HasnNo
 from backend.app.hasn.model.hasn_nodes import HasnNodes as HasnNodes
 from backend.app.hasn.model.hasn_notifications import HasnNotifications as HasnNotifications
 from backend.app.hasn.model.hasn_owner_api_keys import HasnOwnerApiKeys as HasnOwnerApiKeys
+from backend.app.hasn.model.hasn_ai_native_app_manifest import HasnAiNativeAppManifest as HasnAiNativeAppManifest
+from backend.app.hasn.model.hasn_ai_native_app_audit import HasnAiNativeAppAudit as HasnAiNativeAppAudit
 from backend.app.hasn.model.hasn_pending_intents import HasnPendingIntents as HasnPendingIntents
 from backend.app.hasn.model.hasn_ragflow_credential import HasnRagflowCredential as HasnRagflowCredential
 from backend.app.hasn.model.hasn_ragflow_instance import HasnRagflowInstance as HasnRagflowInstance

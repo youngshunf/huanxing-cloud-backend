@@ -21,6 +21,7 @@ from backend.app.hasn.service.hasn_onboarding_service import (
     HasnOnboardingService,
     HasnPhoneAuthService,
 )
+from backend.app.hasn.service import hasn_onboarding_service as onboarding_service_module
 
 
 class FakeRedis:
@@ -129,7 +130,7 @@ async def test_phone_send_code_reuses_sms_window_and_returns_contract_shape() ->
 
 
 @pytest.mark.asyncio
-async def test_phone_verify_creates_platform_user_and_issues_bearer_token() -> None:
+async def test_phone_verify_creates_platform_user_and_issues_bearer_token(monkeypatch: pytest.MonkeyPatch) -> None:
     redis = FakeRedis()
     await redis.setex(f'{SMS_CODE_PREFIX}:13800138000', 1800, b'654321')
     users = FakeUserGateway()
@@ -138,7 +139,12 @@ async def test_phone_verify_creates_platform_user_and_issues_bearer_token() -> N
 
     async def fake_token_creator(user_id: int, *, multi_login: bool, **kwargs: Any) -> SimpleNamespace:
         captured_token_kwargs.update({'user_id': user_id, 'multi_login': multi_login, **kwargs})
-        return SimpleNamespace(access_token='jwt-token')
+        return SimpleNamespace(access_token='jwt-token', session_uuid='session-phone-verify')
+
+    async def fake_refresh_token_creator(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(refresh_token='refresh-token')
+
+    monkeypatch.setattr(onboarding_service_module, 'create_refresh_token', fake_refresh_token_creator)
 
     service = HasnPhoneAuthService(
         redis=redis,

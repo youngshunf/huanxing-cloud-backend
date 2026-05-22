@@ -21,6 +21,7 @@ router = APIRouter()
 
 class CreateEnterpriseRequest(BaseModel):
     name: str = Field(description='企业名称')
+    slug: str | None = None
     description: str | None = None
     logo: str | None = None
     industry: str | None = None
@@ -51,6 +52,7 @@ async def create_enterprise(
         db,
         user_id=request.user.id,
         name=body.name,
+        slug=body.slug,
         description=body.description,
         logo=body.logo,
         industry=body.industry,

@@ -503,13 +503,7 @@ async def test_enterprise_handlers_delegate_to_domain_service(monkeypatch: pytes
         await module.create_enterprise(
             request,
             db,
-            module.CreateEnterpriseRequest(
-                name='Acme',
-                description='desc',
-                logo='https://cdn.example.com/assets/enterprise-logos/acme.png',
-                industry='software',
-                company_size='11-50',
-            ),
+            module.CreateEnterpriseRequest(name='Acme', slug='acme', description='desc'),
         )
     ).data == {'id': 42}
     assert (await module.search_enterprises(db, q='ac')).data == [{'id': 42}]
@@ -555,10 +549,11 @@ async def test_enterprise_handlers_delegate_to_domain_service(monkeypatch: pytes
                 'db': db,
                 'user_id': 7,
                 'name': 'Acme',
+                'slug': 'acme',
                 'description': 'desc',
-                'logo': 'https://cdn.example.com/assets/enterprise-logos/acme.png',
-                'industry': 'software',
-                'company_size': '11-50',
+                'logo': None,
+                'industry': None,
+                'company_size': None,
                 'join_policy': 'invite_only',
             },
         ),

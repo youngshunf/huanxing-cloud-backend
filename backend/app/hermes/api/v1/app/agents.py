@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.app.hermes.service.hermes_agent_app_service import hermes_agent_app_service
 from backend.app.hermes.service.hermes_runtime_client import HermesRuntimeError
@@ -29,6 +29,18 @@ class CreateAgentPayload(BaseModel):
     user_profile: str | None = None
     auto_start_gateway: bool = True
     llm_mode: str = Field('platform', pattern='^(platform|byok)$')
+    runtime_type: Literal['hermes'] = 'hermes'
+    runtime_location: Literal['local'] = 'local'
+    endpoint_ref: str | None = None
+    auth_ref: str | None = None
+    tenant_ref: str | None = None
+
+    @field_validator('endpoint_ref', 'auth_ref', 'tenant_ref')
+    @classmethod
+    def validate_secret_ref(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith('secret://'):
+            raise ValueError('runtime references must use secret://')
+        return value
 
 
 class UpdateAgentPayload(BaseModel):

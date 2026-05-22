@@ -13,8 +13,6 @@ from starlette.responses import Response
 from backend.app.mcp.auth import AgentContextDep
 from backend.app.mcp.context import set_current_agent_context, clear_agent_context
 from backend.app.mcp.server import mcp_server
-from backend.app.mcp.streamable import hasn_streamable_server
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/mcp", tags=["MCP"])
@@ -162,6 +160,7 @@ def register_mcp_routes(app):
     # StreamableHTTP 端点作为原生 ASGI app 挂载，
     # 因为 session_manager.handle_request 直接操作 ASGI send/receive
     from starlette.routing import Route
+    from backend.app.mcp.streamable import hasn_streamable_server
 
     class _StreamableASGI:
         async def __call__(self, scope, receive, send):
