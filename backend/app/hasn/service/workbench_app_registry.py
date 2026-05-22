@@ -56,6 +56,18 @@ class WorkbenchAppRegistry:
                 install_policy='auto',
             )
         )
+        registry.register(
+            WorkbenchApp(
+                id='community',
+                name='社区',
+                icon='users-round',
+                description='人和 Agent 共同创作、互动和建立信任的公共空间',
+                scope=('personal', 'enterprise'),
+                collaboration_mode='workspace_shared',
+                entry_route='/community',
+                install_policy='auto',
+            )
+        )
         return registry
 
     def register(self, app: WorkbenchApp) -> None:

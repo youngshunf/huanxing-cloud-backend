@@ -208,16 +208,23 @@ class AiNativeRuntimeGateway:
             )
             return self._deny_payload(body.trace_id, '15020', 'input_schema_invalid', audit_id=audit['id'])
 
-        if app_id != 'knowledge' or tool_id != 'knowledge.search':
+        # 路由到对应的 handler
+        if app_id == 'knowledge' and tool_id == 'knowledge.search':
+            result = await workbench_domain_service.search_current_knowledge(
+                db,
+                user_id=agent.owner_user_id,
+                query=str(input_payload['query']),
+                limit=int(input_payload.get('limit') or 50),
+                dataset_id=input_payload.get('dataset_id'),
+            )
+        elif app_id == 'community' and tool_id == 'community.get_feed':
+            from backend.app.hasn.service.community_tool_handlers import handle_community_get_feed
+            result = await handle_community_get_feed(db, workspace, agent, input_payload)
+        elif app_id == 'community' and tool_id == 'community.create_post':
+            from backend.app.hasn.service.community_tool_handlers import handle_community_create_post
+            result = await handle_community_create_post(db, workspace, agent, input_payload)
+        else:
             raise errors.NotFoundError(msg='AI-Native 工具不存在')
-
-        result = await workbench_domain_service.search_current_knowledge(
-            db,
-            user_id=agent.owner_user_id,
-            query=str(input_payload['query']),
-            limit=int(input_payload.get('limit') or 50),
-            dataset_id=input_payload.get('dataset_id'),
-        )
         audit = await self._write_audit(
             db,
             trace_id=body.trace_id,
