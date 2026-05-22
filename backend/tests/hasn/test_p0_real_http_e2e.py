@@ -14,6 +14,9 @@ from backend.app.hasn.api.v1 import ai_native_app as ai_native_api
 from backend.app.hasn.api.v1 import message_hub as message_hub_api
 from backend.app.hasn.api.v1 import onboarding as onboarding_api
 from backend.app.hasn.api.v1.app import knowledge as knowledge_api
+from backend.app.hasn.api.v1.app import hasn_skill_bundle as skill_bundle_api
+from backend.app.hasn.api.v1.app import hasn_task as task_api
+from backend.app.hasn.api.v1.app import hasn_task_run as task_run_api
 from backend.app.hasn.api.v1.app import workspace as workspace_api
 from backend.app.hasn.api.v1 import sync as sync_api
 from backend.app.hasn.model import HasnAiNativeAppAudit, HasnUserActiveWorkspace
@@ -44,6 +47,7 @@ from backend.app.hasn.service.workspace_notification_subscriber import (
     RecordingWorkspaceNotificationActions,
     workspace_notification_subscriber,
 )
+from backend.common.exception import errors
 from backend.common.exception.exception_handler import register_exception
 from backend.database.db import get_db, get_db_transaction
 
@@ -110,6 +114,7 @@ class FakeDb:
         self.workspace_apps: dict[tuple[str, int | None, int | None, str], SimpleNamespace] = {}
         self.active_workspaces: dict[int, SimpleNamespace] = {}
         self.enterprise_memberships: dict[tuple[int, int], SimpleNamespace] = {}
+        self.humans_by_user_id: dict[int, SimpleNamespace] = {}
         self.audit_rows: list[HasnAiNativeAppAudit] = []
 
     async def execute(self, stmt: Any) -> Any:
@@ -135,6 +140,9 @@ class FakeDb:
             return _ScalarResult(self._filter_audit_rows(params))
         if 'hasn_ai_native_app_manifest' in sql:
             return _ScalarResult([])
+        if 'hasn_humans' in sql:
+            row = self.humans_by_user_id.get(params.get('user_id_1'))
+            return _ScalarResult([row] if row is not None else [])
         return _ScalarResult([])
 
     def add(self, row: Any) -> None:
@@ -174,6 +182,263 @@ class FakeDb:
         if created_at_to is not None:
             rows = [row for row in rows if row.created_at <= created_at_to]
         return rows
+
+
+@dataclass
+class TaskRecord:
+    id: int
+    owner_id: str
+    agent_id: str
+    name: str
+    description: str | None
+    prompt: str
+    skill_bundle_ids: list[str]
+    skill_ids: list[str]
+    workflow_id: int | None
+    enabled_toolsets: list[str] | None
+    context_from_task_id: int | None
+    schedule_type: str
+    schedule_config: dict[str, Any]
+    schedule_display: str | None
+    enabled: bool
+    state: str
+    next_run_at: Any
+    last_run_at: Any
+    last_status: str | None
+    last_error: str | None
+    run_count: int
+    repeat_times: int | None
+    repeat_completed: int
+    create_time: Any
+    update_time: Any
+    created_time: Any
+    updated_time: Any
+    created_by: str | None
+
+
+@dataclass
+class SkillBundleRecord:
+    id: int
+    owner_id: str
+    name: str
+    display_name: str | None
+    description: str | None
+    skill_ids: list[str]
+    instruction: str | None
+    create_time: Any
+    update_time: Any
+    created_time: Any
+    updated_time: Any
+
+
+@dataclass
+class TaskRunRecord:
+    id: int
+    task_id: int
+    agent_id: str
+    session_id: str | None
+    source_conversation_id: str | None
+    source_message_id: str | None
+    runtime_node_id: str | None
+    status: str
+    started_at: Any
+    finished_at: Any
+    duration_ms: int | None
+    prompt_snapshot: str | None
+    output: str | None
+    error: str | None
+    model: str | None
+    token_usage: dict[str, Any] | None
+    create_time: Any
+    created_time: Any
+    updated_time: Any
+
+
+def _fixture_time() -> datetime:
+    return datetime(2026, 5, 22, 9, 0, tzinfo=timezone.utc)
+
+
+def _page_payload(items: list[Any]) -> dict[str, Any]:
+    total = len(items)
+    total_pages = 1 if total > 0 else 0
+    return {
+        'items': items,
+        'total': total,
+        'page': 1,
+        'size': 20,
+        'total_pages': total_pages,
+        'links': {
+            'first': '?page=1&size=20',
+            'last': '?page=1&size=20',
+            'self': '?page=1&size=20',
+            'next': None,
+            'prev': None,
+        },
+    }
+
+
+@dataclass
+class InMemoryTaskStore:
+    records: dict[int, TaskRecord] = field(default_factory=dict)
+    next_id: int = 1
+
+    async def get_list_by_owner(self, db: Any, owner_id: str) -> dict[str, Any]:
+        items = [record for record in self.records.values() if record.owner_id == owner_id]
+        items.sort(key=lambda record: record.id, reverse=True)
+        return _page_payload(items)
+
+    async def create(self, db: Any, obj: Any) -> TaskRecord:
+        payload = obj.model_dump()
+        timestamp = _fixture_time()
+        create_time = payload.pop('create_time', None) or timestamp
+        update_time = payload.pop('update_time', None)
+        record = TaskRecord(
+            id=self.next_id,
+            **payload,
+            create_time=create_time,
+            update_time=update_time,
+            created_time=create_time,
+            updated_time=update_time,
+        )
+        self.records[self.next_id] = record
+        self.next_id += 1
+        return record
+
+    async def get(self, db: Any, pk: int) -> TaskRecord:
+        record = self.records.get(pk)
+        if record is None:
+            raise errors.NotFoundError(msg='任务定义不存在')
+        return record
+
+    async def update(self, db: Any, pk: int, obj: Any) -> int:
+        record = self.records.get(pk)
+        if record is None:
+            return 0
+        payload = obj.model_dump()
+        for key, value in payload.items():
+            setattr(record, key, value)
+        timestamp = _fixture_time()
+        record.update_time = timestamp
+        record.updated_time = timestamp
+        return 1
+
+    async def delete(self, db: Any, obj: Any) -> int:
+        deleted = 0
+        for pk in obj.pks:
+            if pk in self.records:
+                del self.records[pk]
+                deleted += 1
+        return deleted
+
+
+@dataclass
+class InMemorySkillBundleStore:
+    records: dict[int, SkillBundleRecord] = field(default_factory=dict)
+    next_id: int = 1
+
+    async def get_list_by_owner(self, db: Any, owner_id: str) -> dict[str, Any]:
+        items = [record for record in self.records.values() if record.owner_id == owner_id]
+        items.sort(key=lambda record: record.id, reverse=True)
+        return _page_payload(items)
+
+    async def create(self, db: Any, obj: Any) -> SkillBundleRecord:
+        payload = obj.model_dump()
+        timestamp = _fixture_time()
+        create_time = payload.pop('create_time', None) or timestamp
+        update_time = payload.pop('update_time', None)
+        record = SkillBundleRecord(
+            id=self.next_id,
+            **payload,
+            create_time=create_time,
+            update_time=update_time,
+            created_time=create_time,
+            updated_time=update_time,
+        )
+        self.records[self.next_id] = record
+        self.next_id += 1
+        return record
+
+    async def get(self, db: Any, pk: int) -> SkillBundleRecord:
+        record = self.records.get(pk)
+        if record is None:
+            raise errors.NotFoundError(msg='Skill Bundle 定义表（多个 skill 的组合）不存在')
+        return record
+
+    async def update(self, db: Any, pk: int, obj: Any) -> int:
+        record = self.records.get(pk)
+        if record is None:
+            return 0
+        payload = obj.model_dump()
+        for key, value in payload.items():
+            setattr(record, key, value)
+        timestamp = _fixture_time()
+        record.update_time = timestamp
+        record.updated_time = timestamp
+        return 1
+
+    async def delete(self, db: Any, obj: Any) -> int:
+        deleted = 0
+        for pk in obj.pks:
+            if pk in self.records:
+                del self.records[pk]
+                deleted += 1
+        return deleted
+
+
+@dataclass
+class InMemoryTaskRunStore:
+    task_store: InMemoryTaskStore
+    records: dict[int, TaskRunRecord] = field(default_factory=dict)
+    next_id: int = 1
+
+    async def get_list_by_owner(self, db: Any, owner_id: str) -> dict[str, Any]:
+        items = [
+            record
+            for record in self.records.values()
+            if (task := self.task_store.records.get(record.task_id)) is not None and task.owner_id == owner_id
+        ]
+        items.sort(key=lambda record: record.id, reverse=True)
+        return _page_payload(items)
+
+    async def create(self, db: Any, obj: Any) -> TaskRunRecord:
+        payload = obj.model_dump()
+        timestamp = _fixture_time()
+        create_time = payload.pop('create_time', None) or timestamp
+        record = TaskRunRecord(
+            id=self.next_id,
+            **payload,
+            create_time=create_time,
+            created_time=create_time,
+            updated_time=None,
+        )
+        self.records[self.next_id] = record
+        self.next_id += 1
+        return record
+
+    async def get(self, db: Any, pk: int) -> TaskRunRecord:
+        record = self.records.get(pk)
+        if record is None:
+            raise errors.NotFoundError(msg='任务执行记录不存在')
+        return record
+
+    async def update(self, db: Any, pk: int, obj: Any) -> int:
+        record = self.records.get(pk)
+        if record is None:
+            return 0
+        payload = obj.model_dump()
+        for key, value in payload.items():
+            setattr(record, key, value)
+        timestamp = _fixture_time()
+        record.updated_time = timestamp
+        return 1
+
+    async def delete(self, db: Any, obj: Any) -> int:
+        deleted = 0
+        for pk in obj.pks:
+            if pk in self.records:
+                del self.records[pk]
+                deleted += 1
+        return deleted
 
 
 class _ScalarResult:
@@ -378,6 +643,9 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app.include_router(onboarding_api.router, prefix='/api/v1/hasn')
     app.include_router(workspace_api.router, prefix='/api/v1/hasn')
     app.include_router(knowledge_api.router, prefix='/api/v1/hasn/app')
+    app.include_router(skill_bundle_api.router, prefix='/api/v1/hasn/app/hasn/skill/bundles')
+    app.include_router(task_api.router, prefix='/api/v1/hasn/app/hasn/tasks')
+    app.include_router(task_run_api.router, prefix='/api/v1/hasn/app/hasn/task/runs')
     app.include_router(sync_api.router, prefix='/api/v1/hasn')
     app.include_router(message_hub_api.router, prefix='/api/v1/hasn')
     app.include_router(ai_native_api.apps_router, prefix='/api/v1/ai-native/apps')
@@ -414,6 +682,26 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
         'search_current_knowledge',
         _fake_search_current_knowledge,
     )
+
+    task_store = InMemoryTaskStore()
+    skill_bundle_store = InMemorySkillBundleStore()
+    task_run_store = InMemoryTaskRunStore(task_store=task_store)
+
+    monkeypatch.setattr(task_api.hasn_task_service, 'get_list_by_owner', task_store.get_list_by_owner)
+    monkeypatch.setattr(task_api.hasn_task_service, 'create', task_store.create)
+    monkeypatch.setattr(task_api.hasn_task_service, 'get', task_store.get)
+    monkeypatch.setattr(task_api.hasn_task_service, 'update', task_store.update)
+    monkeypatch.setattr(task_api.hasn_task_service, 'delete', task_store.delete)
+    monkeypatch.setattr(skill_bundle_api.hasn_skill_bundle_service, 'get_list_by_owner', skill_bundle_store.get_list_by_owner)
+    monkeypatch.setattr(skill_bundle_api.hasn_skill_bundle_service, 'create', skill_bundle_store.create)
+    monkeypatch.setattr(skill_bundle_api.hasn_skill_bundle_service, 'get', skill_bundle_store.get)
+    monkeypatch.setattr(skill_bundle_api.hasn_skill_bundle_service, 'update', skill_bundle_store.update)
+    monkeypatch.setattr(skill_bundle_api.hasn_skill_bundle_service, 'delete', skill_bundle_store.delete)
+    monkeypatch.setattr(task_run_api.hasn_task_run_service, 'get_list_by_owner', task_run_store.get_list_by_owner)
+    monkeypatch.setattr(task_run_api.hasn_task_run_service, 'create', task_run_store.create)
+    monkeypatch.setattr(task_run_api.hasn_task_run_service, 'get', task_run_store.get)
+    monkeypatch.setattr(task_run_api.hasn_task_run_service, 'update', task_run_store.update)
+    monkeypatch.setattr(task_run_api.hasn_task_run_service, 'delete', task_run_store.delete)
 
     phone_auth = HasnPhoneAuthService(
         redis=redis,
@@ -486,6 +774,7 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
         role='admin',
         status='approved',
     )
+    fake_db_instance.humans_by_user_id[7] = SimpleNamespace(hasn_id='h_p0_owner', user_id=7)
     fake_db_instance.active_workspaces[7] = HasnUserActiveWorkspace(user_id=7, kind='personal', enterprise_id=None)
     return app
 
@@ -786,3 +1075,172 @@ def test_runtime_report_rejects_owner_not_bound_to_authenticated_user(monkeypatc
 
     assert response.status_code == 403
     assert sync_gateway.reports == []
+
+
+def test_p0_real_http_flow_covers_task_system_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(make_app(monkeypatch))
+    auth = {'Authorization': 'Bearer jwt-p0-real-http'}
+
+    bundle_create = client.post(
+        '/api/v1/hasn/app/hasn/skill/bundles',
+        headers=auth,
+        json={
+            'owner_id': 'h_other_owner',
+            'name': 'backend-dev',
+            'display_name': '后端开发',
+            'description': 'Backend feature work',
+            'skill_ids': ['pytest', 'test-driven-development'],
+            'instruction': '先跑测试再汇报。',
+            'create_time': None,
+            'update_time': None,
+        },
+    )
+    assert bundle_create.status_code == 200, bundle_create.text
+    bundle_id = bundle_create.json()['data']['id']
+    assert bundle_create.json()['data']['owner_id'] == 'h_p0_owner'
+
+    task_create = client.post(
+        '/api/v1/hasn/app/hasn/tasks',
+        headers=auth,
+        json={
+            'owner_id': 'h_other_owner',
+            'agent_id': 'a_p0_default',
+            'name': '日报任务',
+            'description': '生成日报',
+            'prompt': '生成日报',
+            'skill_bundle_ids': ['backend-dev'],
+            'skill_ids': ['pytest'],
+            'workflow_id': None,
+            'enabled_toolsets': ['terminal'],
+            'context_from_task_id': None,
+            'schedule_type': 'once',
+            'schedule_config': {'run_at': '2026-05-22T09:00:00Z'},
+            'schedule_display': '一次性执行',
+            'enabled': True,
+            'state': 'scheduled',
+            'next_run_at': None,
+            'last_run_at': None,
+            'last_status': None,
+            'last_error': None,
+            'run_count': 0,
+            'repeat_times': None,
+            'repeat_completed': 0,
+            'create_time': None,
+            'update_time': None,
+            'created_by': 'tester',
+        },
+    )
+    assert task_create.status_code == 200, task_create.text
+    task_id = task_create.json()['data']['id']
+    assert task_create.json()['data']['owner_id'] == 'h_p0_owner'
+    assert task_create.json()['data']['skill_bundle_ids'] == ['backend-dev']
+
+    tasks = client.get('/api/v1/hasn/app/hasn/tasks', headers=auth)
+    assert tasks.status_code == 200, tasks.text
+    assert tasks.json()['data']['total'] == 1
+    assert tasks.json()['data']['items'][0]['id'] == task_id
+
+    task_detail = client.get(f'/api/v1/hasn/app/hasn/tasks/{task_id}', headers=auth)
+    assert task_detail.status_code == 200, task_detail.text
+    assert task_detail.json()['data']['name'] == '日报任务'
+
+    task_update = client.put(
+        f'/api/v1/hasn/app/hasn/tasks/{task_id}',
+        headers=auth,
+        json={
+            'owner_id': 'h_other_owner',
+            'agent_id': 'a_p0_default',
+            'name': '日报任务 v2',
+            'description': '生成日报并整理',
+            'prompt': '生成日报并整理',
+            'skill_bundle_ids': ['backend-dev'],
+            'skill_ids': ['pytest'],
+            'workflow_id': None,
+            'enabled_toolsets': ['terminal'],
+            'context_from_task_id': None,
+            'schedule_type': 'once',
+            'schedule_config': {'run_at': '2026-05-22T09:00:00Z'},
+            'schedule_display': '一次性执行',
+            'enabled': False,
+            'state': 'paused',
+            'next_run_at': None,
+            'last_run_at': None,
+            'last_status': None,
+            'last_error': None,
+            'run_count': 0,
+            'repeat_times': None,
+            'repeat_completed': 0,
+            'create_time': None,
+            'update_time': None,
+            'created_by': 'tester',
+        },
+    )
+    assert task_update.status_code == 200, task_update.text
+    assert task_update.json()['data'] is None
+
+    task_run_create = client.post(
+        '/api/v1/hasn/app/hasn/task/runs',
+        headers=auth,
+        json={
+            'task_id': task_id,
+            'agent_id': 'a_p0_default',
+            'session_id': 'sess_task_1',
+            'source_conversation_id': None,
+            'source_message_id': None,
+            'runtime_node_id': 'n_p0_desktop',
+            'status': 'pending',
+            'started_at': None,
+            'finished_at': None,
+            'duration_ms': None,
+            'prompt_snapshot': 'Skill bundles: backend-dev\n\n生成日报',
+            'output': None,
+            'error': None,
+            'model': None,
+            'token_usage': None,
+            'create_time': '2026-05-22T09:00:00Z',
+        },
+    )
+    assert task_run_create.status_code == 200, task_run_create.text
+    task_run_id = task_run_create.json()['data']['id']
+
+    task_runs = client.get('/api/v1/hasn/app/hasn/task/runs', headers=auth)
+    assert task_runs.status_code == 200, task_runs.text
+    assert task_runs.json()['data']['total'] == 1
+    assert task_runs.json()['data']['items'][0]['task_id'] == task_id
+
+    task_run_detail = client.get(f'/api/v1/hasn/app/hasn/task/runs/{task_run_id}', headers=auth)
+    assert task_run_detail.status_code == 200, task_run_detail.text
+    assert task_run_detail.json()['data']['session_id'] == 'sess_task_1'
+
+    bundle_detail = client.get(f'/api/v1/hasn/app/hasn/skill/bundles/{bundle_id}', headers=auth)
+    assert bundle_detail.status_code == 200, bundle_detail.text
+    assert bundle_detail.json()['data']['skill_ids'] == ['pytest', 'test-driven-development']
+
+    bundle_update = client.put(
+        f'/api/v1/hasn/app/hasn/skill/bundles/{bundle_id}',
+        headers=auth,
+        json={
+            'owner_id': 'h_other_owner',
+            'name': 'backend-dev',
+            'display_name': '后端开发',
+            'description': 'Backend feature work updated',
+            'skill_ids': ['pytest'],
+            'instruction': '先跑测试再汇报。',
+            'create_time': None,
+            'update_time': None,
+        },
+    )
+    assert bundle_update.status_code == 200, bundle_update.text
+    assert bundle_update.json()['data'] is None
+
+    bundle_list = client.get('/api/v1/hasn/app/hasn/skill/bundles', headers=auth)
+    assert bundle_list.status_code == 200, bundle_list.text
+    assert bundle_list.json()['data']['items'][0]['description'] == 'Backend feature work updated'
+
+    assert client.delete(f'/api/v1/hasn/app/hasn/task/runs/{task_run_id}', headers=auth).status_code == 200
+    assert client.delete(f'/api/v1/hasn/app/hasn/tasks/{task_id}', headers=auth).status_code == 200
+    assert client.delete(f'/api/v1/hasn/app/hasn/skill/bundles/{bundle_id}', headers=auth).status_code == 200
+
+    task_list_after_delete = client.get('/api/v1/hasn/app/hasn/tasks', headers=auth)
+    assert task_list_after_delete.status_code == 200
+    assert task_list_after_delete.json()['data']['total'] == 0
