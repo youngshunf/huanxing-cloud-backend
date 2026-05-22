@@ -28,7 +28,7 @@ class HasnMessages(Base):
     status: Mapped[int] = mapped_column(sa.SMALLINT(), default=0, comment='消息状态 (1:已发送:blue/2:已送达:cyan/3:已读:green/4:已撤回:red)')
     priority: Mapped[str] = mapped_column(sa.String(10), default='', comment='优先级 (critical:紧急:red/high:高:orange/normal:普通:blue/low:低:gray)')
     reply_to_id: Mapped[int | None] = mapped_column(sa.BIGINT(), default=None, comment='回复的消息 ID')
-    local_id: Mapped[str | UUID | None] = mapped_column(sa.UUID(), default=None, comment='客户端本地 ID（UUID, 用于去重）')
+    local_id: Mapped[str | None] = mapped_column(sa.String(100), default=None, comment='客户端本地 ID（用于去重，不限格式）')
     mentions: Mapped[dict | None] = mapped_column(postgresql.JSONB(), default=None, comment='@提及列表（JSONB: [{hasn_id, star_id, offset, length}]）')
     mention_all: Mapped[bool] = mapped_column(sa.BOOLEAN(), default=True, comment='是否 @所有人')
     context: Mapped[dict | None] = mapped_column(postgresql.JSONB(), default=None, comment='消息上下文 (JSONB)')
