@@ -7,12 +7,15 @@ from typing import Any
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from starlette_context.middleware import ContextMiddleware
+from starlette_context.plugins import RequestIdPlugin
 
 from backend.app.hasn.api.v1.agent import hasn_task_run as agent_task_run_api
 from backend.app.hasn.schema.hasn_skill_bundle import CreateHasnSkillBundleParam
 from backend.app.hasn.schema.hasn_task import CreateHasnTaskParam
 from backend.app.hasn.service import task_scheduler as task_scheduler_module
 from backend.app.hasn.service.task_scheduler import TaskSchedulerService
+from backend.common.exception.exception_handler import register_exception
 from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
 from backend.database.db import get_db, get_db_transaction
 
@@ -40,6 +43,12 @@ class FakeSession:
 class FakeResult:
     def __init__(self, value: Any) -> None:
         self.value = value
+
+    def scalars(self) -> 'FakeResult':
+        return self
+
+    def first(self) -> Any:
+        return self.value
 
     def scalar_one_or_none(self) -> Any:
         return self.value
@@ -80,6 +89,8 @@ class FakeDbSession:
 @pytest.fixture
 def agent_api_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app = FastAPI()
+    app.add_middleware(ContextMiddleware, plugins=[RequestIdPlugin(validate=True)])
+    register_exception(app)
     app.include_router(agent_task_run_api.router, prefix='/api/v1/hasn/agent/hasn/task/runs')
 
     async def fake_agent_auth(request: Request):
@@ -322,6 +333,137 @@ def test_task_and_skill_bundle_schemas_use_name_lists() -> None:
     assert task.skill_ids == ['pytest']
     assert task.enabled_toolsets == ['terminal']
     assert bundle.skill_ids == ['pytest', 'test-driven-development']
+
+
+def test_hasn_app_router_mounts_task_management_routes() -> None:
+    from backend.app.hasn.api.router import app
+
+    routes = {route.path for route in app.routes}
+
+    assert '/api/v1/hasn/app/hasn/tasks' in routes
+    assert '/api/v1/hasn/app/hasn/skill/bundles' in routes
+
+
+def test_app_task_create_overrides_owner_from_authenticated_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.hasn.api.v1.app import hasn_task as module
+    from backend.common.security.jwt import DependsJwtAuth
+
+    fastapi_app = FastAPI()
+    fastapi_app.add_middleware(ContextMiddleware, plugins=[RequestIdPlugin(validate=True)])
+    register_exception(fastapi_app)
+    fastapi_app.include_router(module.router, prefix='/api/v1/hasn/app/hasn/tasks')
+
+    captured: dict[str, Any] = {}
+
+    async def fake_agent_auth(request: Request):
+        request.scope['user'] = SimpleNamespace(id=7)
+        return None
+
+    async def fake_db() -> FakeDbSession:
+        return FakeDbSession([FakeResult(SimpleNamespace(hasn_id='h_owner'))])
+
+    async def fake_create(*, db: Any, obj: Any) -> dict[str, Any]:
+        captured['db'] = db
+        captured['obj'] = obj
+        return {'id': 999, 'owner_id': obj.owner_id}
+
+    monkeypatch.setattr(module.hasn_task_service, 'create', fake_create)
+    fastapi_app.dependency_overrides[DependsJwtAuth.dependency] = fake_agent_auth
+    fastapi_app.dependency_overrides[get_db] = fake_db
+    fastapi_app.dependency_overrides[get_db_transaction] = fake_db
+
+    with TestClient(fastapi_app) as client:
+        response = client.post(
+            '/api/v1/hasn/app/hasn/tasks',
+            json={
+                'owner_id': 'h_other',
+                'agent_id': 'a_agent',
+                'name': '日报',
+                'prompt': '生成日报',
+                'skill_bundle_ids': ['backend-dev'],
+                'skill_ids': ['pytest'],
+                'schedule_type': 'once',
+                'schedule_config': {'run_at': '2026-05-22T09:00:00Z'},
+                'enabled': True,
+                'state': 'scheduled',
+                'run_count': 0,
+                'repeat_completed': 0,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert captured['obj'].owner_id == 'h_owner'
+    assert captured['obj'].agent_id == 'a_agent'
+
+
+def test_app_task_detail_rejects_foreign_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.hasn.api.v1.app import hasn_task as module
+    from backend.common.security.jwt import DependsJwtAuth
+
+    fastapi_app = FastAPI()
+    fastapi_app.add_middleware(ContextMiddleware, plugins=[RequestIdPlugin(validate=True)])
+    register_exception(fastapi_app)
+    fastapi_app.include_router(module.router, prefix='/api/v1/hasn/app/hasn/tasks')
+
+    async def fake_agent_auth(request: Request):
+        request.scope['user'] = SimpleNamespace(id=7)
+        return None
+
+    async def fake_db() -> FakeDbSession:
+        return FakeDbSession([FakeResult(SimpleNamespace(hasn_id='h_owner'))])
+
+    async def fake_get(*, db: Any, pk: int) -> Any:
+        return SimpleNamespace(id=pk, owner_id='h_other')
+
+    monkeypatch.setattr(module.hasn_task_service, 'get', fake_get)
+    fastapi_app.dependency_overrides[DependsJwtAuth.dependency] = fake_agent_auth
+    fastapi_app.dependency_overrides[get_db] = fake_db
+    fastapi_app.dependency_overrides[get_db_transaction] = fake_db
+
+    with TestClient(fastapi_app) as client:
+        response = client.get('/api/v1/hasn/app/hasn/tasks/123')
+
+    assert response.status_code == 403
+
+
+def test_app_task_run_detail_rejects_foreign_task_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.hasn.api.v1.app import hasn_task_run as module
+    from backend.common.security.jwt import DependsJwtAuth
+
+    fastapi_app = FastAPI()
+    fastapi_app.add_middleware(ContextMiddleware, plugins=[RequestIdPlugin(validate=True)])
+    register_exception(fastapi_app)
+    fastapi_app.include_router(module.router, prefix='/api/v1/hasn/app/hasn/task/runs')
+
+    async def fake_agent_auth(request: Request):
+        request.scope['user'] = SimpleNamespace(id=7)
+        return None
+
+    async def fake_db() -> FakeDbSession:
+        return FakeDbSession([FakeResult(SimpleNamespace(hasn_id='h_owner'))])
+
+    async def fake_get_run(*, db: Any, pk: int) -> Any:
+        return SimpleNamespace(id=pk, task_id=123, agent_id='a_agent')
+
+    async def fake_get_task(*, db: Any, pk: int) -> Any:
+        return SimpleNamespace(id=pk, owner_id='h_other')
+
+    monkeypatch.setattr(module.hasn_task_run_service, 'get', fake_get_run)
+    monkeypatch.setattr(module.hasn_task_service, 'get', fake_get_task)
+    fastapi_app.dependency_overrides[DependsJwtAuth.dependency] = fake_agent_auth
+    fastapi_app.dependency_overrides[get_db] = fake_db
+    fastapi_app.dependency_overrides[get_db_transaction] = fake_db
+
+    with TestClient(fastapi_app) as client:
+        response = client.get('/api/v1/hasn/app/hasn/task/runs/456')
+
+    assert response.status_code == 403
 
 
 def _session_ctx(session: Any):

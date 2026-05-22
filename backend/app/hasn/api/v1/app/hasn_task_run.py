@@ -7,6 +7,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, Request
 
+from backend.app.hasn.api.v1.app.hasn_task import _current_owner_id
+from backend.app.hasn.service.hasn_task_service import hasn_task_service
 from backend.app.hasn.schema.hasn_task_run import (
     CreateHasnTaskRunParam,
     GetHasnTaskRunDetail,
@@ -32,7 +34,8 @@ async def get_my_hasn_task_run(
     request: Request,
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnTaskRunDetail]]:
-    page_data = await hasn_task_run_service.get_list(db=db)
+    owner_id = await _current_owner_id(request, db)
+    page_data = await hasn_task_run_service.get_list_by_owner(db=db, owner_id=owner_id)
     return response_base.success(data=page_data)
 
 
@@ -62,8 +65,10 @@ async def get_my_hasn_task_run(
     db: CurrentSession,
     pk: Annotated[int, Path(description='任务执行记录 ID')],
 ) -> ResponseSchemaModel[GetHasnTaskRunDetail]:
+    owner_id = await _current_owner_id(request, db)
     hasn_task_run = await hasn_task_run_service.get(db=db, pk=pk)
-    if hasn_task_run.user_id != request.user.id:
+    task = await hasn_task_service.get(db=db, pk=hasn_task_run.task_id)
+    if task.owner_id != owner_id:
         raise errors.ForbiddenError(msg='无权访问该任务执行记录')
     return response_base.success(data=hasn_task_run)
 
@@ -80,8 +85,10 @@ async def update_my_hasn_task_run(
     pk: Annotated[int, Path(description='任务执行记录 ID')],
     obj: UpdateHasnTaskRunParam,
 ) -> ResponseModel:
+    owner_id = await _current_owner_id(request, db)
     hasn_task_run = await hasn_task_run_service.get(db=db, pk=pk)
-    if getattr(hasn_task_run, 'user_id', request.user.id) != request.user.id:
+    task = await hasn_task_service.get(db=db, pk=hasn_task_run.task_id)
+    if task.owner_id != owner_id:
         raise errors.ForbiddenError(msg='无权修改该任务执行记录')
     count = await hasn_task_run_service.update(db=db, pk=pk, obj=obj)
     if count > 0:
@@ -100,9 +107,10 @@ async def delete_my_hasn_task_run(
     db: CurrentSessionTransaction,
     pk: Annotated[int, Path(description='任务执行记录 ID')],
 ) -> ResponseModel:
-    user_id = request.user.id
+    owner_id = await _current_owner_id(request, db)
     hasn_task_run = await hasn_task_run_service.get(db=db, pk=pk)
-    if hasn_task_run.user_id != user_id:
+    task = await hasn_task_service.get(db=db, pk=hasn_task_run.task_id)
+    if task.owner_id != owner_id:
         raise errors.ForbiddenError(msg='无权删除该任务执行记录')
     from backend.app.hasn.schema.hasn_task_run import DeleteHasnTaskRunParam
     count = await hasn_task_run_service.delete(db=db, obj=DeleteHasnTaskRunParam(pks=[pk]))

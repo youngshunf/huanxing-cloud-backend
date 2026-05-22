@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn.crud.crud_hasn_task_run import hasn_task_run_dao
-from backend.app.hasn.model import HasnTaskRun
+from backend.app.hasn.model import HasnTask, HasnTaskRun
 from backend.app.hasn.schema.hasn_task_run import CreateHasnTaskRunParam, DeleteHasnTaskRunParam, UpdateHasnTaskRunParam
 from backend.common.exception import errors
 from backend.common.pagination import paging_data
@@ -44,6 +44,17 @@ class HasnTaskRunService:
         select_stmt = (
             select(HasnTaskRun)
             .where(HasnTaskRun.task_id == task_id)
+            .order_by(HasnTaskRun.create_time.desc())
+        )
+        return await paging_data(db, select_stmt)
+
+    @staticmethod
+    async def get_list_by_owner(db: AsyncSession, owner_id: str) -> dict[str, Any]:
+        """获取指定 owner 任务下的执行记录列表。"""
+        select_stmt = (
+            select(HasnTaskRun)
+            .join(HasnTask, HasnTask.id == HasnTaskRun.task_id)
+            .where(HasnTask.owner_id == owner_id)
             .order_by(HasnTaskRun.create_time.desc())
         )
         return await paging_data(db, select_stmt)

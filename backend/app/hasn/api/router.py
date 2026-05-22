@@ -205,6 +205,12 @@ from backend.app.hasn.api.v1.app.hasn_task_run import router as app_hasn_task_ru
 app.include_router(app_hasn_im_router, prefix='/im', tags=['HASN IM 业务'])
 app.include_router(app_hasn_api_keys_router, tags=['HASN API Key'])
 app.include_router(app_hasn_nodes_router, prefix='/hasn/nodess', tags=['HASN Node 主-HASN Node 主'])
+app.include_router(
+    app_hasn_skill_bundle_router,
+    prefix='/hasn/skill/bundles',
+    tags=['Skill Bundle 定义表（多个 skill 的组合）-Skill Bundle 定义表（多个 skill 的组合）'],
+)
+app.include_router(app_hasn_task_router, prefix='/hasn/tasks', tags=['任务定义-任务定义'])
 app.include_router(app_hasn_task_run_router, prefix='/hasn/task/runs', tags=['任务执行记录-任务执行记录'])
 app.include_router(
     app_hasn_owner_api_keys_router, prefix='/hasn/owner/api/keyss', tags=['HASN Owner API Key -HASN Owner API Key ']

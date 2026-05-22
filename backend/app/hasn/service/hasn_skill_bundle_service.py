@@ -1,5 +1,6 @@
 from typing import Any, Sequence
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn.crud.crud_hasn_skill_bundle import hasn_skill_bundle_dao
@@ -34,6 +35,12 @@ class HasnSkillBundleService:
         """
         hasn_skill_bundle_select = await hasn_skill_bundle_dao.get_select()
         return await paging_data(db, hasn_skill_bundle_select)
+
+    @staticmethod
+    async def get_list_by_owner(db: AsyncSession, owner_id: str) -> dict[str, Any]:
+        """获取指定 owner 的 Skill Bundle 列表"""
+        select_stmt = select(HasnSkillBundle).where(HasnSkillBundle.owner_id == owner_id)
+        return await paging_data(db, select_stmt)
 
     @staticmethod
     async def get_all(*, db: AsyncSession) -> Sequence[HasnSkillBundle]:
