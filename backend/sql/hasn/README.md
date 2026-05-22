@@ -55,6 +55,7 @@
 ### 非 CRUD 业务表 / 迁移补偿
 
 - `hasn_sync_events.sql`、`hasn_sync_inbox_events.sql`、`hasn_suppressed_messages.sql`、`hasn_agent_runtime_reports.sql` 虽可用 codegen 生成管理/查询骨架，但业务写入必须由后续 S4/S3/S5 服务逻辑控制，不能依赖通用 CRUD 代表完整业务语义。
+- `memory_namespace_revisions.sql` 是记忆 namespace 权威 revision 表，归属 memory sync 业务，不走通用 CRUD 生成写入。
 - `V001__hasn_s0_s1_existing_assets__migration.sql`：旧表补字段、索引、保守 backfill。
 - `V001__hasn_s0_s1_existing_assets__rollback.sql`：仅回滚 S1 additive 字段/索引；S2/S4 写入后不能无备份执行。
 
@@ -81,4 +82,5 @@
 - 错误码：`8024 ERR_MESSAGE_DELIVERY_FAILED` 明确不得用于 RuntimeUnavailable；`8034 ERR_RUNTIME_PRIVATE_METADATA_REJECTED` 覆盖私有元数据拒绝。
 - codegen 说明：HASN SQL 统一使用 `backend/sql/hasn/<table>.sql`，CRUD 禁止手写，生成物包括 backend model/schema/crud/service/api、frontend views/api、menu SQL、dict SQL。
 - codegen CLI：`uv run fba codegen generate --help` 可用；当前 CLI 无 dry-run 参数，本轮用 parser pytest 验证 `backend/sql/hasn/*.sql` 均满足单表 codegen 输入形态。
+- memory sync revision 表保持手写 SQL + 手写服务逻辑，不纳入通用 CRUD 生成链。
 - blocking gap：本轮未发现阻止 S0/S1 SQL 设计的 `CONTRACT_GAP`；OpenAPI `MessageHubSendRequest.envelope` 为开放对象，后续 S4 实现必须由服务端映射规则保证 `owner_id + hasn_id`，不得从客户端发明字段。

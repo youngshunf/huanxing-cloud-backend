@@ -26,6 +26,7 @@ CODEGEN_SQL_FILES = [
     "hasn_group_members.sql",
     "hasn_humans.sql",
     "hasn_messages.sql",
+    "memory_namespace_revisions.sql",
     "hasn_node_bindings.sql",
     "hasn_nodes.sql",
     "hasn_notifications.sql",
@@ -45,6 +46,7 @@ REQUIRED_S1_TABLES = {
     "hasn_owner_api_keys",
     "hasn_sync_events",
     "hasn_sync_inbox_events",
+    "memory_namespace_revisions",
     "hasn_agent_runtime_reports",
     "hasn_suppressed_messages",
     "hasn_pending_intents",
@@ -119,6 +121,20 @@ def test_hasn_sql_codegen_inputs_are_single_table_and_commented():
     assert REQUIRED_S1_TABLES.issubset(parsed)
 
 
+def test_memory_namespace_revisions_schema_is_scope_namespace_authority():
+    table = _parse_table("memory_namespace_revisions.sql")
+    columns = {column.name for column in table.columns}
+
+    for field in ("sync_scope_kind", "sync_scope_id", "namespace", "revision", "last_event_id", "updated_at"):
+        assert field in columns
+
+    raw_sql = (HASN_SQL_DIR / "memory_namespace_revisions.sql").read_text(encoding="utf-8")
+    assert 'PRIMARY KEY ("sync_scope_kind", "sync_scope_id", "namespace")' in raw_sql
+    assert "CHECK (\"sync_scope_kind\" IN ('owner', 'agent'))" in raw_sql
+    assert '"revision"        bigint NOT NULL DEFAULT 0' in raw_sql
+    assert 'idx_memory_namespace_revisions_updated' in raw_sql
+
+
 def test_s1_message_and_suppressed_inbox_ownership_is_explicit():
     messages = _parse_table("hasn_messages.sql")
     message_columns = {column.name for column in messages.columns}
@@ -185,3 +201,10 @@ def test_hasn_h2_alembic_revision_chains_to_h1_contacts_revision():
     h2 = importlib.import_module("backend.alembic.versions.20260425_h2_agent_runtime_binding_phase1")
 
     assert h2.down_revision == h1.revision
+
+
+def test_hasn_h3_memory_namespace_revision_chains_to_h2_revision():
+    h2 = importlib.import_module("backend.alembic.versions.20260425_h2_agent_runtime_binding_phase1")
+    h3 = importlib.import_module("backend.alembic.versions.20260523_h3_memory_namespace_revisions")
+
+    assert h3.down_revision == h2.revision

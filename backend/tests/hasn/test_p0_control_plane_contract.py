@@ -197,6 +197,7 @@ class CapturingSyncGateway:
     reports: list[dict[str, Any]] = field(default_factory=list)
     sync_events: list[Any] = field(default_factory=list)
     client_events: list[Any] = field(default_factory=list)
+    namespace_revisions: dict[tuple[str, str, str], dict[str, Any]] = field(default_factory=dict)
 
     async def save_runtime_report(self, db: Any, report: dict[str, Any]) -> None:
         self.reports.append(report)
@@ -205,21 +206,35 @@ class CapturingSyncGateway:
         return [event for event in self.sync_events if event.revision > after_revision][:limit]
 
     async def save_client_event(self, db: Any, *, owner_id: str, node_id: str, event: Any) -> int | None:
-        self.client_events.append((owner_id, node_id, event))
         if event.event_type.startswith('memory.'):
             from backend.app.hasn.schema.hasn_sync import SyncEventRecord
+            from backend.app.hasn.service.hasn_sync_service import _memory_namespace_revision_key
 
+            sync_scope_kind, sync_scope_id, namespace = _memory_namespace_revision_key(event)
+            revision_key = (sync_scope_kind, sync_scope_id, namespace)
+            previous = self.namespace_revisions.get(revision_key)
+            namespace_revision = int(previous['revision']) + 1 if previous else 1
             revision = len(self.sync_events) + 1
+            event_id = f'se_memory_{revision}'
+            payload = {
+                **event.payload,
+                'client_event_id': event.client_event_id,
+                'node_id': node_id,
+                'namespace_revision': namespace_revision,
+            }
             self.sync_events.append(
                 SyncEventRecord(
-                    event_id=f'se_memory_{revision}',
+                    event_id=event_id,
                     event_type=event.event_type,
                     revision=revision,
                     created_at=datetime(2026, 5, 1, 9, revision, tzinfo=timezone.utc),
-                    payload=dict(event.payload),
+                    payload=payload,
                 )
             )
+            self.namespace_revisions[revision_key] = {'revision': namespace_revision, 'last_event_id': event_id}
+            self.client_events.append((owner_id, node_id, event))
             return revision
+        self.client_events.append((owner_id, node_id, event))
         return None
 
 
@@ -330,3 +345,117 @@ async def test_sync_push_memory_event_becomes_pullable_owner_sync_event() -> Non
     assert [event.event_type for event in pull_response.events] == ['memory.owner_portrait.upserted']
     assert pull_response.events[0].payload['namespace'] == 'portraits'
     assert pull_response.next_cursor == 'owner:h_owner:1'
+
+
+@pytest.mark.asyncio
+async def test_sync_push_memory_events_advance_namespace_revision_independently() -> None:
+    from backend.app.hasn.schema.hasn_sync import ClientEvent, SyncPullRequest, SyncPushRequest
+    from backend.app.hasn.service.hasn_sync_service import HasnSyncService
+
+    gateway = CapturingSyncGateway()
+    service = HasnSyncService(gateway=gateway)
+
+    push_response = await service.push(
+        None,
+        SyncPushRequest(
+            owner_id='h_owner',
+            node_id='n_runtime',
+            events=[
+                ClientEvent(
+                    client_event_id='ce_portrait_1',
+                    event_type='memory.owner_portrait.upserted',
+                    hasn_id='h_owner',
+                    payload={
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_owner',
+                        'namespace': 'portraits',
+                        'record_id': 'owner_portrait:h_owner',
+                        'revision': 1,
+                    },
+                ),
+                ClientEvent(
+                    client_event_id='ce_portrait_2',
+                    event_type='memory.owner_portrait.upserted',
+                    hasn_id='h_owner',
+                    payload={
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_owner',
+                        'namespace': 'portraits',
+                        'record_id': 'owner_portrait:h_owner',
+                        'revision': 2,
+                    },
+                ),
+                ClientEvent(
+                    client_event_id='ce_fact_1',
+                    event_type='memory.owner_fact.upserted',
+                    hasn_id='h_owner',
+                    payload={
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_owner',
+                        'namespace': 'facts',
+                        'record_id': 'fact:h_owner:1',
+                        'revision': 1,
+                    },
+                ),
+            ],
+        ),
+    )
+    pull_response = await service.pull(None, SyncPullRequest(owner_id='h_owner', cursor='owner:h_owner:0'))
+
+    assert push_response.accepted == 3
+    assert push_response.next_cursor == 'owner:h_owner:3'
+    assert [event.revision for event in pull_response.events] == [1, 2, 3]
+    assert [event.payload['namespace_revision'] for event in pull_response.events] == [1, 2, 1]
+    assert gateway.namespace_revisions == {
+        ('owner', 'h_owner', 'portraits'): {'revision': 2, 'last_event_id': 'se_memory_2'},
+        ('owner', 'h_owner', 'facts'): {'revision': 1, 'last_event_id': 'se_memory_3'},
+    }
+    assert pull_response.events[1].payload['sync_scope_kind'] == 'owner'
+    assert pull_response.events[1].payload['sync_scope_id'] == 'h_owner'
+    assert pull_response.events[1].payload['namespace'] == 'portraits'
+    assert pull_response.events[1].payload['record_id'] == 'owner_portrait:h_owner'
+
+
+@pytest.mark.asyncio
+async def test_sync_push_rejects_malformed_memory_event_without_scope_fields() -> None:
+    from backend.app.hasn.schema.hasn_sync import ClientEvent, SyncPushRequest
+    from backend.app.hasn.service.hasn_sync_service import HasnSyncService
+
+    gateway = CapturingSyncGateway()
+    service = HasnSyncService(gateway=gateway)
+
+    push_response = await service.push(
+        None,
+        SyncPushRequest(
+            owner_id='h_owner',
+            node_id='n_runtime',
+            events=[
+                ClientEvent(
+                    client_event_id='ce_bad_memory',
+                    event_type='memory.owner_fact.upserted',
+                    hasn_id='h_owner',
+                    payload={'record_id': 'fact:h_owner:1'},
+                ),
+                ClientEvent(
+                    client_event_id='ce_good_memory',
+                    event_type='memory.owner_fact.upserted',
+                    hasn_id='h_owner',
+                    payload={
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_owner',
+                        'namespace': 'facts',
+                        'record_id': 'fact:h_owner:2',
+                        'revision': 1,
+                    },
+                ),
+            ],
+        ),
+    )
+
+    assert push_response.accepted == 1
+    assert [error.name for error in push_response.rejected] == ['ERR_MEMORY_SYNC_SCOPE_INVALID']
+    assert push_response.next_cursor == 'owner:h_owner:1'
+    assert [event.client_event_id for _, _, event in gateway.client_events] == ['ce_good_memory']
+    assert gateway.namespace_revisions == {
+        ('owner', 'h_owner', 'facts'): {'revision': 1, 'last_event_id': 'se_memory_1'},
+    }

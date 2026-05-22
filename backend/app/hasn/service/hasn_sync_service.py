@@ -31,6 +31,8 @@ from backend.app.hasn.schema.hasn_sync import (
 from backend.common.exception import errors
 from backend.utils.timezone import timezone
 
+MEMORY_SYNC_SCOPE_KINDS = {'owner', 'agent'}
+
 PRIVATE_RUNTIME_KEYS = {
     'workspace',
     'workspace_path',
@@ -51,6 +53,12 @@ _PRIVATE_METADATA_ERROR = ErrorObject(
     code=8034,
     name='ERR_RUNTIME_PRIVATE_METADATA_REJECTED',
     message='Runtime report contains private local metadata.',
+)
+
+_MEMORY_SYNC_SCOPE_ERROR = ErrorObject(
+    code=8035,
+    name='ERR_MEMORY_SYNC_SCOPE_INVALID',
+    message='Memory sync payload missing sync_scope_kind, sync_scope_id, or namespace.',
 )
 
 
@@ -175,7 +183,14 @@ class SqlAlchemySyncGateway:
     ) -> int | None:
         server_revision = None
         if event.event_type.startswith('memory.'):
-            server_revision = await self._append_sync_event(
+            sync_scope_kind, sync_scope_id, namespace = _memory_namespace_revision_key(event)
+            namespace_revision = await self._advance_memory_namespace_revision(
+                db,
+                sync_scope_kind=sync_scope_kind,
+                sync_scope_id=sync_scope_id,
+                namespace=namespace,
+            )
+            server_revision, event_id = await self._append_sync_event_with_id(
                 db,
                 owner_id=owner_id,
                 hasn_id=event.hasn_id or owner_id,
@@ -186,7 +201,15 @@ class SqlAlchemySyncGateway:
                     **event.payload,
                     'client_event_id': event.client_event_id,
                     'node_id': node_id,
+                    'namespace_revision': namespace_revision,
                 },
+            )
+            await self._set_memory_namespace_last_event(
+                db,
+                sync_scope_kind=sync_scope_kind,
+                sync_scope_id=sync_scope_id,
+                namespace=namespace,
+                event_id=event_id,
             )
         await db.execute(
             sa.text(
@@ -235,6 +258,78 @@ class SqlAlchemySyncGateway:
         )
         return server_revision
 
+    async def _advance_memory_namespace_revision(
+        self,
+        db: AsyncSession,
+        *,
+        sync_scope_kind: str,
+        sync_scope_id: str,
+        namespace: str,
+    ) -> int:
+        result = await db.execute(
+            sa.text(
+                '''
+                INSERT INTO public.memory_namespace_revisions (
+                    sync_scope_kind,
+                    sync_scope_id,
+                    namespace,
+                    revision,
+                    updated_at,
+                    created_time,
+                    updated_time
+                ) VALUES (
+                    :sync_scope_kind,
+                    :sync_scope_id,
+                    :namespace,
+                    1,
+                    now(),
+                    now(),
+                    now()
+                )
+                ON CONFLICT (sync_scope_kind, sync_scope_id, namespace)
+                DO UPDATE SET
+                    revision = public.memory_namespace_revisions.revision + 1,
+                    updated_at = now(),
+                    updated_time = now()
+                RETURNING revision
+                '''
+            ),
+            {
+                'sync_scope_kind': sync_scope_kind,
+                'sync_scope_id': sync_scope_id,
+                'namespace': namespace,
+            },
+        )
+        return int(result.mappings().one()['revision'])
+
+    async def _set_memory_namespace_last_event(
+        self,
+        db: AsyncSession,
+        *,
+        sync_scope_kind: str,
+        sync_scope_id: str,
+        namespace: str,
+        event_id: str,
+    ) -> None:
+        await db.execute(
+            sa.text(
+                '''
+                UPDATE public.memory_namespace_revisions
+                SET last_event_id = :event_id,
+                    updated_time = now()
+                WHERE sync_scope_kind = :sync_scope_kind
+                  AND sync_scope_id = :sync_scope_id
+                  AND namespace = :namespace
+                '''
+            ),
+            {
+                'sync_scope_kind': sync_scope_kind,
+                'sync_scope_id': sync_scope_id,
+                'namespace': namespace,
+                'event_id': event_id,
+            },
+        )
+
     async def _append_sync_event(
         self,
         db: AsyncSession,
@@ -246,6 +341,28 @@ class SqlAlchemySyncGateway:
         aggregate_id: str,
         payload: dict[str, Any],
     ) -> int:
+        revision, _event_id = await self._append_sync_event_with_id(
+            db,
+            owner_id=owner_id,
+            hasn_id=hasn_id,
+            event_type=event_type,
+            aggregate_type=aggregate_type,
+            aggregate_id=aggregate_id,
+            payload=payload,
+        )
+        return revision
+
+    async def _append_sync_event_with_id(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        hasn_id: str,
+        event_type: str,
+        aggregate_type: str,
+        aggregate_id: str,
+        payload: dict[str, Any],
+    ) -> tuple[int, str]:
         revision_result = await db.execute(
             sa.text(
                 '''
@@ -257,6 +374,7 @@ class SqlAlchemySyncGateway:
             {'owner_id': owner_id},
         )
         revision = int(revision_result.mappings().one()['revision'])
+        event_id = f'se_{uuid.uuid4().hex[:24]}'
         await db.execute(
             sa.text(
                 '''
@@ -288,7 +406,7 @@ class SqlAlchemySyncGateway:
                 '''
             ),
             {
-                'event_id': f'se_{uuid.uuid4().hex[:24]}',
+                'event_id': event_id,
                 'owner_id': owner_id,
                 'hasn_id': hasn_id,
                 'event_type': event_type,
@@ -298,7 +416,7 @@ class SqlAlchemySyncGateway:
                 'revision': revision,
             },
         )
-        return revision
+        return revision, event_id
 
 
 @dataclass(slots=True)
@@ -334,7 +452,15 @@ class HasnSyncService:
                 continue
             save_client_event = getattr(self.gateway, 'save_client_event', None)
             if save_client_event:
-                server_revision = await save_client_event(db, owner_id=request.owner_id, node_id=node_id, event=event)
+                try:
+                    server_revision = await save_client_event(
+                        db, owner_id=request.owner_id, node_id=node_id, event=event
+                    )
+                except errors.RequestError as exc:
+                    if event.event_type.startswith('memory.') and getattr(exc, 'msg', None) == 'ERR_MEMORY_SYNC_SCOPE_INVALID':
+                        rejected.append(_MEMORY_SYNC_SCOPE_ERROR)
+                        continue
+                    raise
                 if server_revision is not None:
                     max_server_revision = max(max_server_revision, int(server_revision))
         accepted = len(request.events) - len(rejected)
@@ -411,6 +537,22 @@ def _memory_aggregate_id(event: ClientEvent) -> str:
     if namespace and sync_scope_kind and sync_scope_id:
         return f'{sync_scope_kind}:{sync_scope_id}:{namespace}'
     return event.client_event_id
+
+
+def _memory_namespace_revision_key(event: ClientEvent) -> tuple[str, str, str]:
+    sync_scope_kind = _required_memory_payload_string(event, 'sync_scope_kind')
+    sync_scope_id = _required_memory_payload_string(event, 'sync_scope_id')
+    namespace = _required_memory_payload_string(event, 'namespace')
+    if sync_scope_kind not in MEMORY_SYNC_SCOPE_KINDS:
+        raise errors.RequestError(msg='ERR_MEMORY_SYNC_SCOPE_INVALID')
+    return sync_scope_kind, sync_scope_id, namespace
+
+
+def _required_memory_payload_string(event: ClientEvent, key: str) -> str:
+    value = event.payload.get(key)
+    if not isinstance(value, str) or not value:
+        raise errors.RequestError(msg='ERR_MEMORY_SYNC_SCOPE_INVALID')
+    return value
 
 
 def _report_id(owner_id: str, node_id: str, summary: RuntimeSummary) -> str:

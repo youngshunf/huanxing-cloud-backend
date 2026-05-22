@@ -254,6 +254,7 @@ class InMemorySyncGateway:
     client_events: list[Any] = field(default_factory=list)
     sync_events: list[Any] = field(default_factory=list)
     owner_user_ids: dict[str, int] = field(default_factory=lambda: {'h_p0_owner': 7})
+    namespace_revisions: dict[tuple[str, str, str], dict[str, Any]] = field(default_factory=dict)
 
     async def owns_owner(self, _db: Any, *, owner_id: str, user_id: int) -> bool:
         return self.owner_user_ids.get(owner_id) == user_id
@@ -278,17 +279,31 @@ class InMemorySyncGateway:
     async def save_client_event(self, _db: Any, *, owner_id: str, node_id: str, event: Any) -> int | None:
         from backend.app.hasn.schema.hasn_sync import SyncEventRecord
 
-        self.client_events.append((owner_id, node_id, event))
         if not event.event_type.startswith('memory.'):
+            self.client_events.append((owner_id, node_id, event))
             return None
+        sync_scope_kind = str(event.payload['sync_scope_kind'])
+        sync_scope_id = str(event.payload['sync_scope_id'])
+        namespace = str(event.payload['namespace'])
+        revision_key = (sync_scope_kind, sync_scope_id, namespace)
+        previous = self.namespace_revisions.get(revision_key)
+        namespace_revision = int(previous['revision']) + 1 if previous else 1
         revision = len(self.sync_events) + 1
+        event_id = f'se_memory_{revision}'
         self.sync_events.append(SyncEventRecord(
-            event_id=f'se_memory_{revision}',
+            event_id=event_id,
             event_type=event.event_type,
             revision=revision,
             created_at=datetime(2026, 5, 1, 0, revision, tzinfo=timezone.utc),
-            payload={**event.payload, 'client_event_id': event.client_event_id, 'node_id': node_id},
+            payload={
+                **event.payload,
+                'client_event_id': event.client_event_id,
+                'node_id': node_id,
+                'namespace_revision': namespace_revision,
+            },
         ))
+        self.namespace_revisions[revision_key] = {'revision': namespace_revision, 'last_event_id': event_id}
+        self.client_events.append((owner_id, node_id, event))
         return revision
 
 
@@ -648,6 +663,7 @@ def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_an
     assert memory_pull.status_code == 200
     assert [event['event_type'] for event in memory_pull.json()['events']] == ['memory.owner_portrait.upserted']
     assert memory_pull.json()['events'][0]['payload']['namespace'] == 'portraits'
+    assert memory_pull.json()['events'][0]['payload']['namespace_revision'] == 1
     assert memory_pull.json()['next_cursor'] == 'owner:h_p0_owner:1'
 
     human_message = client.post(
