@@ -19,6 +19,7 @@ from croniter import croniter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.hasn.model.hasn_skill_bundle import HasnSkillBundle
 from backend.app.hasn.model.hasn_task import HasnTask
 from backend.app.hasn.model.hasn_task_run import HasnTaskRun
 from backend.app.hasn.service.ws_router import ws_router
@@ -135,6 +136,11 @@ class TaskSchedulerService:
             ctx = await self._load_context_from(session, task.context_from_task_id)
             if ctx:
                 context['previous_output'] = ctx
+        skill_bundle_definitions = await self._load_skill_bundle_definitions(
+            session,
+            task.owner_id,
+            task.skill_bundle_ids or [],
+        )
 
         # 3. 创建 hasn_task_run（status=pending）
         task_run = HasnTaskRun(
@@ -161,6 +167,7 @@ class TaskSchedulerService:
             'agent_id': task.agent_id,
             'prompt': prompt,
             'skill_bundles': task.skill_bundle_ids or [],
+            'skill_bundle_definitions': skill_bundle_definitions,
             'skills': task.skill_ids or [],
             'enabled_toolsets': task.enabled_toolsets,
             'context': context,
@@ -209,6 +216,38 @@ class TaskSchedulerService:
         result = await session.execute(stmt)
         run = result.scalar_one_or_none()
         return run.output if run else None
+
+    async def _load_skill_bundle_definitions(
+        self,
+        session: AsyncSession,
+        owner_id: str,
+        bundle_names: list[str],
+    ) -> list[dict[str, Any]]:
+        """加载任务引用的 Skill Bundle 定义，供节点构建实际执行 prompt。"""
+        if not bundle_names:
+            return []
+        stmt = (
+            select(HasnSkillBundle)
+            .where(HasnSkillBundle.owner_id == owner_id)
+            .where(HasnSkillBundle.name.in_(bundle_names))
+        )
+        result = await session.execute(stmt)
+        by_name = {bundle.name: bundle for bundle in result.scalars().all()}
+        definitions: list[dict[str, Any]] = []
+        for name in bundle_names:
+            bundle = by_name.get(name)
+            if not bundle:
+                continue
+            definitions.append(
+                {
+                    'name': bundle.name,
+                    'display_name': bundle.display_name,
+                    'description': bundle.description,
+                    'skill_ids': bundle.skill_ids or [],
+                    'instruction': bundle.instruction,
+                }
+            )
+        return definitions
 
     async def handle_task_result(
         self,

@@ -45,6 +45,17 @@ class FakeResult:
         return self.value
 
 
+class FakeScalarsResult:
+    def __init__(self, values: list[Any]) -> None:
+        self.values = values
+
+    def scalars(self) -> 'FakeScalarsResult':
+        return self
+
+    def all(self) -> list[Any]:
+        return self.values
+
+
 class FakeWsRouter:
     def __init__(self) -> None:
         self.pushed: list[tuple[str, dict[str, Any]]] = []
@@ -94,7 +105,14 @@ async def test_scheduler_dispatch_persists_and_sends_task_session_context(
     monkeypatch.setattr(module, 'ws_router', router)
 
     scheduler = module.TaskSchedulerService()
-    session = FakeSession()
+    bundle = SimpleNamespace(
+        name='backend-dev',
+        display_name='后端开发',
+        description='Backend feature work',
+        skill_ids=['pytest', 'test-driven-development'],
+        instruction='先运行后端测试，再汇报结果。',
+    )
+    session = FakeSession(execute_results=[FakeScalarsResult([bundle])])
     now = datetime(2026, 5, 22, 9, 0, tzinfo=timezone.utc)
     task = SimpleNamespace(
         id=123,
@@ -141,6 +159,15 @@ async def test_scheduler_dispatch_persists_and_sends_task_session_context(
                     'agent_id': 'a_agent',
                     'prompt': '生成日报',
                     'skill_bundles': ['backend-dev'],
+                    'skill_bundle_definitions': [
+                        {
+                            'name': 'backend-dev',
+                            'display_name': '后端开发',
+                            'description': 'Backend feature work',
+                            'skill_ids': ['pytest', 'test-driven-development'],
+                            'instruction': '先运行后端测试，再汇报结果。',
+                        }
+                    ],
                     'skills': ['test-driven-development'],
                     'enabled_toolsets': ['terminal'],
                     'context': {},
@@ -148,6 +175,41 @@ async def test_scheduler_dispatch_persists_and_sends_task_session_context(
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_dispatch_injects_previous_successful_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler = TaskSchedulerService()
+    previous_run = SimpleNamespace(output='上次执行结果')
+    session = FakeSession(execute_results=[FakeResult(previous_run), FakeScalarsResult([])])
+    now = datetime(2026, 5, 22, 10, 0, tzinfo=timezone.utc)
+    task = SimpleNamespace(
+        id=124,
+        owner_id='h_owner',
+        agent_id='a_agent',
+        prompt='继续生成日报',
+        skill_bundle_ids=[],
+        skill_ids=[],
+        enabled_toolsets=None,
+        context_from_task_id=123,
+        schedule_type='interval',
+        schedule_config={'minutes': 60},
+        next_run_at=now,
+        last_run_at=None,
+        run_count=0,
+        repeat_times=None,
+        repeat_completed=0,
+        enabled=True,
+        state='scheduled',
+    )
+
+    router = FakeWsRouter()
+    monkeypatch.setattr(task_scheduler_module, 'ws_router', router)
+    await scheduler._dispatch_task(session, task, now)
+
+    assert router.pushed[0][1]['params']['context'] == {'previous_output': '上次执行结果'}
 
 
 @pytest.mark.asyncio
