@@ -10,9 +10,9 @@ class HasnSkillBundleSchemaBase(SchemaBase):
     name: str = Field(description='Bundle 名称（唯一标识）')
     display_name: str | None = Field(None, description='显示名称')
     description: str | None = Field(None, description='描述')
-    skill_ids: dict = Field(description='Skill 名称列表，如 ["github-code-review", "test-driven-development"]')
+    skill_ids: list[str] = Field(default_factory=list, description='Skill 名称列表，如 ["github-code-review", "test-driven-development"]')
     instruction: str | None = Field(None, description='可选的额外指导语，会在加载 skills 前注入')
-    create_time: datetime = Field(description='创建时间')
+    create_time: datetime | None = Field(None, description='创建时间')
     update_time: datetime | None = Field(None, description='更新时间')
 
 

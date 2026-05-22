@@ -9,6 +9,8 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from backend.app.hasn.api.v1.agent import hasn_task_run as agent_task_run_api
+from backend.app.hasn.schema.hasn_skill_bundle import CreateHasnSkillBundleParam
+from backend.app.hasn.schema.hasn_task import CreateHasnTaskParam
 from backend.app.hasn.service import task_scheduler as task_scheduler_module
 from backend.app.hasn.service.task_scheduler import TaskSchedulerService
 from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
@@ -230,6 +232,34 @@ def test_task_result_route_accepts_only_executing_agent(
     assert task.last_status == 'success'
     assert task.last_error is None
     assert session.committed is True
+
+
+def test_task_and_skill_bundle_schemas_use_name_lists() -> None:
+    task = CreateHasnTaskParam(
+        owner_id='h_owner',
+        agent_id='a_agent',
+        name='日报',
+        prompt='生成日报',
+        skill_bundle_ids=['backend-dev'],
+        skill_ids=['pytest'],
+        enabled_toolsets=['terminal'],
+        schedule_type='once',
+        schedule_config={'run_at': '2026-05-22T09:00:00Z'},
+        enabled=True,
+        state='scheduled',
+        run_count=0,
+        repeat_completed=0,
+    )
+    bundle = CreateHasnSkillBundleParam(
+        owner_id='h_owner',
+        name='backend-dev',
+        skill_ids=['pytest', 'test-driven-development'],
+    )
+
+    assert task.skill_bundle_ids == ['backend-dev']
+    assert task.skill_ids == ['pytest']
+    assert task.enabled_toolsets == ['terminal']
+    assert bundle.skill_ids == ['pytest', 'test-driven-development']
 
 
 def _session_ctx(session: Any):
