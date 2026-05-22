@@ -65,6 +65,7 @@ async def agent_report_task_result(
     body = await request.json()
     run_id = body.get('run_id')
     status = body.get('status', 'error')
+    prompt_snapshot = body.get('prompt_snapshot')
     output = body.get('output')
     error = body.get('error')
     model = body.get('model')
@@ -78,6 +79,7 @@ async def agent_report_task_result(
         run_id=run_id,
         status=status,
         reporting_agent_id=agent.agent_hasn_id,
+        prompt_snapshot=prompt_snapshot,
         output=output,
         error=error,
         model=model,

@@ -215,6 +215,7 @@ class TaskSchedulerService:
         run_id: int,
         status: str,
         reporting_agent_id: str,
+        prompt_snapshot: str | None = None,
         output: str | None = None,
         error: str | None = None,
         model: str | None = None,
@@ -228,6 +229,7 @@ class TaskSchedulerService:
                 run_id=run_id,
                 status=status,
                 reporting_agent_id=reporting_agent_id,
+                prompt_snapshot=prompt_snapshot,
                 output=output,
                 error=error,
                 model=model,
@@ -241,6 +243,7 @@ class TaskSchedulerService:
         run_id: int,
         status: str,
         reporting_agent_id: str,
+        prompt_snapshot: str | None = None,
         output: str | None = None,
         error: str | None = None,
         model: str | None = None,
@@ -259,6 +262,8 @@ class TaskSchedulerService:
             raise errors.ForbiddenError(msg='agent cannot report this task_run')
 
         task_run.status = status
+        if prompt_snapshot:
+            task_run.prompt_snapshot = prompt_snapshot
         task_run.output = output
         task_run.error = error
         task_run.model = model
