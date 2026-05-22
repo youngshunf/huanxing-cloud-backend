@@ -54,7 +54,7 @@ async def resolve_target(db: AsyncSession, target: str) -> dict[str, Any] | None
                 'hasn_id': human.hasn_id,
                 'star_id': human.star_id,
                 'entity_type': 'human',
-                'name': human.name,
+                'name': human.nickname,  # HasnHumans 使用 nickname 字段
             }
         return None
 
@@ -68,7 +68,7 @@ async def resolve_target(db: AsyncSession, target: str) -> dict[str, Any] | None
                 'hasn_id': agent.hasn_id,
                 'star_id': agent.star_id,
                 'entity_type': 'agent',
-                'name': agent.name,
+                'name': agent.display_name,  # HasnAgents 使用 display_name 字段
                 'owner_id': agent.owner_id,
             }
         return None
@@ -107,7 +107,7 @@ async def resolve_target(db: AsyncSession, target: str) -> dict[str, Any] | None
                 'hasn_id': agent.hasn_id,
                 'star_id': agent.star_id,
                 'entity_type': 'agent',
-                'name': agent.name,
+                'name': agent.display_name,  # HasnAgents 使用 display_name 字段
                 'owner_id': agent.owner_id,
             }
     else:
@@ -121,7 +121,7 @@ async def resolve_target(db: AsyncSession, target: str) -> dict[str, Any] | None
                 'hasn_id': human.hasn_id,
                 'star_id': human.star_id,
                 'entity_type': 'human',
-                'name': human.name,
+                'name': human.nickname,  # HasnHumans 使用 nickname 字段
             }
 
     return None
