@@ -307,6 +307,136 @@ def test_task_result_route_accepts_only_executing_agent(
     assert session.committed is True
 
 
+@pytest.mark.asyncio
+async def test_scheduler_dispatch_result_roundtrip_is_readable_from_app_task_run_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.hasn.api.v1.agent import hasn_task_run as agent_task_run_module
+    from backend.app.hasn.api.v1.app import hasn_task_run as app_task_run_module
+    from backend.app.hasn.service import task_scheduler as module
+    from backend.common.security.jwt import DependsJwtAuth
+
+    fastapi_app = FastAPI()
+    fastapi_app.add_middleware(ContextMiddleware, plugins=[RequestIdPlugin(validate=True)])
+    register_exception(fastapi_app)
+    fastapi_app.include_router(
+        agent_task_run_module.router,
+        prefix='/api/v1/hasn/agent/hasn/task/runs',
+    )
+    fastapi_app.include_router(
+        app_task_run_module.router,
+        prefix='/api/v1/hasn/app/hasn/task/runs',
+    )
+
+    async def fake_agent_auth(request: Request):
+        request.state.agent = SimpleNamespace(agent_hasn_id='a_agent')
+        return None
+
+    async def fake_user_auth(request: Request):
+        request.scope['user'] = SimpleNamespace(id=7, hasn_id='h_owner')
+        return None
+
+    async def fake_db() -> FakeDbSession:
+        return FakeDbSession()
+
+    fastapi_app.dependency_overrides[DependsAgentJwtAuth.dependency] = fake_agent_auth
+    fastapi_app.dependency_overrides[DependsJwtAuth.dependency] = fake_user_auth
+    fastapi_app.dependency_overrides[get_db] = fake_db
+    fastapi_app.dependency_overrides[get_db_transaction] = fake_db
+
+    router = FakeWsRouter()
+    monkeypatch.setattr(module, 'ws_router', router)
+    scheduler = module.TaskSchedulerService()
+    bundle = SimpleNamespace(
+        name='backend-dev',
+        display_name='后端开发',
+        description='Backend feature work',
+        skill_ids=['pytest'],
+        instruction='先运行后端测试，再汇报结果。',
+    )
+    dispatch_session = FakeSession(execute_results=[FakeScalarsResult([bundle])])
+    now = datetime(2026, 5, 22, 9, 0, tzinfo=timezone.utc)
+    task = SimpleNamespace(
+        id=123,
+        owner_id='h_owner',
+        agent_id='a_agent',
+        prompt='生成日报',
+        skill_bundle_ids=['backend-dev'],
+        skill_ids=['pytest'],
+        enabled_toolsets=['terminal'],
+        context_from_task_id=None,
+        schedule_type='once',
+        schedule_config={'run_at': now.isoformat()},
+        next_run_at=now,
+        last_run_at=None,
+        run_count=0,
+        repeat_times=None,
+        repeat_completed=0,
+        enabled=True,
+        state='scheduled',
+    )
+
+    await scheduler._dispatch_task(dispatch_session, task, now)
+
+    assert router.pushed[0][0] == 'a_agent'
+    assert router.pushed[0][1]['method'] == 'hasn.task.exec'
+    assert router.pushed[0][1]['params']['skill_bundle_definitions'] == [
+        {
+            'name': 'backend-dev',
+            'display_name': '后端开发',
+            'description': 'Backend feature work',
+            'skill_ids': ['pytest'],
+            'instruction': '先运行后端测试，再汇报结果。',
+        }
+    ]
+
+    task_run = dispatch_session.added[0]
+    task_run.created_time = task_run.create_time
+    task_run.updated_time = None
+    task_record = SimpleNamespace(id=123, owner_id='h_owner', last_status=None, last_error=None)
+    report_session = FakeSession(execute_results=[FakeResult(task_run), FakeResult(task_record)])
+    monkeypatch.setattr(module, 'async_db_session', lambda: _session_ctx(report_session))
+
+    async def fake_get_run(*, db: Any, pk: int) -> Any:
+        assert pk == task_run.id
+        return task_run
+
+    async def fake_get_task(*, db: Any, pk: int) -> Any:
+        assert pk == 123
+        return task_record
+
+    monkeypatch.setattr(app_task_run_module.hasn_task_run_service, 'get', fake_get_run)
+    monkeypatch.setattr(app_task_run_module.hasn_task_service, 'get', fake_get_task)
+
+    with TestClient(fastapi_app) as client:
+        report = client.post(
+            '/api/v1/hasn/agent/hasn/task/runs/task-result',
+            json={
+                'run_id': task_run.id,
+                'status': 'success',
+                'prompt_snapshot': 'Skill bundles: backend-dev\n\n[Skill Bundle: backend-dev]\n生成日报',
+                'output': '日报完成',
+                'model': 'runtime-model',
+                'token_usage': {'input_tokens': 1, 'output_tokens': 2, 'total_tokens': 3},
+                'duration_ms': 1200,
+            },
+        )
+        detail = client.get(f'/api/v1/hasn/app/hasn/task/runs/{task_run.id}')
+
+    assert report.status_code == 200, report.text
+    assert report.json()['data'] == {'run_id': task_run.id, 'status': 'success'}
+    assert report_session.committed is True
+    assert task_record.last_status == 'success'
+    assert task_record.last_error is None
+    assert detail.status_code == 200, detail.text
+    assert detail.json()['data']['id'] == task_run.id
+    assert detail.json()['data']['status'] == 'success'
+    assert detail.json()['data']['output'] == '日报完成'
+    assert detail.json()['data']['prompt_snapshot'] == (
+        'Skill bundles: backend-dev\n\n[Skill Bundle: backend-dev]\n生成日报'
+    )
+
+
 def test_task_and_skill_bundle_schemas_use_name_lists() -> None:
     task = CreateHasnTaskParam(
         owner_id='h_owner',
