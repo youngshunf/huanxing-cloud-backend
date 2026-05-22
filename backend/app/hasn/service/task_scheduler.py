@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.hasn.model.hasn_task import HasnTask
 from backend.app.hasn.model.hasn_task_run import HasnTaskRun
 from backend.app.hasn.service.ws_router import ws_router
+from backend.common.exception import errors
 from backend.database.db import async_db_session
 
 logger = logging.getLogger(__name__)
@@ -213,6 +214,7 @@ class TaskSchedulerService:
         self,
         run_id: int,
         status: str,
+        reporting_agent_id: str,
         output: str | None = None,
         error: str | None = None,
         model: str | None = None,
@@ -221,32 +223,59 @@ class TaskSchedulerService:
     ) -> bool:
         """处理 hasn-node 回传的 TaskResult"""
         async with async_db_session() as session:
-            stmt = select(HasnTaskRun).where(HasnTaskRun.id == run_id)
-            result = await session.execute(stmt)
-            task_run = result.scalar_one_or_none()
+            return await self._handle_task_result_in_session(
+                session=session,
+                run_id=run_id,
+                status=status,
+                reporting_agent_id=reporting_agent_id,
+                output=output,
+                error=error,
+                model=model,
+                token_usage=token_usage,
+                duration_ms=duration_ms,
+            )
 
-            if not task_run:
-                logger.warning(f'[TaskScheduler] task_run {run_id} not found')
-                return False
+    async def _handle_task_result_in_session(
+        self,
+        session: AsyncSession,
+        run_id: int,
+        status: str,
+        reporting_agent_id: str,
+        output: str | None = None,
+        error: str | None = None,
+        model: str | None = None,
+        token_usage: dict[str, int] | None = None,
+        duration_ms: int | None = None,
+    ) -> bool:
+        stmt = select(HasnTaskRun).where(HasnTaskRun.id == run_id)
+        result = await session.execute(stmt)
+        task_run = result.scalar_one_or_none()
 
-            task_run.status = status
-            task_run.output = output
-            task_run.error = error
-            task_run.model = model
-            task_run.token_usage = token_usage
-            task_run.duration_ms = duration_ms
-            task_run.finished_at = datetime.now(tz.utc)
+        if not task_run:
+            logger.warning(f'[TaskScheduler] task_run {run_id} not found')
+            return False
 
-            # 更新 hasn_task 的 last_status/last_error
-            task_stmt = select(HasnTask).where(HasnTask.id == task_run.task_id)
-            task_result = await session.execute(task_stmt)
-            task = task_result.scalar_one_or_none()
-            if task:
-                task.last_status = status
-                task.last_error = error
+        if task_run.agent_id != reporting_agent_id:
+            raise errors.ForbiddenError(msg='agent cannot report this task_run')
 
-            await session.commit()
-            return True
+        task_run.status = status
+        task_run.output = output
+        task_run.error = error
+        task_run.model = model
+        task_run.token_usage = token_usage
+        task_run.duration_ms = duration_ms
+        task_run.finished_at = datetime.now(tz.utc)
+
+        # 更新 hasn_task 的 last_status/last_error
+        task_stmt = select(HasnTask).where(HasnTask.id == task_run.task_id)
+        task_result = await session.execute(task_stmt)
+        task = task_result.scalar_one_or_none()
+        if task:
+            task.last_status = status
+            task.last_error = error
+
+        await session.commit()
+        return True
 
 
 task_scheduler = TaskSchedulerService()

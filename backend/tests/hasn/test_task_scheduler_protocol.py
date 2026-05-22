@@ -8,15 +8,31 @@ import pytest
 
 
 class FakeSession:
-    def __init__(self) -> None:
+    def __init__(self, execute_results: list[Any] | None = None) -> None:
         self.added: list[Any] = []
         self.next_id = 456
+        self.execute_results = execute_results or []
+        self.committed = False
 
     def add(self, value: Any) -> None:
         self.added.append(value)
 
     async def flush(self) -> None:
         self.added[-1].id = self.next_id
+
+    async def execute(self, _stmt: object) -> Any:
+        return self.execute_results.pop(0)
+
+    async def commit(self) -> None:
+        self.committed = True
+
+
+class FakeResult:
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    def scalar_one_or_none(self) -> Any:
+        return self.value
 
 
 class FakeWsRouter:
@@ -92,3 +108,55 @@ async def test_scheduler_dispatch_persists_and_sends_task_session_context(
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_task_result_update_requires_matching_agent() -> None:
+    from backend.app.hasn.service import task_scheduler as module
+    from backend.common.exception import errors
+
+    scheduler = module.TaskSchedulerService()
+    task_run = SimpleNamespace(id=456, task_id=123, agent_id='a_agent', status='pending')
+    session = FakeSession(execute_results=[FakeResult(task_run)])
+
+    with pytest.raises(errors.ForbiddenError):
+        await scheduler._handle_task_result_in_session(
+            session=session,
+            run_id=456,
+            reporting_agent_id='a_other',
+            status='success',
+            output='wrong agent',
+        )
+
+    assert task_run.status != 'success'
+    assert not session.committed
+
+
+@pytest.mark.asyncio
+async def test_task_result_update_persists_matching_agent_result() -> None:
+    from backend.app.hasn.service import task_scheduler as module
+
+    scheduler = module.TaskSchedulerService()
+    task_run = SimpleNamespace(id=456, task_id=123, agent_id='a_agent', status='pending')
+    task = SimpleNamespace(id=123, last_status=None, last_error=None)
+    session = FakeSession(execute_results=[FakeResult(task_run), FakeResult(task)])
+
+    success = await scheduler._handle_task_result_in_session(
+        session=session,
+        run_id=456,
+        reporting_agent_id='a_agent',
+        status='success',
+        output='done',
+        model='runtime-model',
+        token_usage={'input_tokens': 1, 'output_tokens': 2, 'total_tokens': 3},
+        duration_ms=1200,
+    )
+
+    assert success is True
+    assert session.committed is True
+    assert task_run.status == 'success'
+    assert task_run.output == 'done'
+    assert task_run.model == 'runtime-model'
+    assert task_run.duration_ms == 1200
+    assert task.last_status == 'success'
+    assert task.last_error is None

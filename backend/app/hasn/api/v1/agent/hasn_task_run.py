@@ -3,7 +3,8 @@
 认证方式: Agent JWT (Bearer token)
 Agent 信息: 通过 request.state.agent 获取
 """
-from typing import Annotated
+
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Path, Request
 
@@ -12,11 +13,13 @@ from backend.app.hasn.schema.hasn_task_run import (
     UpdateHasnTaskRunParam,
 )
 from backend.app.hasn.service.hasn_task_run_service import hasn_task_run_service
-from backend.common.dataclasses import AgentTokenPayload
 from backend.common.exception import errors
 from backend.common.response.response_schema import ResponseModel, response_base
 from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
 from backend.database.db import CurrentSession, CurrentSessionTransaction
+
+if TYPE_CHECKING:
+    from backend.common.dataclasses import AgentTokenPayload
 
 router = APIRouter()
 
@@ -58,6 +61,7 @@ async def agent_report_task_result(
     """hasn-node 上报任务执行结果（TaskResult 消息）"""
     from backend.app.hasn.service.task_scheduler import task_scheduler
 
+    agent: AgentTokenPayload = request.state.agent
     body = await request.json()
     run_id = body.get('run_id')
     status = body.get('status', 'error')
@@ -73,6 +77,7 @@ async def agent_report_task_result(
     success = await task_scheduler.handle_task_result(
         run_id=run_id,
         status=status,
+        reporting_agent_id=agent.agent_hasn_id,
         output=output,
         error=error,
         model=model,
@@ -95,7 +100,6 @@ async def agent_list_hasn_task_run(
     request: Request,
     db: CurrentSession,
 ) -> ResponseModel:
-    agent: AgentTokenPayload = request.state.agent
     # 可以使用 agent.agent_hasn_id, agent.owner_hasn_id, agent.scopes
     data = await hasn_task_run_service.get_list(db=db)
     return response_base.success(data=data)
@@ -112,7 +116,6 @@ async def agent_create_hasn_task_run(
     db: CurrentSessionTransaction,
     obj: CreateHasnTaskRunParam,
 ) -> ResponseModel:
-    agent: AgentTokenPayload = request.state.agent
     result = await hasn_task_run_service.create(db=db, obj=obj)
     return response_base.success(data=result)
 
@@ -128,7 +131,6 @@ async def agent_get_hasn_task_run(
     db: CurrentSession,
     pk: Annotated[int, Path(description='任务执行记录 ID')],
 ) -> ResponseModel:
-    agent: AgentTokenPayload = request.state.agent
     hasn_task_run = await hasn_task_run_service.get(db=db, pk=pk)
     # TODO: 根据实际业务需求添加权限检查
     # if hasn_task_run.owner_id != agent.owner_hasn_id:
@@ -148,8 +150,7 @@ async def agent_update_hasn_task_run(
     pk: Annotated[int, Path(description='任务执行记录 ID')],
     obj: UpdateHasnTaskRunParam,
 ) -> ResponseModel:
-    agent: AgentTokenPayload = request.state.agent
-    hasn_task_run = await hasn_task_run_service.get(db=db, pk=pk)
+    await hasn_task_run_service.get(db=db, pk=pk)
     # TODO: 根据实际业务需求添加权限检查
     # if hasn_task_run.owner_id != agent.owner_hasn_id:
     #     raise errors.ForbiddenError(msg='无权修改该任务执行记录')
@@ -170,12 +171,12 @@ async def agent_delete_hasn_task_run(
     db: CurrentSessionTransaction,
     pk: Annotated[int, Path(description='任务执行记录 ID')],
 ) -> ResponseModel:
-    agent: AgentTokenPayload = request.state.agent
-    hasn_task_run = await hasn_task_run_service.get(db=db, pk=pk)
+    await hasn_task_run_service.get(db=db, pk=pk)
     # TODO: 根据实际业务需求添加权限检查
     # if hasn_task_run.owner_id != agent.owner_hasn_id:
     #     raise errors.ForbiddenError(msg='无权删除该任务执行记录')
     from backend.app.hasn.schema.hasn_task_run import DeleteHasnTaskRunParam
+
     count = await hasn_task_run_service.delete(db=db, obj=DeleteHasnTaskRunParam(pks=[pk]))
     if count > 0:
         return response_base.success()
