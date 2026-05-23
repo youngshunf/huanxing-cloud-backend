@@ -69,9 +69,9 @@ async def create_my_hasn_skill_bundle(
     '/{pk}',
     summary='获取Skill Bundle 定义表（多个 skill 的组合）详情',
     dependencies=[DependsJwtAuth],
-    name='app_get_my_hasn_skill_bundle',
+    name='app_get_my_hasn_skill_bundle_detail',
 )
-async def get_my_hasn_skill_bundle(
+async def get_my_hasn_skill_bundle_detail(
     request: Request,
     db: CurrentSession,
     pk: Annotated[int, Path(description='Skill Bundle 定义表（多个 skill 的组合） ID')],
