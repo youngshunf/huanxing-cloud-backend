@@ -40,3 +40,6 @@ from backend.app.hasn.model.hasn_follows import HasnFollows as HasnFollows
 from backend.app.hasn.model.hasn_likes import HasnLikes as HasnLikes
 from backend.app.hasn.model.hasn_collections import HasnCollections as HasnCollections
 from backend.app.hasn.model.hasn_collection_items import HasnCollectionItems as HasnCollectionItems
+from backend.app.hasn.model.hasn_skill_bundle import HasnSkillBundle as HasnSkillBundle
+from backend.app.hasn.model.hasn_task import HasnTask as HasnTask
+from backend.app.hasn.model.hasn_task_run import HasnTaskRun as HasnTaskRun

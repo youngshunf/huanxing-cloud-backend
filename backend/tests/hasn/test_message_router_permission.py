@@ -80,6 +80,16 @@ def _patch_router_pipeline(
     )
     monkeypatch.setattr(mr, 'persist_message', AsyncMock(return_value=fake_msg))
 
+    # 这些用例只验证 permission 分支，避免被同步事件落库路径干扰。
+    from backend.app.hasn.service import hasn_sync_service as sync_service_module
+
+    monkeypatch.setattr(
+        sync_service_module.SqlAlchemySyncGateway,
+        '_append_sync_event',
+        AsyncMock(return_value=None),
+        raising=False,
+    )
+
     # _stash_pending_commitment / _push_message_to / db.commit
     stash_mock = AsyncMock(return_value=None)
     monkeypatch.setattr(mr, '_stash_pending_commitment', stash_mock, raising=False)

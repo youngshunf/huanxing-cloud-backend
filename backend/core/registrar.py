@@ -66,6 +66,10 @@ async def register_init(app: FastAPI) -> AsyncGenerator[None, None]:
     from backend.app.user_tier.service.pay_callbacks import register_callbacks
     register_callbacks()
 
+    # 启动 Task Scheduler（任务调度器）
+    from backend.app.hasn.service.task_scheduler import task_scheduler
+    await task_scheduler.start()
+
     # 启动 MCP StreamableHTTP session manager
     from backend.app.mcp.streamable import hasn_streamable_server
     session_manager = hasn_streamable_server.create_session_manager()
@@ -74,6 +78,10 @@ async def register_init(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 停止缓存 Pub/Sub 监听器
     await cache_pubsub_manager.stop_listener()
+
+    # 停止 Task Scheduler
+    from backend.app.hasn.service.task_scheduler import task_scheduler
+    await task_scheduler.stop()
 
     # 释放 snowflake 节点
     await snowflake.shutdown()
