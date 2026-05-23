@@ -55,9 +55,9 @@ async def create_my_{{ table_name }}(
     '/{pk}',
     summary='获取{{ doc_comment }}详情',
     dependencies=[DependsJwtAuth],
-    name='app_get_my_{{ table_name }}',
+    name='app_get_my_{{ table_name }}_detail',
 )
-async def get_my_{{ table_name }}(
+async def get_my_{{ table_name }}_detail(
     request: Request,
     db: CurrentSession,
     pk: Annotated[int, Path(description='{{ doc_comment }} ID')],
