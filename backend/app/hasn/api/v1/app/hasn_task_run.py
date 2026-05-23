@@ -58,9 +58,9 @@ async def create_my_hasn_task_run(
     '/{pk}',
     summary='获取任务执行记录详情',
     dependencies=[DependsJwtAuth],
-    name='app_get_my_hasn_task_run',
+    name='app_get_my_hasn_task_run_detail',
 )
-async def get_my_hasn_task_run(
+async def get_my_hasn_task_run_detail(
     request: Request,
     db: CurrentSession,
     pk: Annotated[int, Path(description='任务执行记录 ID')],
