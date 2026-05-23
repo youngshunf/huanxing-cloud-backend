@@ -68,6 +68,9 @@ class SyncGateway(Protocol):
         self, db: AsyncSession, *, owner_id: str, after_revision: int, limit: int
     ) -> list[SyncEventRecord]: ...
     async def owns_owner(self, db: AsyncSession, *, owner_id: str, user_id: int) -> bool: ...
+    async def existing_client_event_revision(
+        self, db: AsyncSession, *, owner_id: str, node_id: str, client_event_id: str
+    ) -> int | None: ...
 
 
 class SqlAlchemySyncGateway:
@@ -181,6 +184,15 @@ class SqlAlchemySyncGateway:
     async def save_client_event(
         self, db: AsyncSession, *, owner_id: str, node_id: str, event: ClientEvent
     ) -> int | None:
+        existing_revision = await self.existing_client_event_revision(
+            db,
+            owner_id=owner_id,
+            node_id=node_id,
+            client_event_id=event.client_event_id,
+        )
+        if existing_revision is not None:
+            return existing_revision
+
         server_revision = None
         if event.event_type.startswith('memory.'):
             sync_scope_kind, sync_scope_id, namespace = _memory_namespace_revision_key(event)
@@ -257,6 +269,31 @@ class SqlAlchemySyncGateway:
             },
         )
         return server_revision
+
+    async def existing_client_event_revision(
+        self, db: AsyncSession, *, owner_id: str, node_id: str, client_event_id: str
+    ) -> int | None:
+        result = await db.execute(
+            sa.text(
+                '''
+                SELECT server_revision
+                FROM public.hasn_sync_inbox_events
+                WHERE owner_id = :owner_id
+                  AND node_id = :node_id
+                  AND client_event_id = :client_event_id
+                LIMIT 1
+                '''
+            ),
+            {
+                'owner_id': owner_id,
+                'node_id': node_id,
+                'client_event_id': client_event_id,
+            },
+        )
+        row = result.mappings().first()
+        if row is None or row['server_revision'] is None:
+            return None
+        return int(row['server_revision'])
 
     async def _advance_memory_namespace_revision(
         self,

@@ -198,6 +198,7 @@ class CapturingSyncGateway:
     sync_events: list[Any] = field(default_factory=list)
     client_events: list[Any] = field(default_factory=list)
     namespace_revisions: dict[tuple[str, str, str], dict[str, Any]] = field(default_factory=dict)
+    client_event_revisions: dict[tuple[str, str, str], int] = field(default_factory=dict)
 
     async def save_runtime_report(self, db: Any, report: dict[str, Any]) -> None:
         self.reports.append(report)
@@ -205,7 +206,20 @@ class CapturingSyncGateway:
     async def pull_events(self, db: Any, *, owner_id: str, after_revision: int, limit: int) -> list[Any]:
         return [event for event in self.sync_events if event.revision > after_revision][:limit]
 
+    async def existing_client_event_revision(
+        self, db: Any, *, owner_id: str, node_id: str, client_event_id: str
+    ) -> int | None:
+        return self.client_event_revisions.get((owner_id, node_id, client_event_id))
+
     async def save_client_event(self, db: Any, *, owner_id: str, node_id: str, event: Any) -> int | None:
+        existing_revision = await self.existing_client_event_revision(
+            db,
+            owner_id=owner_id,
+            node_id=node_id,
+            client_event_id=event.client_event_id,
+        )
+        if existing_revision is not None:
+            return existing_revision
         if event.event_type.startswith('memory.'):
             from backend.app.hasn.schema.hasn_sync import SyncEventRecord
             from backend.app.hasn.service.hasn_sync_service import _memory_namespace_revision_key
@@ -233,6 +247,7 @@ class CapturingSyncGateway:
             )
             self.namespace_revisions[revision_key] = {'revision': namespace_revision, 'last_event_id': event_id}
             self.client_events.append((owner_id, node_id, event))
+            self.client_event_revisions[(owner_id, node_id, event.client_event_id)] = revision
             return revision
         self.client_events.append((owner_id, node_id, event))
         return None
@@ -345,6 +360,48 @@ async def test_sync_push_memory_owner_event_becomes_pullable_owner_sync_event() 
     assert [event.event_type for event in pull_response.events] == ['memory.owner_event.upserted']
     assert pull_response.events[0].payload['namespace'] == 'events'
     assert pull_response.next_cursor == 'owner:h_owner:1'
+
+
+@pytest.mark.asyncio
+async def test_sync_push_memory_retry_is_idempotent_for_namespace_revision() -> None:
+    from backend.app.hasn.schema.hasn_sync import ClientEvent, SyncPullRequest, SyncPushRequest
+    from backend.app.hasn.service.hasn_sync_service import HasnSyncService
+
+    gateway = CapturingSyncGateway()
+    service = HasnSyncService(gateway=gateway)
+    request = SyncPushRequest(
+        owner_id='h_owner',
+        node_id='n_runtime',
+        events=[
+            ClientEvent(
+                client_event_id='ce_memory_retry_1',
+                event_type='memory.owner_event.upserted',
+                hasn_id='h_owner',
+                payload={
+                    'sync_scope_kind': 'owner',
+                    'sync_scope_id': 'h_owner',
+                    'namespace': 'events',
+                    'record_id': 'owner_event:h_owner:retry',
+                    'revision': 1,
+                },
+            )
+        ],
+    )
+
+    first_response = await service.push(None, request)
+    retry_response = await service.push(None, request)
+    pull_response = await service.pull(None, SyncPullRequest(owner_id='h_owner', cursor='owner:h_owner:0'))
+
+    assert first_response.accepted == 1
+    assert retry_response.accepted == 1
+    assert first_response.next_cursor == 'owner:h_owner:1'
+    assert retry_response.next_cursor == 'owner:h_owner:1'
+    assert [event.event_id for event in pull_response.events] == ['se_memory_1']
+    assert [event.payload['namespace_revision'] for event in pull_response.events] == [1]
+    assert gateway.namespace_revisions == {
+        ('owner', 'h_owner', 'events'): {'revision': 1, 'last_event_id': 'se_memory_1'},
+    }
+    assert [event.client_event_id for _, _, event in gateway.client_events] == ['ce_memory_retry_1']
 
 
 @pytest.mark.asyncio
