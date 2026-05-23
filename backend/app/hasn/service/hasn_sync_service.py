@@ -19,6 +19,9 @@ from backend.app.hasn.model import HasnHumans
 from backend.app.hasn.schema.hasn_message_hub import ErrorObject
 from backend.app.hasn.schema.hasn_sync import (
     ClientEvent,
+    MemorySyncCursor,
+    MemorySyncPullRequest,
+    MemorySyncPullResponse,
     RuntimeReportRequest,
     RuntimeReportResponse,
     RuntimeSummary,
@@ -83,6 +86,14 @@ class SyncGateway(Protocol):
     async def save_runtime_report(self, db: AsyncSession, report: dict[str, Any]) -> None: ...
     async def pull_events(
         self, db: AsyncSession, *, owner_id: str, after_revision: int, limit: int
+    ) -> list[SyncEventRecord]: ...
+    async def pull_memory_events(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        selections: list[MemorySyncCursor],
+        limit: int,
     ) -> list[SyncEventRecord]: ...
     async def owns_owner(self, db: AsyncSession, *, owner_id: str, user_id: int) -> bool: ...
     async def existing_client_event_revision(
@@ -186,6 +197,63 @@ class SqlAlchemySyncGateway:
                 '''
             ),
             {'owner_id': owner_id, 'after_revision': after_revision, 'limit': limit},
+        )
+        return [
+            SyncEventRecord(
+                event_id=row['event_id'],
+                event_type=row['event_type'],
+                revision=int(row['revision']),
+                created_at=_coerce_datetime(row['occurred_at']),
+                payload=_coerce_dict(row['payload']),
+            )
+            for row in result.mappings().all()
+        ]
+
+    async def pull_memory_events(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        selections: list[MemorySyncCursor],
+        limit: int,
+    ) -> list[SyncEventRecord]:
+        if not selections:
+            return []
+        selection_values = [
+            {
+                'sync_scope_kind': cursor.sync_scope_kind,
+                'sync_scope_id': cursor.sync_scope_id,
+                'namespace': cursor.namespace,
+                'last_pulled_revision': cursor.last_pulled_revision,
+            }
+            for cursor in selections
+        ]
+        result = await db.execute(
+            sa.text(
+                '''
+                WITH requested(sync_scope_kind, sync_scope_id, namespace, last_pulled_revision) AS (
+                    SELECT *
+                    FROM jsonb_to_recordset(CAST(:selections AS jsonb))
+                    AS x(sync_scope_kind text, sync_scope_id text, namespace text, last_pulled_revision bigint)
+                )
+                SELECT event_id, event_type, revision, occurred_at, payload
+                FROM public.hasn_sync_events e
+                JOIN requested r
+                  ON e.payload->>'sync_scope_kind' = r.sync_scope_kind
+                 AND e.payload->>'sync_scope_id' = r.sync_scope_id
+                 AND e.payload->>'namespace' = r.namespace
+                WHERE e.owner_id = :owner_id
+                  AND e.event_type LIKE 'memory.%'
+                  AND COALESCE((e.payload->>'namespace_revision')::bigint, 0) > r.last_pulled_revision
+                ORDER BY e.revision ASC
+                LIMIT :limit
+                '''
+            ),
+            {
+                'owner_id': owner_id,
+                'selections': json.dumps(selection_values, ensure_ascii=False, sort_keys=True, default=str),
+                'limit': limit,
+            },
         )
         return [
             SyncEventRecord(
@@ -549,6 +617,22 @@ class HasnSyncService:
             next_cursor=_owner_cursor(request.owner_id, max_server_revision),
         )
 
+    async def pull_memory(
+        self, db: AsyncSession, request: MemorySyncPullRequest, *, user_id: int | None = None
+    ) -> MemorySyncPullResponse:
+        await self._assert_owner_access(db, owner_id=request.owner_id, user_id=user_id)
+        selections = _memory_pull_selections(request)
+        events = await self.gateway.pull_memory_events(
+            db,
+            owner_id=request.owner_id,
+            selections=selections,
+            limit=request.max_events + 1,
+        )
+        limited = events[: request.max_events]
+        has_more = len(events) > request.max_events
+        next_cursors = _advance_memory_cursors(selections, limited)
+        return MemorySyncPullResponse(events=limited, next_cursors=next_cursors, has_more=has_more)
+
     async def report_runtime(
         self, db: AsyncSession, request: RuntimeReportRequest, *, user_id: int | None = None
     ) -> RuntimeReportResponse:
@@ -616,6 +700,73 @@ def _memory_aggregate_id(event: ClientEvent) -> str:
     if namespace and sync_scope_kind and sync_scope_id:
         return f'{sync_scope_kind}:{sync_scope_id}:{namespace}'
     return event.client_event_id
+
+
+def _memory_pull_selections(request: MemorySyncPullRequest) -> list[MemorySyncCursor]:
+    namespace_map: dict[str, list[str]] = {}
+    for selector in request.namespaces:
+        namespace_map.setdefault(selector.sync_scope_kind, [])
+        for namespace in selector.names:
+            if not _memory_namespace_allowed(selector.sync_scope_kind, namespace):
+                raise errors.RequestError(
+                    msg=_MEMORY_NAMESPACE_UNKNOWN_ERROR.name,
+                    data=_MEMORY_NAMESPACE_UNKNOWN_ERROR.model_dump(),
+                )
+            if namespace not in namespace_map[selector.sync_scope_kind]:
+                namespace_map[selector.sync_scope_kind].append(namespace)
+
+    cursor_map = {
+        (cursor.sync_scope_kind, cursor.sync_scope_id, cursor.namespace): cursor.last_pulled_revision
+        for cursor in request.cursors
+    }
+    selections: list[MemorySyncCursor] = []
+    for namespace in namespace_map.get('owner', []):
+        selections.append(
+            MemorySyncCursor(
+                sync_scope_kind='owner',
+                sync_scope_id=request.owner_id,
+                namespace=namespace,
+                last_pulled_revision=cursor_map.get(('owner', request.owner_id, namespace), 0),
+            )
+        )
+    for agent_id in request.agent_ids:
+        for namespace in namespace_map.get('agent', []):
+            selections.append(
+                MemorySyncCursor(
+                    sync_scope_kind='agent',
+                    sync_scope_id=agent_id,
+                    namespace=namespace,
+                    last_pulled_revision=cursor_map.get(('agent', agent_id, namespace), 0),
+                )
+            )
+    return selections
+
+
+def _advance_memory_cursors(
+    selections: list[MemorySyncCursor], events: list[SyncEventRecord]
+) -> list[MemorySyncCursor]:
+    revisions = {
+        (cursor.sync_scope_kind, cursor.sync_scope_id, cursor.namespace): cursor.last_pulled_revision
+        for cursor in selections
+    }
+    for event in events:
+        sync_scope_kind = event.payload.get('sync_scope_kind')
+        sync_scope_id = event.payload.get('sync_scope_id')
+        namespace = event.payload.get('namespace')
+        namespace_revision = event.payload.get('namespace_revision')
+        key = (sync_scope_kind, sync_scope_id, namespace)
+        if key in revisions and isinstance(namespace_revision, int):
+            revisions[key] = max(revisions[key], namespace_revision)
+
+    return [
+        MemorySyncCursor(
+            sync_scope_kind=cursor.sync_scope_kind,
+            sync_scope_id=cursor.sync_scope_id,
+            namespace=cursor.namespace,
+            last_pulled_revision=revisions[(cursor.sync_scope_kind, cursor.sync_scope_id, cursor.namespace)],
+        )
+        for cursor in selections
+    ]
 
 
 def _memory_namespace_revision_key(event: ClientEvent) -> tuple[str, str, str]:

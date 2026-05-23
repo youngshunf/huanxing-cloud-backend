@@ -206,6 +206,25 @@ class CapturingSyncGateway:
     async def pull_events(self, db: Any, *, owner_id: str, after_revision: int, limit: int) -> list[Any]:
         return [event for event in self.sync_events if event.revision > after_revision][:limit]
 
+    async def pull_memory_events(
+        self, db: Any, *, owner_id: str, selections: list[Any], limit: int
+    ) -> list[Any]:
+        del db, owner_id
+        selected = {
+            (cursor.sync_scope_kind, cursor.sync_scope_id, cursor.namespace): cursor.last_pulled_revision
+            for cursor in selections
+        }
+        events = []
+        for event in self.sync_events:
+            key = (
+                event.payload.get('sync_scope_kind'),
+                event.payload.get('sync_scope_id'),
+                event.payload.get('namespace'),
+            )
+            if key in selected and int(event.payload.get('namespace_revision', 0)) > selected[key]:
+                events.append(event)
+        return events[:limit]
+
     async def existing_client_event_revision(
         self, db: Any, *, owner_id: str, node_id: str, client_event_id: str
     ) -> int | None:
@@ -509,6 +528,123 @@ async def test_sync_push_memory_owner_and_agent_events_advance_namespace_revisio
     assert pull_response.events[1].payload['sync_scope_id'] == 'h_owner'
     assert pull_response.events[1].payload['namespace'] == 'events'
     assert pull_response.events[1].payload['record_id'] == 'owner_event:h_owner:2'
+
+
+@pytest.mark.asyncio
+async def test_memory_sync_pull_filters_by_namespace_revision_and_returns_namespace_cursors() -> None:
+    from backend.app.hasn.schema.hasn_sync import (
+        ClientEvent,
+        MemorySyncCursor,
+        MemorySyncNamespaceSelector,
+        MemorySyncPullRequest,
+        SyncPushRequest,
+    )
+    from backend.app.hasn.service.hasn_sync_service import HasnSyncService
+
+    gateway = CapturingSyncGateway()
+    service = HasnSyncService(gateway=gateway)
+    await service.push(
+        None,
+        SyncPushRequest(
+            owner_id='h_owner',
+            node_id='n_runtime',
+            events=[
+                ClientEvent(
+                    client_event_id='ce_owner_event_1',
+                    event_type='memory.owner_event.upserted',
+                    hasn_id='h_owner',
+                    payload={
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_owner',
+                        'namespace': 'events',
+                        'record_id': 'owner_event:h_owner:1',
+                        'revision': 1,
+                    },
+                ),
+                ClientEvent(
+                    client_event_id='ce_owner_event_2',
+                    event_type='memory.owner_event.upserted',
+                    hasn_id='h_owner',
+                    payload={
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_owner',
+                        'namespace': 'events',
+                        'record_id': 'owner_event:h_owner:2',
+                        'revision': 2,
+                    },
+                ),
+                ClientEvent(
+                    client_event_id='ce_owner_fact_1',
+                    event_type='memory.owner_fact.upserted',
+                    hasn_id='h_owner',
+                    payload={
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_owner',
+                        'namespace': 'facts',
+                        'record_id': 'fact:h_owner:1',
+                        'revision': 1,
+                    },
+                ),
+                ClientEvent(
+                    client_event_id='ce_agent_event_1',
+                    event_type='memory.agent_self_event.upserted',
+                    hasn_id='a_agent_event',
+                    payload={
+                        'sync_scope_kind': 'agent',
+                        'sync_scope_id': 'a_agent_event',
+                        'namespace': 'agent_events',
+                        'record_id': 'agent_event:a_agent_event:1',
+                        'revision': 1,
+                    },
+                ),
+            ],
+        ),
+    )
+
+    response = await service.pull_memory(
+        None,
+        MemorySyncPullRequest(
+            owner_id='h_owner',
+            agent_ids=['a_agent_event'],
+            namespaces=[
+                MemorySyncNamespaceSelector(sync_scope_kind='owner', names=['events']),
+                MemorySyncNamespaceSelector(sync_scope_kind='agent', names=['agent_events']),
+            ],
+            cursors=[
+                MemorySyncCursor(
+                    sync_scope_kind='owner',
+                    sync_scope_id='h_owner',
+                    namespace='events',
+                    last_pulled_revision=1,
+                ),
+                MemorySyncCursor(
+                    sync_scope_kind='agent',
+                    sync_scope_id='a_agent_event',
+                    namespace='agent_events',
+                    last_pulled_revision=0,
+                ),
+            ],
+            max_events=10,
+        ),
+    )
+
+    assert [event.event_id for event in response.events] == ['se_memory_2', 'se_memory_4']
+    assert [event.payload['namespace_revision'] for event in response.events] == [2, 1]
+    assert [cursor.model_dump() for cursor in response.next_cursors] == [
+        {
+            'sync_scope_kind': 'owner',
+            'sync_scope_id': 'h_owner',
+            'namespace': 'events',
+            'last_pulled_revision': 2,
+        },
+        {
+            'sync_scope_kind': 'agent',
+            'sync_scope_id': 'a_agent_event',
+            'namespace': 'agent_events',
+            'last_pulled_revision': 1,
+        },
+    ]
+    assert response.has_more is False
 
 
 @pytest.mark.asyncio

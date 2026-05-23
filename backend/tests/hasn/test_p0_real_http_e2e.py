@@ -276,6 +276,24 @@ class InMemorySyncGateway:
             ))
         return events[:limit]
 
+    async def pull_memory_events(
+        self, _db: Any, *, owner_id: str, selections: list[Any], limit: int
+    ) -> list[Any]:
+        selected = {
+            (cursor.sync_scope_kind, cursor.sync_scope_id, cursor.namespace): cursor.last_pulled_revision
+            for cursor in selections
+        }
+        events = []
+        for event in self.sync_events:
+            key = (
+                event.payload.get('sync_scope_kind'),
+                event.payload.get('sync_scope_id'),
+                event.payload.get('namespace'),
+            )
+            if key in selected and int(event.payload.get('namespace_revision', 0)) > selected[key]:
+                events.append(event)
+        return events[:limit]
+
     async def save_client_event(self, _db: Any, *, owner_id: str, node_id: str, event: Any) -> int | None:
         from backend.app.hasn.schema.hasn_sync import SyncEventRecord
 
@@ -518,6 +536,120 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     )
     fake_db_instance.active_workspaces[7] = HasnUserActiveWorkspace(user_id=7, kind='personal', enterprise_id=None)
     return app
+
+
+def test_memory_sync_pull_endpoint_filters_by_namespace_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(make_app(monkeypatch))
+    auth = {'Authorization': 'Bearer jwt-p0-real-http'}
+
+    owner_push = client.post(
+        '/api/v1/hasn/sync/push',
+        headers=auth,
+        json={
+            'owner_id': 'h_p0_owner',
+            'node_id': 'n_p0_desktop',
+            'events': [
+                {
+                    'client_event_id': 'ce_memory_owner_event_1',
+                    'event_type': 'memory.owner_event.upserted',
+                    'hasn_id': 'h_p0_owner',
+                    'payload': {
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_p0_owner',
+                        'namespace': 'events',
+                        'record_id': 'owner_event:h_p0_owner:1',
+                        'revision': 1,
+                    },
+                },
+                {
+                    'client_event_id': 'ce_memory_owner_event_2',
+                    'event_type': 'memory.owner_event.upserted',
+                    'hasn_id': 'h_p0_owner',
+                    'payload': {
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_p0_owner',
+                        'namespace': 'events',
+                        'record_id': 'owner_event:h_p0_owner:2',
+                        'revision': 2,
+                    },
+                },
+                {
+                    'client_event_id': 'ce_memory_owner_fact_1',
+                    'event_type': 'memory.owner_fact.upserted',
+                    'hasn_id': 'h_p0_owner',
+                    'payload': {
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_p0_owner',
+                        'namespace': 'facts',
+                        'record_id': 'fact:h_p0_owner:1',
+                        'revision': 1,
+                    },
+                },
+                {
+                    'client_event_id': 'ce_memory_agent_event_1',
+                    'event_type': 'memory.agent_self_event.upserted',
+                    'hasn_id': 'a_p0_default',
+                    'payload': {
+                        'sync_scope_kind': 'agent',
+                        'sync_scope_id': 'a_p0_default',
+                        'namespace': 'agent_events',
+                        'record_id': 'agent_event:a_p0_default:1',
+                        'revision': 1,
+                    },
+                },
+            ],
+        },
+    )
+    assert owner_push.status_code == 200
+    assert owner_push.json()['accepted'] == 4
+
+    pull = client.post(
+        '/api/v1/hasn/memory/sync/pull',
+        headers=auth,
+        json={
+            'owner_id': 'h_p0_owner',
+            'agent_ids': ['a_p0_default'],
+            'namespaces': [
+                {'sync_scope_kind': 'owner', 'names': ['events']},
+                {'sync_scope_kind': 'agent', 'names': ['agent_events']},
+            ],
+            'cursors': [
+                {
+                    'sync_scope_kind': 'owner',
+                    'sync_scope_id': 'h_p0_owner',
+                    'namespace': 'events',
+                    'last_pulled_revision': 1,
+                },
+                {
+                    'sync_scope_kind': 'agent',
+                    'sync_scope_id': 'a_p0_default',
+                    'namespace': 'agent_events',
+                    'last_pulled_revision': 0,
+                },
+            ],
+            'max_events': 10,
+        },
+    )
+
+    assert pull.status_code == 200, pull.text
+    body = pull.json()
+    assert [event['event_id'] for event in body['events']] == ['se_memory_2', 'se_memory_4']
+    assert [event['payload']['namespace_revision'] for event in body['events']] == [2, 1]
+    assert body['next_cursors'] == [
+        {
+            'sync_scope_kind': 'owner',
+            'sync_scope_id': 'h_p0_owner',
+            'namespace': 'events',
+            'last_pulled_revision': 2,
+        },
+        {
+            'sync_scope_kind': 'agent',
+            'sync_scope_id': 'a_p0_default',
+            'namespace': 'agent_events',
+            'last_pulled_revision': 1,
+        },
+    ]
+    assert body['has_more'] is False
 
 
 def make_sync_auth_app(monkeypatch: pytest.MonkeyPatch, user_id: int = 7) -> tuple[FastAPI, InMemorySyncGateway]:
