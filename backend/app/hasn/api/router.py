@@ -261,6 +261,7 @@ from backend.app.hasn.api.v1.app.community import router as app_community_router
 from backend.app.hasn.api.v1.app.hasn_skill_bundle import router as app_hasn_skill_bundle_router
 from backend.app.hasn.api.v1.app.hasn_task import router as app_hasn_task_router
 from backend.app.hasn.api.v1.app.hasn_task_run import router as app_hasn_task_run_router
+from backend.app.hasn.api.v1.app.hasn_task_api import router as app_hasn_task_api_router
 from backend.app.hasn.api.v1.app.hasn_sessions import router as app_hasn_sessions_router
 from backend.app.hasn.api.v1.app.hasn_session_events import router as app_hasn_session_events_router
 from backend.app.hasn.api.v1.app.hasn_session_artifacts import router as app_hasn_session_artifacts_router
@@ -276,6 +277,7 @@ app.include_router(
 )
 app.include_router(app_hasn_task_router, prefix='/hasn/tasks', tags=['任务定义-任务定义'])
 app.include_router(app_hasn_task_run_router, prefix='/hasn/task/runs', tags=['任务执行记录-任务执行记录'])
+app.include_router(app_hasn_task_api_router, tags=['任务系统 Task API'])
 app.include_router(
     app_hasn_owner_api_keys_router, prefix='/hasn/owner/api/keyss', tags=['HASN Owner API Key -HASN Owner API Key ']
 )

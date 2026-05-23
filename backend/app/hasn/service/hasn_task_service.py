@@ -137,5 +137,41 @@ class HasnTaskService:
         count = await hasn_task_dao.delete(db, obj.pks)
         return count
 
+    @staticmethod
+    async def enable_task(*, db: AsyncSession, task_id: int) -> HasnTask:
+        """
+        启用任务
+
+        :param db: 数据库会话
+        :param task_id: 任务 ID
+        :return:
+        """
+        task = await hasn_task_dao.get(db, task_id)
+        if not task:
+            raise errors.NotFoundError(msg='任务不存在')
+
+        task.enabled = True
+        task.updated_time = datetime.now(tz.utc)
+        await db.flush()
+        return task
+
+    @staticmethod
+    async def disable_task(*, db: AsyncSession, task_id: int) -> HasnTask:
+        """
+        禁用任务
+
+        :param db: 数据库会话
+        :param task_id: 任务 ID
+        :return:
+        """
+        task = await hasn_task_dao.get(db, task_id)
+        if not task:
+            raise errors.NotFoundError(msg='任务不存在')
+
+        task.enabled = False
+        task.updated_time = datetime.now(tz.utc)
+        await db.flush()
+        return task
+
 
 hasn_task_service: HasnTaskService = HasnTaskService()
