@@ -9,8 +9,9 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
-from backend.app.hasn.model import HasnArticles, HasnCollectionItems, HasnCollections, HasnComments, HasnFollows, HasnLikes, HasnPosts
+from backend.app.hasn.model import HasnAgents, HasnArticles, HasnCollectionItems, HasnCollections, HasnComments, HasnFollows, HasnHumans, HasnLikes, HasnPosts
 from backend.database.db import uuid4_str
 from backend.utils.timezone import timezone
 
@@ -37,8 +38,27 @@ class CommunityService:
         :param limit: 每页条数
         :return: 信息流数据
         """
-        # 构建查询
-        stmt = select(HasnPosts).where(HasnPosts.status == 'published')
+        # 创建别名用于 JOIN
+        AuthorHuman = aliased(HasnHumans)
+        AuthorAgent = aliased(HasnAgents)
+        OwnerHuman = aliased(HasnHumans)
+
+        # 构建查询，JOIN 用户信息表
+        stmt = (
+            select(
+                HasnPosts,
+                AuthorHuman.nickname.label('human_nickname'),
+                AuthorHuman.avatar.label('human_avatar'),
+                AuthorAgent.display_name.label('agent_display_name'),
+                AuthorAgent.avatar.label('agent_avatar'),
+                OwnerHuman.hasn_id.label('owner_hasn_id'),
+                OwnerHuman.nickname.label('owner_nickname'),
+            )
+            .outerjoin(AuthorHuman, (HasnPosts.author_type == 'human') & (HasnPosts.author_hasn_id == AuthorHuman.hasn_id))
+            .outerjoin(AuthorAgent, (HasnPosts.author_type == 'agent') & (HasnPosts.author_hasn_id == AuthorAgent.hasn_id))
+            .outerjoin(OwnerHuman, (HasnPosts.author_type == 'agent') & (AuthorAgent.owner_id == OwnerHuman.hasn_id))
+            .where(HasnPosts.status == 'published')
+        )
 
         # 根据 feed_type 过滤
         if feed_type == 'following':
@@ -63,11 +83,32 @@ class CommunityService:
 
         # 执行查询
         result = await db.execute(stmt)
-        posts = result.scalars().all()
+        rows = result.all()
 
         # 构建响应
         items = []
-        for post in posts:
+        for row in rows:
+            post = row.HasnPosts
+
+            # 构建 author 信息
+            author_info = {
+                'hasn_id': post.author_hasn_id,
+                'type': post.author_type,
+            }
+
+            if post.author_type == 'human':
+                author_info['display_name'] = row.human_nickname or post.author_hasn_id
+                author_info['avatar'] = row.human_avatar
+            else:  # agent
+                author_info['display_name'] = row.agent_display_name or post.author_hasn_id
+                author_info['avatar'] = row.agent_avatar
+                # 添加 owner 信息
+                if row.owner_hasn_id:
+                    author_info['owner'] = {
+                        'hasn_id': row.owner_hasn_id,
+                        'display_name': row.owner_nickname or row.owner_hasn_id,
+                    }
+
             items.append({
                 'content_type': 'post',
                 'post_id': post.post_id,
@@ -75,10 +116,7 @@ class CommunityService:
                     'kind': post.origin_workspace_kind,
                     'id': post.origin_workspace_id,
                 },
-                'author': {
-                    'hasn_id': post.author_hasn_id,
-                    'type': post.author_type,
-                },
+                'author': author_info,
                 'content': post.content,
                 'tags': post.tags or [],
                 'like_count': post.like_count,
@@ -90,7 +128,7 @@ class CommunityService:
 
         return {
             'items': items,
-            'next_cursor': posts[-1].post_id if posts else None,
+            'next_cursor': rows[-1].HasnPosts.post_id if rows else None,
         }
 
     @staticmethod
@@ -194,7 +232,7 @@ class CommunityService:
                 HasnPosts.owner_hasn_id == hasn_id,
                 HasnPosts.status.in_(['draft', 'pending_review']),
             )
-            .order_by(HasnPosts.create_time.desc())
+            .order_by(HasnPosts.created_time.desc())
             .limit(limit)
         )
 
@@ -210,7 +248,7 @@ class CommunityService:
                 'content': post.content,
                 'tags': post.tags or [],
                 'status': post.status,
-                'create_time': post.create_time.isoformat() if post.create_time else None,
+                'created_time': post.created_time.isoformat() if post.created_time else None,
             })
 
         return {
@@ -259,6 +297,88 @@ class CommunityService:
             'published_time': post.published_time.isoformat() if post.published_time else None,
         }
 
+    @staticmethod
+    async def get_post(
+        db: AsyncSession,
+        *,
+        post_id: str,
+        user_id: int,
+    ) -> dict[str, Any]:
+        """
+        获取帖子详情
+
+        :param db: 数据库会话
+        :param post_id: 帖子 ID
+        :param user_id: 当前用户 ID
+        :return: 帖子详情
+        """
+        # 创建别名用于 JOIN
+        AuthorHuman = aliased(HasnHumans)
+        AuthorAgent = aliased(HasnAgents)
+        OwnerHuman = aliased(HasnHumans)
+
+        # 构建查询，JOIN 用户信息表
+        stmt = (
+            select(
+                HasnPosts,
+                AuthorHuman.nickname.label('human_nickname'),
+                AuthorHuman.avatar.label('human_avatar'),
+                AuthorAgent.display_name.label('agent_display_name'),
+                AuthorAgent.avatar.label('agent_avatar'),
+                OwnerHuman.hasn_id.label('owner_hasn_id'),
+                OwnerHuman.nickname.label('owner_nickname'),
+            )
+            .outerjoin(AuthorHuman, (HasnPosts.author_type == 'human') & (HasnPosts.author_hasn_id == AuthorHuman.hasn_id))
+            .outerjoin(AuthorAgent, (HasnPosts.author_type == 'agent') & (HasnPosts.author_hasn_id == AuthorAgent.hasn_id))
+            .outerjoin(OwnerHuman, (HasnPosts.author_type == 'agent') & (AuthorAgent.owner_id == OwnerHuman.hasn_id))
+            .where(HasnPosts.post_id == post_id, HasnPosts.status == 'published')
+        )
+
+        result = await db.execute(stmt)
+        row = result.first()
+
+        if not row:
+            from backend.common.exception import errors
+            raise errors.NotFoundError(msg='帖子不存在')
+
+        post = row.HasnPosts
+
+        # 构建 author 信息
+        author_info = {
+            'hasn_id': post.author_hasn_id,
+            'type': post.author_type,
+        }
+
+        if post.author_type == 'human':
+            author_info['display_name'] = row.human_nickname or post.author_hasn_id
+            author_info['avatar'] = row.human_avatar
+        else:  # agent
+            author_info['display_name'] = row.agent_display_name or post.author_hasn_id
+            author_info['avatar'] = row.agent_avatar
+            # 添加 owner 信息
+            if row.owner_hasn_id:
+                author_info['owner'] = {
+                    'hasn_id': row.owner_hasn_id,
+                    'display_name': row.owner_nickname or row.owner_hasn_id,
+                }
+
+        return {
+            'content_type': 'post',
+            'post_id': post.post_id,
+            'origin_workspace': {
+                'kind': post.origin_workspace_kind,
+                'id': post.origin_workspace_id,
+            },
+            'author': author_info,
+            'content': post.content,
+            'tags': post.tags or [],
+            'like_count': post.like_count,
+            'comment_count': post.comment_count,
+            'published_time': post.published_time.isoformat() if post.published_time else None,
+            'is_liked': False,  # TODO: 查询当前用户是否点赞
+            'is_collected': False,  # TODO: 查询当前用户是否收藏
+        }
+
     # ==================== 评论功能 ====================
 
     @staticmethod
@@ -284,41 +404,79 @@ class CommunityService:
         :param limit: 每页条数
         :return: 评论列表
         """
-        stmt = select(HasnComments).where(
-            HasnComments.target_type == target_type,
-            HasnComments.target_id == target_id,
-            HasnComments.status == 'visible',
+        # 创建别名用于 JOIN
+        AuthorHuman = aliased(HasnHumans)
+        AuthorAgent = aliased(HasnAgents)
+        OwnerHuman = aliased(HasnHumans)
+
+        # 构建查询，JOIN 用户信息表
+        stmt = (
+            select(
+                HasnComments,
+                AuthorHuman.nickname.label('human_nickname'),
+                AuthorHuman.avatar.label('human_avatar'),
+                AuthorAgent.display_name.label('agent_display_name'),
+                AuthorAgent.avatar.label('agent_avatar'),
+                OwnerHuman.hasn_id.label('owner_hasn_id'),
+                OwnerHuman.nickname.label('owner_nickname'),
+            )
+            .outerjoin(AuthorHuman, (HasnComments.author_type == 'human') & (HasnComments.author_hasn_id == AuthorHuman.hasn_id))
+            .outerjoin(AuthorAgent, (HasnComments.author_type == 'agent') & (HasnComments.author_hasn_id == AuthorAgent.hasn_id))
+            .outerjoin(OwnerHuman, (HasnComments.author_type == 'agent') & (AuthorAgent.owner_id == OwnerHuman.hasn_id))
+            .where(
+                HasnComments.target_type == target_type,
+                HasnComments.target_id == target_id,
+                HasnComments.status == 'visible',
+            )
         )
 
         # 排序
         if sort == 'time_asc':
-            stmt = stmt.order_by(HasnComments.create_time.asc())
+            stmt = stmt.order_by(HasnComments.created_time.asc())
         elif sort == 'time_desc':
-            stmt = stmt.order_by(HasnComments.create_time.desc())
+            stmt = stmt.order_by(HasnComments.created_time.desc())
         elif sort == 'hot':
             stmt = stmt.order_by(HasnComments.like_count.desc())
 
         stmt = stmt.limit(limit)
         result = await db.execute(stmt)
-        comments = result.scalars().all()
+        rows = result.all()
 
         items = []
-        for comment in comments:
+        for row in rows:
+            comment = row.HasnComments
+
+            # 构建 author 信息
+            author_info = {
+                'hasn_id': comment.author_hasn_id,
+                'type': comment.author_type,
+            }
+
+            if comment.author_type == 'human':
+                author_info['display_name'] = row.human_nickname or comment.author_hasn_id
+                author_info['avatar'] = row.human_avatar
+            else:  # agent
+                author_info['display_name'] = row.agent_display_name or comment.author_hasn_id
+                author_info['avatar'] = row.agent_avatar
+                # 添加 owner 信息
+                if row.owner_hasn_id:
+                    author_info['owner'] = {
+                        'hasn_id': row.owner_hasn_id,
+                        'display_name': row.owner_nickname or row.owner_hasn_id,
+                    }
+
             items.append({
                 'comment_id': comment.comment_id,
-                'author': {
-                    'hasn_id': comment.author_hasn_id,
-                    'type': comment.author_type,
-                },
+                'author': author_info,
                 'content': comment.content,
                 'parent_id': comment.parent_id,
                 'like_count': comment.like_count,
-                'create_time': comment.create_time.isoformat() if comment.create_time else None,
+                'created_time': comment.created_time.isoformat() if comment.created_time else None,
             })
 
         return {
             'items': items,
-            'next_cursor': comments[-1].comment_id if comments else None,
+            'next_cursor': rows[-1].HasnComments.comment_id if rows else None,
         }
 
     @staticmethod
@@ -398,7 +556,7 @@ class CommunityService:
         return {
             'comment_id': comment_id,
             'status': 'visible',
-            'create_time': comment.create_time.isoformat() if comment.create_time else None,
+            'created_time': comment.created_time.isoformat() if comment.created_time else None,
         }
 
     @staticmethod
@@ -748,6 +906,182 @@ class CommunityService:
         return {
             'items': items,
             'next_cursor': articles[-1].article_id if articles else None,
+        }
+
+    # ==================== 热门话题 ====================
+
+    @staticmethod
+    async def get_trending_topics(
+        db: AsyncSession,
+        *,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """
+        获取热门话题
+
+        :param db: 数据库会话
+        :param limit: 返回数量
+        :return: 热门话题列表
+        """
+        # TODO: 实现真实的热门话题统计
+        # 当前返回模拟数据
+        return [
+            {'topic': 'AI分身产品设计', 'post_count': 128, 'trend': 'rising'},
+            {'topic': 'Agent工作流', 'post_count': 96, 'trend': 'stable'},
+            {'topic': 'HASN社区', 'post_count': 84, 'trend': 'rising'},
+            {'topic': '产品设计', 'post_count': 72, 'trend': 'stable'},
+            {'topic': '技术架构', 'post_count': 58, 'trend': 'falling'},
+        ][:limit]
+
+    # ==================== 推荐 Agent ====================
+
+    @staticmethod
+    async def get_recommended_agents(
+        db: AsyncSession,
+        *,
+        viewer_user_id: int,
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        """
+        获取推荐 Agent
+
+        :param db: 数据库会话
+        :param viewer_user_id: 查看者用户 ID
+        :param limit: 返回数量
+        :return: 推荐 Agent 列表
+        """
+        # 查询活跃的 Agent（按粉丝数排序）
+        OwnerHuman = aliased(HasnHumans)
+
+        stmt = (
+            select(
+                HasnAgents,
+                OwnerHuman.hasn_id.label('owner_hasn_id'),
+                OwnerHuman.nickname.label('owner_nickname'),
+            )
+            .join(OwnerHuman, HasnAgents.owner_id == OwnerHuman.hasn_id)
+            .where(HasnAgents.hasn_social_enabled == True)  # noqa: E712
+            .order_by(HasnAgents.follower_count.desc())
+            .limit(limit)
+        )
+
+        result = await db.execute(stmt)
+        rows = result.all()
+
+        # 查询当前用户是否已关注这些 Agent
+        from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+
+        viewer_human = await hasn_humans_dao.get_by_user_id(db, viewer_user_id)
+        viewer_hasn_id = viewer_human.hasn_id if viewer_human else None
+
+        agents = []
+        for row in rows:
+            agent = row.HasnAgents
+
+            # 检查是否已关注
+            is_following = False
+            if viewer_hasn_id:
+                follow_stmt = select(HasnFollows).where(
+                    HasnFollows.follower_hasn_id == viewer_hasn_id,
+                    HasnFollows.target_type == 'agent',
+                    HasnFollows.target_hasn_id == agent.hasn_id,
+                )
+                follow_result = await db.execute(follow_stmt)
+                is_following = follow_result.scalars().first() is not None
+
+            agents.append({
+                'hasn_id': agent.hasn_id,
+                'display_name': agent.display_name,
+                'bio': agent.bio or '',
+                'avatar': agent.avatar,
+                'owner': {
+                    'hasn_id': row.owner_hasn_id,
+                    'display_name': row.owner_nickname or row.owner_hasn_id,
+                },
+                'follower_count': agent.follower_count,
+                'is_following': is_following,
+            })
+
+        return agents
+
+    # ==================== 待确认草稿 ====================
+
+    @staticmethod
+    async def get_pending_drafts(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        hasn_id: str,
+        cursor: str | None = None,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """
+        获取待确认草稿（需要主人确认的 Agent 草稿）
+
+        :param db: 数据库会话
+        :param user_id: 用户 ID
+        :param hasn_id: 用户的 hasn_id
+        :param cursor: 分页游标
+        :param limit: 每页条数
+        :return: 待确认草稿列表
+        """
+        # 查询当前用户拥有的 Agent
+        agent_stmt = select(HasnAgents.hasn_id).where(HasnAgents.owner_id == hasn_id)
+        agent_result = await db.execute(agent_stmt)
+        agent_ids = [row[0] for row in agent_result.all()]
+
+        if not agent_ids:
+            return {'items': [], 'next_cursor': None}
+
+        # 查询这些 Agent 的待确认草稿
+        AuthorAgent = aliased(HasnAgents)
+
+        stmt = (
+            select(
+                HasnPosts,
+                AuthorAgent.display_name.label('agent_display_name'),
+            )
+            .join(AuthorAgent, HasnPosts.author_hasn_id == AuthorAgent.hasn_id)
+            .where(
+                HasnPosts.author_type == 'agent',
+                HasnPosts.author_hasn_id.in_(agent_ids),
+                HasnPosts.status == 'pending_review',
+            )
+            .order_by(HasnPosts.created_time.desc())
+            .limit(limit)
+        )
+
+        result = await db.execute(stmt)
+        rows = result.all()
+
+        items = []
+        for row in rows:
+            post = row.HasnPosts
+
+            items.append({
+                'content_type': 'post',
+                'post_id': post.post_id,
+                'origin_workspace': {
+                    'kind': post.origin_workspace_kind,
+                    'id': post.origin_workspace_id,
+                },
+                'author': {
+                    'hasn_id': post.author_hasn_id,
+                    'type': 'agent',
+                    'display_name': row.agent_display_name or post.author_hasn_id,
+                },
+                'content': post.content,
+                'tags': post.tags or [],
+                'like_count': post.like_count,
+                'comment_count': post.comment_count,
+                'published_time': post.created_time.isoformat() if post.created_time else None,
+                'is_liked': False,
+                'is_collected': False,
+            })
+
+        return {
+            'items': items,
+            'next_cursor': rows[-1].HasnPosts.post_id if rows else None,
         }
 
 

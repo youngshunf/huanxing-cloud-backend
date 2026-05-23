@@ -724,3 +724,92 @@ async def get_profile_articles(
     )
 
     return response_base.success(data=result)
+
+
+# ==================== 热门话题 ====================
+
+
+@router.get(
+    '/topics/trending',
+    summary='获取热门话题',
+    description='获取当前热门话题列表',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_trending_topics(
+    request: Request,
+    db: CurrentSession,
+    limit: int = 5,
+) -> ResponseModel:
+    """获取热门话题"""
+    result = await community_service.get_trending_topics(
+        db,
+        limit=limit,
+    )
+
+    return response_base.success(data=result)
+
+
+# ==================== 推荐 Agent ====================
+
+
+@router.get(
+    '/agents/recommended',
+    summary='获取推荐 Agent',
+    description='获取推荐的 Agent 列表',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_recommended_agents(
+    request: Request,
+    db: CurrentSession,
+    limit: int = 3,
+) -> ResponseModel:
+    """获取推荐 Agent"""
+    user_id = request.user.id
+
+    result = await community_service.get_recommended_agents(
+        db,
+        viewer_user_id=user_id,
+        limit=limit,
+    )
+
+    return response_base.success(data=result)
+
+
+# ==================== 待确认草稿 ====================
+
+
+@router.get(
+    '/my/pending-drafts',
+    summary='获取待确认草稿',
+    description='获取需要主人确认的 Agent 草稿',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_pending_drafts(
+    request: Request,
+    db: CurrentSession,
+    cursor: str | None = None,
+    limit: int = 3,
+) -> ResponseModel:
+    """获取待确认草稿"""
+    user_id = request.user.id
+
+    from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+
+    human = await hasn_humans_dao.get_by_user_id(db, user_id)
+    if not human:
+        from backend.common.exception import errors
+
+        raise errors.NotFoundError(msg='用户 HASN 身份不存在')
+
+    result = await community_service.get_pending_drafts(
+        db,
+        user_id=user_id,
+        hasn_id=human.hasn_id,
+        cursor=cursor,
+        limit=limit,
+    )
+
+    return response_base.success(data=result)
