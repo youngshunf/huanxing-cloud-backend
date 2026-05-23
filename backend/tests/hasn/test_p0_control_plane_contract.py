@@ -363,6 +363,44 @@ async def test_sync_push_memory_owner_event_becomes_pullable_owner_sync_event() 
 
 
 @pytest.mark.asyncio
+async def test_sync_push_rejects_unknown_memory_namespace_before_revision_advance() -> None:
+    from backend.app.hasn.schema.hasn_sync import ClientEvent, SyncPushRequest
+    from backend.app.hasn.service.hasn_sync_service import HasnSyncService
+
+    gateway = CapturingSyncGateway()
+    service = HasnSyncService(gateway=gateway)
+
+    push_response = await service.push(
+        None,
+        SyncPushRequest(
+            owner_id='h_owner',
+            node_id='n_runtime',
+            events=[
+                ClientEvent(
+                    client_event_id='ce_memory_unknown_namespace_1',
+                    event_type='memory.owner_event.upserted',
+                    hasn_id='h_owner',
+                    payload={
+                        'sync_scope_kind': 'owner',
+                        'sync_scope_id': 'h_owner',
+                        'namespace': 'unknown_namespace',
+                        'record_id': 'owner_event:h_owner:unknown',
+                        'revision': 1,
+                    },
+                )
+            ],
+        ),
+    )
+
+    assert push_response.accepted == 0
+    assert [error.name for error in push_response.rejected] == ['ERR_MEMORY_NAMESPACE_UNKNOWN']
+    assert push_response.next_cursor == 'owner:h_owner:0'
+    assert gateway.sync_events == []
+    assert gateway.namespace_revisions == {}
+    assert gateway.client_events == []
+
+
+@pytest.mark.asyncio
 async def test_sync_push_memory_retry_is_idempotent_for_namespace_revision() -> None:
     from backend.app.hasn.schema.hasn_sync import ClientEvent, SyncPullRequest, SyncPushRequest
     from backend.app.hasn.service.hasn_sync_service import HasnSyncService

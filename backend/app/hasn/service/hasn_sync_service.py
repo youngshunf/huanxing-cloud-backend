@@ -33,6 +33,17 @@ from backend.utils.timezone import timezone
 
 MEMORY_SYNC_SCOPE_KINDS = {'owner', 'agent'}
 
+OWNER_MEMORY_NAMESPACES = {'portraits', 'facts', 'events', 'procedures', 'work_state', 'summaries', 'audits'}
+AGENT_MEMORY_NAMESPACES = {
+    'episodic',
+    'agent_portraits',
+    'agent_facts',
+    'agent_events',
+    'agent_procedures',
+    'tasks',
+    'extract_jobs',
+}
+
 PRIVATE_RUNTIME_KEYS = {
     'workspace',
     'workspace_path',
@@ -59,6 +70,12 @@ _MEMORY_SYNC_SCOPE_ERROR = ErrorObject(
     code=8035,
     name='ERR_MEMORY_SYNC_SCOPE_INVALID',
     message='Memory sync payload missing sync_scope_kind, sync_scope_id, or namespace.',
+)
+
+_MEMORY_NAMESPACE_UNKNOWN_ERROR = ErrorObject(
+    code=8036,
+    name='ERR_MEMORY_NAMESPACE_UNKNOWN',
+    message='Memory sync payload references unknown namespace.',
 )
 
 
@@ -196,6 +213,11 @@ class SqlAlchemySyncGateway:
         server_revision = None
         if event.event_type.startswith('memory.'):
             sync_scope_kind, sync_scope_id, namespace = _memory_namespace_revision_key(event)
+            if not _memory_namespace_allowed(sync_scope_kind, namespace):
+                raise errors.RequestError(
+                    msg=_MEMORY_NAMESPACE_UNKNOWN_ERROR.name,
+                    data=_MEMORY_NAMESPACE_UNKNOWN_ERROR.model_dump(),
+                )
             namespace_revision = await self._advance_memory_namespace_revision(
                 db,
                 sync_scope_kind=sync_scope_kind,
@@ -487,6 +509,22 @@ class HasnSyncService:
             if _contains_private_runtime_key(event.payload):
                 rejected.append(_PRIVATE_METADATA_ERROR)
                 continue
+            if event.event_type.startswith('memory.'):
+                try:
+                    sync_scope_kind, _, namespace = _memory_namespace_revision_key(event)
+                    if not _memory_namespace_allowed(sync_scope_kind, namespace):
+                        raise errors.RequestError(
+                            msg=_MEMORY_NAMESPACE_UNKNOWN_ERROR.name,
+                            data=_MEMORY_NAMESPACE_UNKNOWN_ERROR.model_dump(),
+                        )
+                except errors.RequestError as exc:
+                    if getattr(exc, 'msg', None) == _MEMORY_SYNC_SCOPE_ERROR.name:
+                        rejected.append(_MEMORY_SYNC_SCOPE_ERROR)
+                        continue
+                    if getattr(exc, 'msg', None) == _MEMORY_NAMESPACE_UNKNOWN_ERROR.name:
+                        rejected.append(_MEMORY_NAMESPACE_UNKNOWN_ERROR)
+                        continue
+                    raise
             save_client_event = getattr(self.gateway, 'save_client_event', None)
             if save_client_event:
                 try:
@@ -494,9 +532,13 @@ class HasnSyncService:
                         db, owner_id=request.owner_id, node_id=node_id, event=event
                     )
                 except errors.RequestError as exc:
-                    if event.event_type.startswith('memory.') and getattr(exc, 'msg', None) == 'ERR_MEMORY_SYNC_SCOPE_INVALID':
-                        rejected.append(_MEMORY_SYNC_SCOPE_ERROR)
-                        continue
+                    if event.event_type.startswith('memory.'):
+                        if getattr(exc, 'msg', None) == _MEMORY_SYNC_SCOPE_ERROR.name:
+                            rejected.append(_MEMORY_SYNC_SCOPE_ERROR)
+                            continue
+                        if getattr(exc, 'msg', None) == _MEMORY_NAMESPACE_UNKNOWN_ERROR.name:
+                            rejected.append(_MEMORY_NAMESPACE_UNKNOWN_ERROR)
+                            continue
                     raise
                 if server_revision is not None:
                     max_server_revision = max(max_server_revision, int(server_revision))
@@ -583,6 +625,14 @@ def _memory_namespace_revision_key(event: ClientEvent) -> tuple[str, str, str]:
     if sync_scope_kind not in MEMORY_SYNC_SCOPE_KINDS:
         raise errors.RequestError(msg='ERR_MEMORY_SYNC_SCOPE_INVALID')
     return sync_scope_kind, sync_scope_id, namespace
+
+
+def _memory_namespace_allowed(sync_scope_kind: str, namespace: str) -> bool:
+    if sync_scope_kind == 'owner':
+        return namespace in OWNER_MEMORY_NAMESPACES
+    if sync_scope_kind == 'agent':
+        return namespace in AGENT_MEMORY_NAMESPACES
+    return False
 
 
 def _required_memory_payload_string(event: ClientEvent, key: str) -> str:
