@@ -41,4 +41,6 @@ class HasnAgents(Base):
     binding_node_id: Mapped[str | None] = mapped_column(sa.String(64), default=None, comment='Agent 当前绑定的 node ID')
     binding_status: Mapped[str] = mapped_column(sa.String(32), default='unbound', comment='binding 状态 (unbound:未绑定:gray/binding:绑定中:blue/bound:已绑定:green/failed:绑定失败:red)')
     binding_updated_at: Mapped[int | None] = mapped_column(sa.BigInteger, default=None, comment='binding 状态更新时间（Unix 秒）')
+    online_status: Mapped[str] = mapped_column(sa.String(32), default='offline', comment='在线状态 (offline:离线:gray/online:在线:green)')
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(default=None, comment='最后心跳时间（用于超时检测）')
     deleted_at: Mapped[datetime | None] = mapped_column(default=None, comment='软删除时间')

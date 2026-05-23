@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 
 from backend.app.hasn.model import HasnAgents, HasnHumans
 from backend.app.hasn.schema.hasn_agents import (
+    AgentHeartbeatRequest,
+    AgentHeartbeatResponse,
     AgentSnapshot,
     AgentSyncRequest,
     AgentSyncResponse,
@@ -243,3 +245,24 @@ async def delete_my_hasn_agents(
     if count > 0:
         return response_base.success()
     return response_base.fail()
+
+
+@router.post(
+    '/by-hasn-id/{hasn_id}/heartbeat',
+    summary='daemon 端上报 Agent 心跳',
+    dependencies=[DependsJwtAuth],
+)
+async def report_agent_heartbeat(
+    request: Request,
+    db: CurrentSessionTransaction,
+    hasn_id: Annotated[str, Path(description='Agent HASN ID, 如 a_xxx')],
+    body: AgentHeartbeatRequest,
+) -> ResponseSchemaModel[AgentHeartbeatResponse]:
+    """daemon 定期调用，上报 agent 在线状态和心跳时间。"""
+    result = await agent_profile_service.update_heartbeat(
+        db,
+        hasn_id=hasn_id,
+        request=body,
+        user_id=request.user.id,
+    )
+    return response_base.success(data=result)

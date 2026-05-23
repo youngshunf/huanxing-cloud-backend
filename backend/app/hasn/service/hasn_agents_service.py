@@ -330,6 +330,42 @@ class HasnAgentProfileService:
         await db.refresh(agent)
         return _agent_snapshot(agent)
 
+    async def update_heartbeat(
+        self,
+        db: AsyncSession,
+        hasn_id: str,
+        request: 'AgentHeartbeatRequest',
+        *,
+        user_id: int | None = None,
+    ) -> 'AgentHeartbeatResponse':
+        """更新 agent 心跳状态。"""
+        import sqlalchemy as sa
+        from datetime import datetime
+
+        from backend.app.hasn.schema.hasn_agents import AgentHeartbeatResponse
+
+        result = await db.execute(
+            sa.select(HasnAgents).where(HasnAgents.hasn_id == hasn_id).limit(1)
+        )
+        agent = result.scalar_one_or_none()
+        if agent is None:
+            raise errors.NotFoundError(msg=f'agent {hasn_id} not found')
+        if user_id is not None and not await self.gateway.owns_owner(db, owner_id=agent.owner_id, user_id=user_id):
+            raise errors.AuthorizationError(msg='ERR_HASN_OWNER_ACCESS_DENIED')
+
+        # 更新在线状态和心跳时间
+        await db.execute(
+            sa.update(HasnAgents)
+            .where(HasnAgents.hasn_id == hasn_id)
+            .values(
+                binding_node_id=request.node_id,
+                online_status=request.online_status,
+                last_heartbeat_at=datetime.fromtimestamp(request.last_heartbeat_at),
+            )
+        )
+        await db.commit()
+        return AgentHeartbeatResponse(success=True)
+
     async def _assert_owner_access(self, db: AsyncSession, *, owner_id: str, user_id: int | None) -> None:
         if user_id is None:
             return

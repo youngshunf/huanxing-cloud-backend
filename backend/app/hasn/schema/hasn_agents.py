@@ -35,6 +35,8 @@ class HasnAgentsSchemaBase(SchemaBase):
     binding_node_id: str | None = Field(None, description='Agent 当前绑定的 node ID')
     binding_status: str = Field(default='unbound', description='binding 状态 (unbound/binding/bound/failed)')
     binding_updated_at: int | None = Field(None, description='binding 状态更新时间（Unix 秒）')
+    online_status: str = Field(default='offline', description='在线状态 (offline:离线/online:在线)')
+    last_heartbeat_at: datetime | None = Field(None, description='最后心跳时间（用于超时检测）')
 
 
 class CreateHasnAgentsParam(HasnAgentsSchemaBase):
@@ -88,6 +90,8 @@ class AgentSnapshot(SchemaBase):
     binding_node_id: str | None = Field(None, description='Agent 当前绑定的 node ID')
     binding_status: str = Field(default='unbound', description='binding 状态 (unbound/binding/bound/failed)')
     binding_updated_at: int | None = Field(None, description='binding 状态更新时间（Unix 秒）')
+    online_status: str = Field(default='offline', description='在线状态 (offline:离线/online:在线)')
+    last_heartbeat_at: datetime | None = Field(None, description='最后心跳时间（用于超时检测）')
     updated_time: datetime | None = Field(None, description='更新时间')
 
 
@@ -166,3 +170,18 @@ class UpdateAgentBindingRequest(SchemaBase):
 
     binding_node_id: str = Field(description='绑定的 node ID')
     binding_status: str = Field(description='binding 状态 (unbound/binding/bound/failed)')
+
+
+class AgentHeartbeatRequest(SchemaBase):
+    """daemon 发起的 agent 心跳上报请求。"""
+
+    node_id: str = Field(description='当前 node ID')
+    online_status: str = Field(description='在线状态 (online/offline)')
+    health_status: str | None = Field(None, description='健康状态 (ok/degraded/error)')
+    last_heartbeat_at: int = Field(description='最后心跳时间（Unix 秒）')
+
+
+class AgentHeartbeatResponse(SchemaBase):
+    """心跳上报响应。"""
+
+    success: bool = Field(description='是否成功')

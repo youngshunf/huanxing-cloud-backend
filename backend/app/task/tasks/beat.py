@@ -34,4 +34,8 @@ LOCAL_BEAT_SCHEDULE = {
         'task': 'grant_yearly_subscription_credits',
         'schedule': TzAwareCrontab('0', '1'),  # 每天凌晨 1 点执行
     },
+    'Agent 心跳超时检测': {
+        'task': 'hasn_check_agent_heartbeat_timeout',
+        'schedule': TzAwareCrontab('*/5'),  # 每 5 分钟执行一次
+    },
 }
