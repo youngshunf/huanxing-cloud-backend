@@ -1,5 +1,5 @@
 from backend.app.hermes.api.router import v1 as hermes_v1, app as hermes_app, internal as hermes_internal
-from backend.app.hasn.api.router import (, v1 as hasn_v1, app as hasn_app, agent as hasn_agent, open_api as hasn_open, v1 as hasn_v1, app as hasn_app, agent as hasn_agent, open_api as hasn_open, v1 as hasn_v1, app as hasn_app, agent as hasn_agent, open_api as hasn_open
+from backend.app.hasn.api.router import (
     ai_native as hasn_ai_native,
     agent as hasn_agent,
     app as hasn_app,
