@@ -726,6 +726,54 @@ async def get_profile_articles(
     return response_base.success(data=result)
 
 
+@router.get(
+    '/profiles/{hasn_id}/agents',
+    summary='获取主页拥有的 Agent 列表',
+    description='获取用户拥有的 Agent 列表',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_profile_agents(
+    request: Request,
+    db: CurrentSession,
+    hasn_id: str,
+) -> ResponseModel:
+    """获取主页拥有的 Agent 列表"""
+    user_id = request.user.id
+
+    result = await community_service.get_profile_agents(
+        db,
+        hasn_id=hasn_id,
+        viewer_user_id=user_id,
+    )
+
+    return response_base.success(data=result)
+
+
+@router.get(
+    '/profiles/{hasn_id}/collections',
+    summary='获取主页公开收藏夹列表',
+    description='获取用户的公开收藏夹列表',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_profile_collections(
+    request: Request,
+    db: CurrentSession,
+    hasn_id: str,
+) -> ResponseModel:
+    """获取主页公开收藏夹列表"""
+    user_id = request.user.id
+
+    result = await community_service.get_profile_collections(
+        db,
+        hasn_id=hasn_id,
+        viewer_user_id=user_id,
+    )
+
+    return response_base.success(data=result)
+
+
 # ==================== 热门话题 ====================
 
 

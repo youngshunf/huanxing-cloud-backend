@@ -908,6 +908,112 @@ class CommunityService:
             'next_cursor': articles[-1].article_id if articles else None,
         }
 
+    @staticmethod
+    async def get_profile_agents(
+        db: AsyncSession,
+        *,
+        hasn_id: str,
+        viewer_user_id: int,
+    ) -> list[dict[str, Any]]:
+        """
+        获取主页拥有的 Agent 列表
+
+        :param db: 数据库会话
+        :param hasn_id: 目标 hasn_id
+        :param viewer_user_id: 查看者用户 ID
+        :return: Agent 列表
+        """
+        # 查询该用户拥有的 Agent
+        stmt = (
+            select(HasnAgents)
+            .where(HasnAgents.owner_id == hasn_id)
+            .order_by(HasnAgents.follower_count.desc())
+        )
+
+        result = await db.execute(stmt)
+        agents = result.scalars().all()
+
+        # 查询当前用户是否已关注这些 Agent
+        from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+
+        viewer_human = await hasn_humans_dao.get_by_user_id(db, viewer_user_id)
+        viewer_hasn_id = viewer_human.hasn_id if viewer_human else None
+
+        agent_list = []
+        for agent in agents:
+            # 检查是否已关注
+            is_following = False
+            if viewer_hasn_id:
+                follow_stmt = select(HasnFollows).where(
+                    HasnFollows.follower_hasn_id == viewer_hasn_id,
+                    HasnFollows.target_type == 'agent',
+                    HasnFollows.target_hasn_id == agent.hasn_id,
+                )
+                follow_result = await db.execute(follow_stmt)
+                is_following = follow_result.scalars().first() is not None
+
+            agent_list.append({
+                'hasn_id': agent.hasn_id,
+                'display_name': agent.display_name,
+                'bio': agent.bio or '',
+                'avatar': agent.avatar,
+                'owner': {
+                    'hasn_id': hasn_id,
+                    'display_name': hasn_id,  # TODO: 查询 owner 的 display_name
+                },
+                'follower_count': agent.follower_count,
+                'is_following': is_following,
+            })
+
+        return agent_list
+
+    @staticmethod
+    async def get_profile_collections(
+        db: AsyncSession,
+        *,
+        hasn_id: str,
+        viewer_user_id: int,
+    ) -> list[dict[str, Any]]:
+        """
+        获取主页公开收藏夹列表
+
+        :param db: 数据库会话
+        :param hasn_id: 目标 hasn_id
+        :param viewer_user_id: 查看者用户 ID
+        :return: 收藏夹列表
+        """
+        # 查询公开收藏夹
+        stmt = (
+            select(HasnCollections)
+            .where(
+                HasnCollections.owner_hasn_id == hasn_id,
+                HasnCollections.is_public == True,  # noqa: E712
+            )
+            .order_by(HasnCollections.created_time.desc())
+        )
+
+        result = await db.execute(stmt)
+        collections = result.scalars().all()
+
+        collection_list = []
+        for collection in collections:
+            # 统计收藏项数量
+            count_stmt = select(HasnCollectionItems).where(
+                HasnCollectionItems.collection_id == collection.collection_id
+            )
+            count_result = await db.execute(count_stmt)
+            item_count = len(count_result.scalars().all())
+
+            collection_list.append({
+                'collection_id': collection.collection_id,
+                'name': collection.name,
+                'description': collection.description,
+                'is_public': collection.is_public,
+                'item_count': item_count,
+            })
+
+        return collection_list
+
     # ==================== 热门话题 ====================
 
     @staticmethod
