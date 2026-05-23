@@ -39,6 +39,9 @@ from backend.app.hasn.api.v1.admin.hasn_collection_items import router as admin_
 from backend.app.hasn.api.v1.admin.hasn_skill_bundle import router as admin_hasn_skill_bundle_router
 from backend.app.hasn.api.v1.admin.hasn_task import router as admin_hasn_task_router
 from backend.app.hasn.api.v1.admin.hasn_task_run import router as admin_hasn_task_run_router
+from backend.app.hasn.api.v1.admin.hasn_sessions import router as admin_hasn_sessions_router
+from backend.app.hasn.api.v1.admin.hasn_session_events import router as admin_hasn_session_events_router
+from backend.app.hasn.api.v1.admin.hasn_session_artifacts import router as admin_hasn_session_artifacts_router
 from backend.app.hasn.api.v1.ai_native_app import audit_router as ai_native_audit_router
 from backend.app.hasn.api.v1.ai_native_app import apps_router as ai_native_apps_router
 from backend.app.hasn.api.v1.ai_native_app import runtime_router as ai_native_runtime_router
@@ -149,6 +152,9 @@ from backend.app.hasn.api.v1.agent.hasn_collection_items import router as agent_
 from backend.app.hasn.api.v1.agent.hasn_skill_bundle import router as agent_hasn_skill_bundle_router
 from backend.app.hasn.api.v1.agent.hasn_task import router as agent_hasn_task_router
 from backend.app.hasn.api.v1.agent.hasn_task_run import router as agent_hasn_task_run_router
+from backend.app.hasn.api.v1.agent.hasn_sessions import router as agent_hasn_sessions_router
+from backend.app.hasn.api.v1.agent.hasn_session_events import router as agent_hasn_session_events_router
+from backend.app.hasn.api.v1.agent.hasn_session_artifacts import router as agent_hasn_session_artifacts_router
 
 agent = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn/agent', tags=['HASN Agent端'])
 
@@ -175,6 +181,9 @@ agent.include_router(agent_hasn_nodes_router, prefix='/hasn/nodess', tags=['HASN
 agent.include_router(agent_hasn_skill_bundle_router, prefix='/hasn/skill/bundles', tags=['Skill Bundle 定义表（多个 skill 的组合）-Skill Bundle 定义表（多个 skill 的组合）'])
 agent.include_router(agent_hasn_task_router, prefix='/hasn/tasks', tags=['任务定义-任务定义'])
 agent.include_router(agent_hasn_task_run_router, prefix='/hasn/task/runs', tags=['任务执行记录-任务执行记录'])
+agent.include_router(agent_hasn_sessions_router, prefix='/hasn/sessionss', tags=['HASN 会话分层 - 逻辑会话-HASN 会话分层 - 逻辑会话'])
+agent.include_router(agent_hasn_session_events_router, prefix='/hasn/session/eventss', tags=['HASN 会话事件-HASN 会话事件'])
+agent.include_router(agent_hasn_session_artifacts_router, prefix='/hasn/session/artifactss', tags=['HASN 会话产物-HASN 会话产物'])
 
 # --- 公开（无需认证，仅 Agent 能力发现） ---
 from backend.app.hasn.api.v1.open.hasn_agent_capabilities import router as open_hasn_agent_capabilities_router
@@ -188,6 +197,9 @@ from backend.app.hasn.api.v1.open.hasn_collection_items import router as open_ha
 from backend.app.hasn.api.v1.open.hasn_skill_bundle import router as open_hasn_skill_bundle_router
 from backend.app.hasn.api.v1.open.hasn_task import router as open_hasn_task_router
 from backend.app.hasn.api.v1.open.hasn_task_run import router as open_hasn_task_run_router
+from backend.app.hasn.api.v1.open.hasn_sessions import router as open_hasn_sessions_router
+from backend.app.hasn.api.v1.open.hasn_session_events import router as open_hasn_session_events_router
+from backend.app.hasn.api.v1.open.hasn_session_artifacts import router as open_hasn_session_artifacts_router
 
 open_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn/open', tags=['HASN 公开接口'])
 
@@ -203,6 +215,9 @@ open_api.include_router(open_hasn_agent_capabilities_router, prefix='/agent/capa
 open_api.include_router(open_hasn_skill_bundle_router, prefix='/hasn/skill/bundles', tags=['Skill Bundle 定义表（多个 skill 的组合）-Skill Bundle 定义表（多个 skill 的组合）'])
 open_api.include_router(open_hasn_task_router, prefix='/hasn/tasks', tags=['任务定义-任务定义'])
 open_api.include_router(open_hasn_task_run_router, prefix='/hasn/task/runs', tags=['任务执行记录-任务执行记录'])
+open_api.include_router(open_hasn_sessions_router, prefix='/hasn/sessionss', tags=['HASN 会话分层 - 逻辑会话-HASN 会话分层 - 逻辑会话'])
+open_api.include_router(open_hasn_session_events_router, prefix='/hasn/session/eventss', tags=['HASN 会话事件-HASN 会话事件'])
+open_api.include_router(open_hasn_session_artifacts_router, prefix='/hasn/session/artifactss', tags=['HASN 会话产物-HASN 会话产物'])
 # open_hasn_nodes_router 已移除（v2.1: 节点注册在 WS 建连时自动完成）
 
 # --- WebSocket 端点（统一节点） ---
@@ -246,6 +261,9 @@ from backend.app.hasn.api.v1.app.community import router as app_community_router
 from backend.app.hasn.api.v1.app.hasn_skill_bundle import router as app_hasn_skill_bundle_router
 from backend.app.hasn.api.v1.app.hasn_task import router as app_hasn_task_router
 from backend.app.hasn.api.v1.app.hasn_task_run import router as app_hasn_task_run_router
+from backend.app.hasn.api.v1.app.hasn_sessions import router as app_hasn_sessions_router
+from backend.app.hasn.api.v1.app.hasn_session_events import router as app_hasn_session_events_router
+from backend.app.hasn.api.v1.app.hasn_session_artifacts import router as app_hasn_session_artifacts_router
 
 app.include_router(app_hasn_im_router, prefix='/im', tags=['HASN IM 业务'])
 app.include_router(app_hasn_api_keys_router, tags=['HASN API Key'])
@@ -270,6 +288,9 @@ app.include_router(app_community_router, prefix='/community', tags=['社区'])
 # app.include_router(app_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
 # app.include_router(app_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
 # app.include_router(app_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
+app.include_router(app_hasn_sessions_router, prefix='/hasn/sessionss', tags=['HASN 会话分层 - 逻辑会话-HASN 会话分层 - 逻辑会话'])
+app.include_router(app_hasn_session_events_router, prefix='/hasn/session/eventss', tags=['HASN 会话事件-HASN 会话事件'])
+app.include_router(app_hasn_session_artifacts_router, prefix='/hasn/session/artifactss', tags=['HASN 会话产物-HASN 会话产物'])
 v1.include_router(node_control_router, tags=['HASN Node 控制平面'])
 # 注释掉 codegen 生成的社区表 admin 路由
 # v1.include_router(admin_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
@@ -282,3 +303,6 @@ v1.include_router(node_control_router, tags=['HASN Node 控制平面'])
 v1.include_router(admin_hasn_skill_bundle_router, prefix='/hasn/skill/bundles', tags=['Skill Bundle 定义表（多个 skill 的组合）-Skill Bundle 定义表（多个 skill 的组合）'])
 v1.include_router(admin_hasn_task_router, prefix='/hasn/tasks', tags=['任务定义-任务定义'])
 v1.include_router(admin_hasn_task_run_router, prefix='/hasn/task/runs', tags=['任务执行记录-任务执行记录'])
+v1.include_router(admin_hasn_sessions_router, prefix='/hasn/sessionss', tags=['HASN 会话分层 - 逻辑会话-HASN 会话分层 - 逻辑会话'])
+v1.include_router(admin_hasn_session_events_router, prefix='/hasn/session/eventss', tags=['HASN 会话事件-HASN 会话事件'])
+v1.include_router(admin_hasn_session_artifacts_router, prefix='/hasn/session/artifactss', tags=['HASN 会话产物-HASN 会话产物'])
