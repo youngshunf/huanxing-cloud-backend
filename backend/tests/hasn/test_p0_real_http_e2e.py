@@ -636,15 +636,15 @@ def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_an
             'node_id': 'n_p0_desktop',
             'events': [
                 {
-                    'client_event_id': 'ce_memory_owner_portrait_1',
-                    'event_type': 'memory.owner_portrait.upserted',
+                    'client_event_id': 'ce_memory_owner_event_1',
+                    'event_type': 'memory.owner_event.upserted',
                     'hasn_id': 'h_p0_owner',
-                    'dedupe_key': 'memory:owner_portrait:h_p0_owner:1',
+                    'dedupe_key': 'memory:owner_event:h_p0_owner:1',
                     'payload': {
                         'sync_scope_kind': 'owner',
                         'sync_scope_id': 'h_p0_owner',
-                        'namespace': 'portraits',
-                        'record_id': 'owner_portrait:h_p0_owner',
+                        'namespace': 'events',
+                        'record_id': 'owner_event:h_p0_owner:1',
                         'revision': 1,
                     },
                 }
@@ -661,10 +661,50 @@ def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_an
         json={'owner_id': 'h_p0_owner', 'cursor': 'owner:h_p0_owner:0'},
     )
     assert memory_pull.status_code == 200
-    assert [event['event_type'] for event in memory_pull.json()['events']] == ['memory.owner_portrait.upserted']
-    assert memory_pull.json()['events'][0]['payload']['namespace'] == 'portraits'
+    assert [event['event_type'] for event in memory_pull.json()['events']] == ['memory.owner_event.upserted']
+    assert memory_pull.json()['events'][0]['payload']['namespace'] == 'events'
     assert memory_pull.json()['events'][0]['payload']['namespace_revision'] == 1
     assert memory_pull.json()['next_cursor'] == 'owner:h_p0_owner:1'
+
+    agent_memory_push = client.post(
+        '/api/v1/hasn/sync/push',
+        headers=auth,
+        json={
+            'owner_id': 'h_p0_owner',
+            'node_id': 'n_p0_desktop',
+            'events': [
+                {
+                    'client_event_id': 'ce_memory_agent_event_1',
+                    'event_type': 'memory.agent_self_event.upserted',
+                    'hasn_id': 'a_p0_default',
+                    'dedupe_key': 'memory:agent_self_event:a_p0_default:1',
+                    'payload': {
+                        'sync_scope_kind': 'agent',
+                        'sync_scope_id': 'a_p0_default',
+                        'namespace': 'agent_events',
+                        'record_id': 'agent_event:a_p0_default:1',
+                        'revision': 1,
+                    },
+                }
+            ],
+        },
+    )
+    assert agent_memory_push.status_code == 200
+    assert agent_memory_push.json()['accepted'] == 1
+    assert agent_memory_push.json()['next_cursor'] == 'owner:h_p0_owner:2'
+
+    agent_memory_pull = client.post(
+        '/api/v1/hasn/sync/pull',
+        headers=auth,
+        json={'owner_id': 'h_p0_owner', 'cursor': 'owner:h_p0_owner:1'},
+    )
+    assert agent_memory_pull.status_code == 200
+    assert [event['event_type'] for event in agent_memory_pull.json()['events']] == [
+        'memory.agent_self_event.upserted'
+    ]
+    assert agent_memory_pull.json()['events'][0]['payload']['namespace'] == 'agent_events'
+    assert agent_memory_pull.json()['events'][0]['payload']['namespace_revision'] == 1
+    assert agent_memory_pull.json()['next_cursor'] == 'owner:h_p0_owner:2'
 
     human_message = client.post(
         '/api/v1/hasn/messages/send',

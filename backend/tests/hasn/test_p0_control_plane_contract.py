@@ -309,7 +309,7 @@ async def test_runtime_report_rejects_private_runtime_metadata() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sync_push_memory_event_becomes_pullable_owner_sync_event() -> None:
+async def test_sync_push_memory_owner_event_becomes_pullable_owner_sync_event() -> None:
     from backend.app.hasn.schema.hasn_sync import ClientEvent, SyncPullRequest, SyncPushRequest
     from backend.app.hasn.service.hasn_sync_service import HasnSyncService
 
@@ -323,15 +323,15 @@ async def test_sync_push_memory_event_becomes_pullable_owner_sync_event() -> Non
             node_id='n_runtime',
             events=[
                 ClientEvent(
-                    client_event_id='ce_memory_owner_portrait_1',
-                    event_type='memory.owner_portrait.upserted',
+                    client_event_id='ce_memory_owner_event_1',
+                    event_type='memory.owner_event.upserted',
                     hasn_id='h_owner',
-                    dedupe_key='memory:owner_portrait:h_owner:1',
+                    dedupe_key='memory:owner_event:h_owner:1',
                     payload={
                         'sync_scope_kind': 'owner',
                         'sync_scope_id': 'h_owner',
-                        'namespace': 'portraits',
-                        'record_id': 'owner_portrait:h_owner',
+                        'namespace': 'events',
+                        'record_id': 'owner_event:h_owner:1',
                         'revision': 1,
                     },
                 )
@@ -342,13 +342,13 @@ async def test_sync_push_memory_event_becomes_pullable_owner_sync_event() -> Non
 
     assert push_response.accepted == 1
     assert push_response.next_cursor == 'owner:h_owner:1'
-    assert [event.event_type for event in pull_response.events] == ['memory.owner_portrait.upserted']
-    assert pull_response.events[0].payload['namespace'] == 'portraits'
+    assert [event.event_type for event in pull_response.events] == ['memory.owner_event.upserted']
+    assert pull_response.events[0].payload['namespace'] == 'events'
     assert pull_response.next_cursor == 'owner:h_owner:1'
 
 
 @pytest.mark.asyncio
-async def test_sync_push_memory_events_advance_namespace_revision_independently() -> None:
+async def test_sync_push_memory_owner_and_agent_events_advance_namespace_revision_independently() -> None:
     from backend.app.hasn.schema.hasn_sync import ClientEvent, SyncPullRequest, SyncPushRequest
     from backend.app.hasn.service.hasn_sync_service import HasnSyncService
 
@@ -362,38 +362,38 @@ async def test_sync_push_memory_events_advance_namespace_revision_independently(
             node_id='n_runtime',
             events=[
                 ClientEvent(
-                    client_event_id='ce_portrait_1',
-                    event_type='memory.owner_portrait.upserted',
+                    client_event_id='ce_owner_event_1',
+                    event_type='memory.owner_event.upserted',
                     hasn_id='h_owner',
                     payload={
                         'sync_scope_kind': 'owner',
                         'sync_scope_id': 'h_owner',
-                        'namespace': 'portraits',
-                        'record_id': 'owner_portrait:h_owner',
+                        'namespace': 'events',
+                        'record_id': 'owner_event:h_owner:1',
                         'revision': 1,
                     },
                 ),
                 ClientEvent(
-                    client_event_id='ce_portrait_2',
-                    event_type='memory.owner_portrait.upserted',
+                    client_event_id='ce_owner_event_2',
+                    event_type='memory.owner_event.upserted',
                     hasn_id='h_owner',
                     payload={
                         'sync_scope_kind': 'owner',
                         'sync_scope_id': 'h_owner',
-                        'namespace': 'portraits',
-                        'record_id': 'owner_portrait:h_owner',
+                        'namespace': 'events',
+                        'record_id': 'owner_event:h_owner:2',
                         'revision': 2,
                     },
                 ),
                 ClientEvent(
-                    client_event_id='ce_fact_1',
-                    event_type='memory.owner_fact.upserted',
-                    hasn_id='h_owner',
+                    client_event_id='ce_agent_event_1',
+                    event_type='memory.agent_self_event.upserted',
+                    hasn_id='a_agent_event',
                     payload={
-                        'sync_scope_kind': 'owner',
-                        'sync_scope_id': 'h_owner',
-                        'namespace': 'facts',
-                        'record_id': 'fact:h_owner:1',
+                        'sync_scope_kind': 'agent',
+                        'sync_scope_id': 'a_agent_event',
+                        'namespace': 'agent_events',
+                        'record_id': 'agent_event:a_agent_event:1',
                         'revision': 1,
                     },
                 ),
@@ -407,13 +407,13 @@ async def test_sync_push_memory_events_advance_namespace_revision_independently(
     assert [event.revision for event in pull_response.events] == [1, 2, 3]
     assert [event.payload['namespace_revision'] for event in pull_response.events] == [1, 2, 1]
     assert gateway.namespace_revisions == {
-        ('owner', 'h_owner', 'portraits'): {'revision': 2, 'last_event_id': 'se_memory_2'},
-        ('owner', 'h_owner', 'facts'): {'revision': 1, 'last_event_id': 'se_memory_3'},
+        ('owner', 'h_owner', 'events'): {'revision': 2, 'last_event_id': 'se_memory_2'},
+        ('agent', 'a_agent_event', 'agent_events'): {'revision': 1, 'last_event_id': 'se_memory_3'},
     }
     assert pull_response.events[1].payload['sync_scope_kind'] == 'owner'
     assert pull_response.events[1].payload['sync_scope_id'] == 'h_owner'
-    assert pull_response.events[1].payload['namespace'] == 'portraits'
-    assert pull_response.events[1].payload['record_id'] == 'owner_portrait:h_owner'
+    assert pull_response.events[1].payload['namespace'] == 'events'
+    assert pull_response.events[1].payload['record_id'] == 'owner_event:h_owner:2'
 
 
 @pytest.mark.asyncio
