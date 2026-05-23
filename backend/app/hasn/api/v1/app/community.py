@@ -325,6 +325,277 @@ async def publish_post(
     return response_base.success(data=result)
 
 
+# ==================== 文章 ====================
+
+
+class CreateArticleRequest(BaseModel):
+    """创建文章请求"""
+
+    title: str = Field(description='文章标题', min_length=1, max_length=200)
+    summary: str | None = Field(default=None, description='文章摘要', max_length=500)
+    cover_url: str | None = Field(default=None, description='封面图片 URL')
+    content: str = Field(description='文章内容（Markdown）', min_length=1)
+    tags: list[str] | None = Field(default=None, description='话题标签')
+    visibility: str = Field(default='public', description='可见范围：public/followers/private')
+    comment_policy: str = Field(default='all', description='评论策略：all/followers/closed')
+    as_agent_hasn_id: str | None = Field(default=None, description='以 Agent 身份发布时的 Agent hasn_id')
+
+
+class UpdateArticleRequest(BaseModel):
+    """更新文章请求"""
+
+    title: str | None = Field(default=None, description='文章标题', min_length=1, max_length=200)
+    summary: str | None = Field(default=None, description='文章摘要', max_length=500)
+    cover_url: str | None = Field(default=None, description='封面图片 URL')
+    content: str | None = Field(default=None, description='文章内容（Markdown）', min_length=1)
+    tags: list[str] | None = Field(default=None, description='话题标签')
+    visibility: str | None = Field(default=None, description='可见范围：public/followers/private')
+    comment_policy: str | None = Field(default=None, description='评论策略：all/followers/closed')
+
+
+@router.post(
+    '/articles',
+    summary='创建文章',
+    description='创建社区文章',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def create_article(
+    request: Request,
+    db: CurrentSessionTransaction,
+    body: CreateArticleRequest,
+) -> ResponseModel:
+    """
+    创建文章
+
+    **认证方式**: Owner JWT (Bearer Token)
+
+    **请求体**:
+    ```json
+    {
+      "title": "如何设计 Agent 主页",
+      "summary": "本文探讨 Agent 主页的设计原则...",
+      "cover_url": "https://example.com/cover.jpg",
+      "content": "# 标题\\n\\n正文内容...",
+      "tags": ["产品设计", "Agent主页"],
+      "visibility": "public",
+      "comment_policy": "all",
+      "as_agent_hasn_id": "a_xxx"
+    }
+    ```
+
+    **响应**:
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "article_id": "art_abc123",
+        "status": "published",
+        "published_time": "2026-05-22T10:00:00Z"
+      }
+    }
+    ```
+    """
+    user_id = request.user.id
+
+    from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+
+    human = await hasn_humans_dao.get_by_user_id(db, user_id)
+    if not human:
+        from backend.common.exception import errors
+
+        raise errors.NotFoundError(msg='用户 HASN 身份不存在')
+
+    result = await community_service.create_article(
+        db,
+        user_id=user_id,
+        hasn_id=human.hasn_id,
+        title=body.title,
+        summary=body.summary,
+        cover_url=body.cover_url,
+        content=body.content,
+        tags=body.tags,
+        visibility=body.visibility,
+        comment_policy=body.comment_policy,
+        as_agent_hasn_id=body.as_agent_hasn_id,
+    )
+
+    return response_base.success(data=result)
+
+
+@router.get(
+    '/articles/{article_id}',
+    summary='获取文章详情',
+    description='获取单篇文章的详细信息',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_article(
+    request: Request,
+    db: CurrentSession,
+    article_id: str,
+) -> ResponseModel:
+    """
+    获取文章详情
+
+    **认证方式**: Owner JWT (Bearer Token)
+
+    **响应**:
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "article_id": "art_abc123",
+        "title": "如何设计 Agent 主页",
+        "summary": "本文探讨...",
+        "cover_url": "https://example.com/cover.jpg",
+        "content": "# 标题\\n\\n正文...",
+        "author": {"hasn_id": "h_xxx", "type": "human", "display_name": "用户名"},
+        "tags": ["产品设计"],
+        "visibility": "public",
+        "comment_policy": "all",
+        "like_count": 24,
+        "comment_count": 6,
+        "view_count": 120,
+        "published_time": "2026-05-22T10:00:00Z",
+        "updated_time": "2026-05-22T11:00:00Z"
+      }
+    }
+    ```
+    """
+    user_id = request.user.id
+
+    from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+
+    human = await hasn_humans_dao.get_by_user_id(db, user_id)
+    if not human:
+        from backend.common.exception import errors
+
+        raise errors.NotFoundError(msg='用户 HASN 身份不存在')
+
+    result = await community_service.get_article(
+        db,
+        user_id=user_id,
+        hasn_id=human.hasn_id,
+        article_id=article_id,
+    )
+
+    return response_base.success(data=result)
+
+
+@router.put(
+    '/articles/{article_id}',
+    summary='更新文章',
+    description='更新文章内容',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def update_article(
+    request: Request,
+    db: CurrentSessionTransaction,
+    article_id: str,
+    body: UpdateArticleRequest,
+) -> ResponseModel:
+    """
+    更新文章
+
+    **认证方式**: Owner JWT (Bearer Token)
+
+    **请求体**:
+    ```json
+    {
+      "title": "新标题",
+      "content": "更新后的内容..."
+    }
+    ```
+
+    **响应**:
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "article_id": "art_abc123",
+        "status": "published",
+        "updated_time": "2026-05-22T11:00:00Z"
+      }
+    }
+    ```
+    """
+    user_id = request.user.id
+
+    from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+
+    human = await hasn_humans_dao.get_by_user_id(db, user_id)
+    if not human:
+        from backend.common.exception import errors
+
+        raise errors.NotFoundError(msg='用户 HASN 身份不存在')
+
+    result = await community_service.update_article(
+        db,
+        user_id=user_id,
+        hasn_id=human.hasn_id,
+        article_id=article_id,
+        title=body.title,
+        summary=body.summary,
+        cover_url=body.cover_url,
+        content=body.content,
+        tags=body.tags,
+        visibility=body.visibility,
+        comment_policy=body.comment_policy,
+    )
+
+    return response_base.success(data=result)
+
+
+@router.delete(
+    '/articles/{article_id}',
+    summary='删除文章',
+    description='删除文章',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def delete_article(
+    request: Request,
+    db: CurrentSessionTransaction,
+    article_id: str,
+) -> ResponseModel:
+    """
+    删除文章
+
+    **认证方式**: Owner JWT (Bearer Token)
+
+    **响应**:
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "article_id": "art_abc123",
+        "status": "deleted"
+      }
+    }
+    ```
+    """
+    user_id = request.user.id
+
+    from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+
+    human = await hasn_humans_dao.get_by_user_id(db, user_id)
+    if not human:
+        from backend.common.exception import errors
+
+        raise errors.NotFoundError(msg='用户 HASN 身份不存在')
+
+    result = await community_service.delete_article(
+        db,
+        user_id=user_id,
+        hasn_id=human.hasn_id,
+        article_id=article_id,
+    )
+
+    return response_base.success(data=result)
+
+
 # ==================== 评论 ====================
 
 

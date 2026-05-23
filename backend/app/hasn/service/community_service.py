@@ -1190,5 +1190,292 @@ class CommunityService:
             'next_cursor': rows[-1].HasnPosts.post_id if rows else None,
         }
 
+    # ==================== 文章相关方法 ====================
+
+    @staticmethod
+    async def create_article(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        hasn_id: str,
+        title: str,
+        content: str,
+        summary: str | None = None,
+        cover_url: str | None = None,
+        tags: list[str] | None = None,
+        visibility: str = 'public',
+        comment_policy: str = 'all',
+        as_agent_hasn_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        创建文章
+
+        :param db: 数据库会话
+        :param user_id: 用户 ID
+        :param hasn_id: 用户的 hasn_id
+        :param title: 文章标题
+        :param content: 文章内容（Markdown）
+        :param summary: 文章摘要
+        :param cover_url: 封面图片 URL
+        :param tags: 话题标签
+        :param visibility: 可见范围
+        :param comment_policy: 评论策略
+        :param as_agent_hasn_id: 以 Agent 身份发布时的 Agent hasn_id
+        :return: 文章信息
+        """
+        from backend.app.hasn.model.hasn_articles import HasnArticles
+
+        # 生成 article_id
+        article_id = f"art_{uuid4_str()[:12]}"
+
+        # 确定作者类型和 owner
+        if as_agent_hasn_id:
+            author_type = 'agent'
+            author_hasn_id = as_agent_hasn_id
+            author_user_id = None
+            owner_hasn_id = hasn_id
+        else:
+            author_type = 'human'
+            author_hasn_id = hasn_id
+            author_user_id = user_id
+            owner_hasn_id = hasn_id
+
+        # TODO: 获取当前 active workspace
+        workspace_kind = 'personal'
+        workspace_id = str(user_id)
+
+        # 创建文章
+        article = HasnArticles(
+            article_id=article_id,
+            author_type=author_type,
+            author_hasn_id=author_hasn_id,
+            author_user_id=author_user_id,
+            owner_hasn_id=owner_hasn_id,
+            origin_workspace_kind=workspace_kind,
+            origin_workspace_id=workspace_id,
+            title=title,
+            summary=summary,
+            cover_url=cover_url,
+            content=content,
+            tags=tags or [],
+            visibility=visibility,
+            comment_policy=comment_policy,
+            generation_type='human' if author_type == 'human' else 'agent',
+            status='published',
+            published_time=timezone.now(),
+        )
+
+        db.add(article)
+        await db.flush()
+
+        return {
+            'article_id': article_id,
+            'status': 'published',
+            'published_time': article.published_time.isoformat() if article.published_time else None,
+        }
+
+    @staticmethod
+    async def get_article(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        hasn_id: str,
+        article_id: str,
+    ) -> dict[str, Any]:
+        """
+        获取文章详情
+
+        :param db: 数据库会话
+        :param user_id: 用户 ID
+        :param hasn_id: 用户的 hasn_id
+        :param article_id: 文章 ID
+        :return: 文章详情
+        """
+        from backend.app.hasn.model.hasn_articles import HasnArticles
+        from backend.app.hasn.model.hasn_humans import HasnHumans
+        from backend.app.hasn.model.hasn_agents import HasnAgents
+
+        # 查询文章
+        stmt = select(HasnArticles).where(HasnArticles.article_id == article_id)
+        result = await db.execute(stmt)
+        article = result.scalar_one_or_none()
+
+        if not article:
+            from backend.common.exception import errors
+
+            raise errors.NotFoundError(msg='文章不存在')
+
+        # 查询作者信息
+        author_info = {'hasn_id': article.author_hasn_id, 'type': article.author_type}
+
+        if article.author_type == 'human':
+            stmt = select(HasnHumans).where(HasnHumans.hasn_id == article.author_hasn_id)
+            result = await db.execute(stmt)
+            human = result.scalar_one_or_none()
+            if human:
+                author_info['display_name'] = human.nickname
+                author_info['avatar'] = human.avatar
+        else:
+            stmt = select(HasnAgents).where(HasnAgents.hasn_id == article.author_hasn_id)
+            result = await db.execute(stmt)
+            agent = result.scalar_one_or_none()
+            if agent:
+                author_info['display_name'] = agent.display_name
+                author_info['avatar'] = agent.avatar
+
+                # 查询 Agent 的主人信息
+                stmt = select(HasnHumans).where(HasnHumans.hasn_id == agent.owner_hasn_id)
+                result = await db.execute(stmt)
+                owner = result.scalar_one_or_none()
+                if owner:
+                    author_info['owner'] = {
+                        'hasn_id': owner.hasn_id,
+                        'display_name': owner.nickname,
+                    }
+
+        # TODO: 查询点赞和收藏状态
+        is_liked = False
+        is_collected = False
+
+        return {
+            'article_id': article.article_id,
+            'title': article.title,
+            'summary': article.summary,
+            'cover_url': article.cover_url,
+            'content': article.content,
+            'author': author_info,
+            'tags': article.tags or [],
+            'visibility': article.visibility,
+            'comment_policy': article.comment_policy,
+            'like_count': article.like_count,
+            'comment_count': article.comment_count,
+            'view_count': article.view_count,
+            'published_time': article.published_time.isoformat() if article.published_time else None,
+            'updated_time': article.updated_time.isoformat() if article.updated_time else None,
+            'is_liked': is_liked,
+            'is_collected': is_collected,
+        }
+
+    @staticmethod
+    async def update_article(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        hasn_id: str,
+        article_id: str,
+        title: str | None = None,
+        summary: str | None = None,
+        cover_url: str | None = None,
+        content: str | None = None,
+        tags: list[str] | None = None,
+        visibility: str | None = None,
+        comment_policy: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        更新文章
+
+        :param db: 数据库会话
+        :param user_id: 用户 ID
+        :param hasn_id: 用户的 hasn_id
+        :param article_id: 文章 ID
+        :param title: 文章标题
+        :param summary: 文章摘要
+        :param cover_url: 封面图片 URL
+        :param content: 文章内容
+        :param tags: 话题标签
+        :param visibility: 可见范围
+        :param comment_policy: 评论策略
+        :return: 更新结果
+        """
+        from backend.app.hasn.model.hasn_articles import HasnArticles
+
+        # 查询文章
+        stmt = select(HasnArticles).where(HasnArticles.article_id == article_id)
+        result = await db.execute(stmt)
+        article = result.scalar_one_or_none()
+
+        if not article:
+            from backend.common.exception import errors
+
+            raise errors.NotFoundError(msg='文章不存在')
+
+        # 验证权限（只有作者或主人可以编辑）
+        if article.author_hasn_id != hasn_id and article.owner_hasn_id != hasn_id:
+            from backend.common.exception import errors
+
+            raise errors.ForbiddenError(msg='无权编辑此文章')
+
+        # 更新字段
+        if title is not None:
+            article.title = title
+        if summary is not None:
+            article.summary = summary
+        if cover_url is not None:
+            article.cover_url = cover_url
+        if content is not None:
+            article.content = content
+        if tags is not None:
+            article.tags = tags
+        if visibility is not None:
+            article.visibility = visibility
+        if comment_policy is not None:
+            article.comment_policy = comment_policy
+
+        article.updated_time = timezone.now()
+
+        await db.flush()
+
+        return {
+            'article_id': article_id,
+            'status': 'published',
+            'updated_time': article.updated_time.isoformat() if article.updated_time else None,
+        }
+
+    @staticmethod
+    async def delete_article(
+        db: AsyncSession,
+        *,
+        user_id: int,
+        hasn_id: str,
+        article_id: str,
+    ) -> dict[str, Any]:
+        """
+        删除文章
+
+        :param db: 数据库会话
+        :param user_id: 用户 ID
+        :param hasn_id: 用户的 hasn_id
+        :param article_id: 文章 ID
+        :return: 删除结果
+        """
+        from backend.app.hasn.model.hasn_articles import HasnArticles
+
+        # 查询文章
+        stmt = select(HasnArticles).where(HasnArticles.article_id == article_id)
+        result = await db.execute(stmt)
+        article = result.scalar_one_or_none()
+
+        if not article:
+            from backend.common.exception import errors
+
+            raise errors.NotFoundError(msg='文章不存在')
+
+        # 验证权限（只有作者或主人可以删除）
+        if article.author_hasn_id != hasn_id and article.owner_hasn_id != hasn_id:
+            from backend.common.exception import errors
+
+            raise errors.ForbiddenError(msg='无权删除此文章')
+
+        # 软删除
+        article.status = 'deleted'
+        article.updated_time = timezone.now()
+
+        await db.flush()
+
+        return {
+            'article_id': article_id,
+            'status': 'deleted',
+        }
+
 
 community_service = CommunityService()
