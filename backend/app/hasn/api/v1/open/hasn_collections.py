@@ -31,9 +31,9 @@ async def get_hasn_collections(
 @router.get(
     '/{pk}',
     summary='获取社区收藏夹详情',
-    name='open_get_hasn_collections',
+    name='open_get_hasn_collections_detail',
 )
-async def get_hasn_collections(
+async def get_hasn_collections_detail(
     db: CurrentSession,
     pk: Annotated[int, Path(description='社区收藏夹 ID')],
 ) -> ResponseSchemaModel[GetHasnCollectionsDetail]:

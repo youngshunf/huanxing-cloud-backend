@@ -31,9 +31,9 @@ async def get_hasn_follows(
 @router.get(
     '/{pk}',
     summary='获取社区关注详情',
-    name='open_get_hasn_follows',
+    name='open_get_hasn_follows_detail',
 )
-async def get_hasn_follows(
+async def get_hasn_follows_detail(
     db: CurrentSession,
     pk: Annotated[int, Path(description='社区关注 ID')],
 ) -> ResponseSchemaModel[GetHasnFollowsDetail]:

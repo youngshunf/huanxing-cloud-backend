@@ -31,6 +31,14 @@ class KnowledgeSearchRequest(BaseModel):
     dataset_id: str | None = Field(None, description="数据集 ID")
 
 
+class CreateDatasetRequest(BaseModel):
+    name: str = Field(..., description="数据集名称")
+    description: str | None = Field(None, description="数据集描述")
+    embedding_model: str | None = Field(None, description="嵌入模型")
+    language: str | None = Field(None, description="语言")
+    permission: str | None = Field(None, description="权限")
+
+
 class KnowledgeUploadRequest(BaseModel):
     title: str
     content_text: str
@@ -78,11 +86,40 @@ async def list_knowledge_datasets(
     limit: int = 50,
     offset: int = 0,
 ) -> ResponseModel:
-    data = await workbench_domain_service.list_current_knowledge_datasets(
+    try:
+        data = await workbench_domain_service.list_current_knowledge_datasets(
+            db,
+            user_id=request.user.id,
+            limit=limit,
+            offset=offset,
+        )
+        return response_base.success(data=data)
+    except Exception as e:
+        # 如果是凭据未配置或未激活，返回空列表而不是抛出异常
+        error_msg = str(e)
+        if 'knowledge_instance_not_configured' in error_msg or 'knowledge_credentials_not_active' in error_msg:
+            return response_base.success(data={'items': [], 'total': 0})
+        raise
+
+
+@router.post(
+    '/knowledge/datasets',
+    summary='创建知识库数据集',
+    dependencies=[DependsJwtAuth],
+)
+async def create_knowledge_dataset(
+    request: Request,
+    db: CurrentSessionTransaction,
+    body: CreateDatasetRequest,
+) -> ResponseModel:
+    data = await workbench_domain_service.create_current_knowledge_dataset(
         db,
         user_id=request.user.id,
-        limit=limit,
-        offset=offset,
+        name=body.name,
+        description=body.description,
+        embedding_model=body.embedding_model,
+        language=body.language,
+        permission=body.permission,
     )
     return response_base.success(data=data)
 

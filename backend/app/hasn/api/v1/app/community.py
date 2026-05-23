@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from backend.app.hasn.service.community_service import community_service
 from backend.common.response.response_schema import ResponseModel, response_base
 from backend.common.security.jwt import DependsJwtAuth
-from backend.database.db import CurrentSession
+from backend.database.db import CurrentSession, CurrentSessionTransaction
 
 router = APIRouter()
 
@@ -115,7 +115,7 @@ async def get_feed(
 )
 async def create_post(
     request: Request,
-    db: CurrentSession,
+    db: CurrentSessionTransaction,
     body: CreatePostRequest,
 ) -> ResponseModel:
     """
@@ -167,6 +167,51 @@ async def create_post(
         visibility=body.visibility,
         comment_policy=body.comment_policy,
         as_agent_hasn_id=body.as_agent_hasn_id,
+    )
+
+    return response_base.success(data=result)
+
+
+@router.get(
+    '/posts/{post_id}',
+    summary='获取帖子详情',
+    description='获取单个帖子的详细信息',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_post(
+    request: Request,
+    db: CurrentSession,
+    post_id: str,
+) -> ResponseModel:
+    """
+    获取帖子详情
+
+    **认证方式**: Owner JWT (Bearer Token)
+
+    **响应**:
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "content_type": "post",
+        "post_id": "p_abc123",
+        "author": {"hasn_id": "h_xxx", "type": "human", "display_name": "用户名", "avatar": "..."},
+        "content": "...",
+        "tags": ["产品设计"],
+        "like_count": 24,
+        "comment_count": 6,
+        "published_time": "2026-05-22T10:00:00Z"
+      }
+    }
+    ```
+    """
+    user_id = request.user.id
+
+    result = await community_service.get_post(
+        db,
+        post_id=post_id,
+        user_id=user_id,
     )
 
     return response_base.success(data=result)
@@ -240,7 +285,7 @@ async def get_drafts(
 )
 async def publish_post(
     request: Request,
-    db: CurrentSession,
+    db: CurrentSessionTransaction,
     post_id: str,
 ) -> ResponseModel:
     """
@@ -323,7 +368,7 @@ async def get_post_comments(
 )
 async def create_post_comment(
     request: Request,
-    db: CurrentSession,
+    db: CurrentSessionTransaction,
     post_id: str,
     body: CreateCommentRequest,
 ) -> ResponseModel:
@@ -391,7 +436,7 @@ async def get_article_comments(
 )
 async def create_article_comment(
     request: Request,
-    db: CurrentSession,
+    db: CurrentSessionTransaction,
     article_id: str,
     body: CreateCommentRequest,
 ) -> ResponseModel:
@@ -428,7 +473,7 @@ async def create_article_comment(
 )
 async def delete_comment(
     request: Request,
-    db: CurrentSession,
+    db: CurrentSessionTransaction,
     comment_id: str,
 ) -> ResponseModel:
     """删除评论"""
@@ -464,7 +509,7 @@ async def delete_comment(
 )
 async def create_like(
     request: Request,
-    db: CurrentSession,
+    db: CurrentSessionTransaction,
     target_type: str,
     target_id: str,
 ) -> ResponseModel:
@@ -499,7 +544,7 @@ async def create_like(
 )
 async def delete_like(
     request: Request,
-    db: CurrentSession,
+    db: CurrentSessionTransaction,
     target_type: str,
     target_id: str,
 ) -> ResponseModel:
@@ -537,7 +582,7 @@ async def delete_like(
 )
 async def create_follow(
     request: Request,
-    db: CurrentSession,
+    db: CurrentSessionTransaction,
     target_type: str,
     target_hasn_id: str,
 ) -> ResponseModel:
@@ -572,7 +617,7 @@ async def create_follow(
 )
 async def delete_follow(
     request: Request,
-    db: CurrentSession,
+    db: CurrentSessionTransaction,
     target_type: str,
     target_hasn_id: str,
 ) -> ResponseModel:

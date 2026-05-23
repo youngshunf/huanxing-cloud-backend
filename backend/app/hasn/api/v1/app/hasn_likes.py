@@ -26,9 +26,9 @@ router = APIRouter()
     '',
     summary='获取我的社区点赞列表',
     dependencies=[DependsJwtAuth, DependsPagination],
-    name='app_get_my_hasn_likes',
+    name='app_get_my_hasn_likes_detail',
 )
-async def get_my_hasn_likes(
+async def get_my_hasn_likes_detail(
     request: Request,
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnLikesDetail]]:

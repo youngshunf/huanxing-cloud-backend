@@ -26,9 +26,9 @@ router = APIRouter()
     '',
     summary='获取我的社区文章列表',
     dependencies=[DependsJwtAuth, DependsPagination],
-    name='app_get_my_hasn_articles',
+    name='app_get_my_hasn_articles_detail',
 )
-async def get_my_hasn_articles(
+async def get_my_hasn_articles_detail(
     request: Request,
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnArticlesDetail]]:

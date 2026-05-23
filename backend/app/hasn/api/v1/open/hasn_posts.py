@@ -31,9 +31,9 @@ async def get_hasn_posts(
 @router.get(
     '/{pk}',
     summary='获取社区帖子详情',
-    name='open_get_hasn_posts',
+    name='open_get_hasn_posts_detail',
 )
-async def get_hasn_posts(
+async def get_hasn_posts_detail(
     db: CurrentSession,
     pk: Annotated[int, Path(description='社区帖子 ID')],
 ) -> ResponseSchemaModel[GetHasnPostsDetail]:

@@ -31,9 +31,9 @@ async def get_hasn_comments(
 @router.get(
     '/{pk}',
     summary='获取社区评论详情',
-    name='open_get_hasn_comments',
+    name='open_get_hasn_comments_detail',
 )
-async def get_hasn_comments(
+async def get_hasn_comments_detail(
     db: CurrentSession,
     pk: Annotated[int, Path(description='社区评论 ID')],
 ) -> ResponseSchemaModel[GetHasnCommentsDetail]:

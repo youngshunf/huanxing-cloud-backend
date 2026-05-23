@@ -26,9 +26,9 @@ router = APIRouter()
     '',
     summary='获取我的社区收藏夹列表',
     dependencies=[DependsJwtAuth, DependsPagination],
-    name='app_get_my_hasn_collections',
+    name='app_get_my_hasn_collections_detail',
 )
-async def get_my_hasn_collections(
+async def get_my_hasn_collections_detail(
     request: Request,
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnCollectionsDetail]]:

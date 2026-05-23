@@ -26,9 +26,9 @@ router = APIRouter()
     '',
     summary='获取我的社区关注列表',
     dependencies=[DependsJwtAuth, DependsPagination],
-    name='app_get_my_hasn_follows',
+    name='app_get_my_hasn_follows_detail',
 )
-async def get_my_hasn_follows(
+async def get_my_hasn_follows_detail(
     request: Request,
     db: CurrentSession,
 ) -> ResponseSchemaModel[PageData[GetHasnFollowsDetail]]:

@@ -31,9 +31,9 @@ async def get_hasn_skill_bundle(
 @router.get(
     '/{pk}',
     summary='获取Skill Bundle 定义表（多个 skill 的组合）详情',
-    name='open_get_hasn_skill_bundle',
+    name='open_get_hasn_skill_bundle_detail',
 )
-async def get_hasn_skill_bundle(
+async def get_hasn_skill_bundle_detail(
     db: CurrentSession,
     pk: Annotated[int, Path(description='Skill Bundle 定义表（多个 skill 的组合） ID')],
 ) -> ResponseSchemaModel[GetHasnSkillBundleDetail]:

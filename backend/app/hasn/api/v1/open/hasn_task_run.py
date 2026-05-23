@@ -31,9 +31,9 @@ async def get_hasn_task_run(
 @router.get(
     '/{pk}',
     summary='获取任务执行记录详情',
-    name='open_get_hasn_task_run',
+    name='open_get_hasn_task_run_detail',
 )
-async def get_hasn_task_run(
+async def get_hasn_task_run_detail(
     db: CurrentSession,
     pk: Annotated[int, Path(description='任务执行记录 ID')],
 ) -> ResponseSchemaModel[GetHasnTaskRunDetail]:

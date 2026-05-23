@@ -31,9 +31,9 @@ async def get_hasn_likes(
 @router.get(
     '/{pk}',
     summary='获取社区点赞详情',
-    name='open_get_hasn_likes',
+    name='open_get_hasn_likes_detail',
 )
-async def get_hasn_likes(
+async def get_hasn_likes_detail(
     db: CurrentSession,
     pk: Annotated[int, Path(description='社区点赞 ID')],
 ) -> ResponseSchemaModel[GetHasnLikesDetail]:
