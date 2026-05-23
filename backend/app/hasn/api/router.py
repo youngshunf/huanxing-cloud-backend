@@ -264,6 +264,7 @@ from backend.app.hasn.api.v1.app.hasn_task_run import router as app_hasn_task_ru
 from backend.app.hasn.api.v1.app.hasn_sessions import router as app_hasn_sessions_router
 from backend.app.hasn.api.v1.app.hasn_session_events import router as app_hasn_session_events_router
 from backend.app.hasn.api.v1.app.hasn_session_artifacts import router as app_hasn_session_artifacts_router
+from backend.app.hasn.api.v1.app.hasn_task_sessions import router as app_hasn_task_sessions_router
 
 app.include_router(app_hasn_im_router, prefix='/im', tags=['HASN IM 业务'])
 app.include_router(app_hasn_api_keys_router, tags=['HASN API Key'])
@@ -291,6 +292,7 @@ app.include_router(app_community_router, prefix='/community', tags=['社区'])
 app.include_router(app_hasn_sessions_router, prefix='/hasn/sessionss', tags=['HASN 会话分层 - 逻辑会话-HASN 会话分层 - 逻辑会话'])
 app.include_router(app_hasn_session_events_router, prefix='/hasn/session/eventss', tags=['HASN 会话事件-HASN 会话事件'])
 app.include_router(app_hasn_session_artifacts_router, prefix='/hasn/session/artifactss', tags=['HASN 会话产物-HASN 会话产物'])
+app.include_router(app_hasn_task_sessions_router, tags=['任务系统 Session API'])
 v1.include_router(node_control_router, tags=['HASN Node 控制平面'])
 # 注释掉 codegen 生成的社区表 admin 路由
 # v1.include_router(admin_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
