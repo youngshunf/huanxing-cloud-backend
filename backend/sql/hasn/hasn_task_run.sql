@@ -20,7 +20,8 @@ CREATE TABLE "public"."hasn_task_run" (
   "error"           text,
   "model"           varchar(100),
   "token_usage"     jsonb,
-  "create_time"     timestamptz(6) NOT NULL DEFAULT now(),
+  "created_time"    timestamptz(6) NOT NULL DEFAULT now(),
+  "updated_time"    timestamptz(6),
 
   CONSTRAINT "fk_hasn_task_run_task"
     FOREIGN KEY ("task_id") REFERENCES "public"."hasn_task"("id")
@@ -32,7 +33,7 @@ CREATE TABLE "public"."hasn_task_run" (
 CREATE INDEX "idx_hasn_task_run_task" ON "public"."hasn_task_run"("task_id");
 CREATE INDEX "idx_hasn_task_run_session" ON "public"."hasn_task_run"("session_id");
 CREATE INDEX "idx_hasn_task_run_status" ON "public"."hasn_task_run"("status");
-CREATE INDEX "idx_hasn_task_run_create_time" ON "public"."hasn_task_run"("create_time" DESC);
+CREATE INDEX "idx_hasn_task_run_created_time" ON "public"."hasn_task_run"("created_time" DESC);
 
 COMMENT ON TABLE "public"."hasn_task_run" IS '任务执行记录表';
 COMMENT ON COLUMN "public"."hasn_task_run"."id" IS '主键 ID';
@@ -51,4 +52,5 @@ COMMENT ON COLUMN "public"."hasn_task_run"."output" IS 'Agent 最终输出';
 COMMENT ON COLUMN "public"."hasn_task_run"."error" IS '错误信息';
 COMMENT ON COLUMN "public"."hasn_task_run"."model" IS '使用的模型';
 COMMENT ON COLUMN "public"."hasn_task_run"."token_usage" IS 'Token 消耗 {input_tokens, output_tokens, total_tokens}';
-COMMENT ON COLUMN "public"."hasn_task_run"."create_time" IS '创建时间';
+COMMENT ON COLUMN "public"."hasn_task_run"."created_time" IS '创建时间';
+COMMENT ON COLUMN "public"."hasn_task_run"."updated_time" IS '更新时间';
