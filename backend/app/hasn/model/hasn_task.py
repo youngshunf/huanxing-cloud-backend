@@ -5,7 +5,6 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.common.model import Base, id_key, UniversalText, TimeZone
-from backend.utils.timezone import timezone
 
 
 class HasnTask(Base):
@@ -36,6 +35,4 @@ class HasnTask(Base):
     run_count: Mapped[int] = mapped_column(sa.INTEGER(), default=0, comment='总执行次数')
     repeat_times: Mapped[int | None] = mapped_column(sa.INTEGER(), default=None, comment='重复次数（NULL=永久，N=执行N次）')
     repeat_completed: Mapped[int] = mapped_column(sa.INTEGER(), default=0, comment='已重复执行次数')
-    create_time: Mapped[datetime] = mapped_column(TimeZone, default_factory=timezone.now, comment='创建时间')
-    update_time: Mapped[datetime | None] = mapped_column(TimeZone, default=None, comment='更新时间')
     created_by: Mapped[str | None] = mapped_column(sa.String(64), default=None, comment='创建者')

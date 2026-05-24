@@ -29,7 +29,8 @@ class HasnTaskRunSchemaBase(SchemaBase):
     error: str | None = Field(None, description='错误信息')
     model: str | None = Field(None, description='使用的模型')
     token_usage: dict | None = Field(None, description='Token 消耗 {input_tokens, output_tokens, total_tokens}')
-    create_time: datetime = Field(description='创建时间')
+    created_time: datetime | None = Field(None, description='创建时间')
+    updated_time: datetime | None = Field(None, description='更新时间')
 
 
 class CreateHasnTaskRunParam(HasnTaskRunSchemaBase):
@@ -52,5 +53,3 @@ class GetHasnTaskRunDetail(HasnTaskRunSchemaBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    created_time: datetime
-    updated_time: datetime | None = None

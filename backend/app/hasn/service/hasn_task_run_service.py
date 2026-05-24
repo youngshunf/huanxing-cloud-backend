@@ -44,7 +44,7 @@ class HasnTaskRunService:
         select_stmt = (
             select(HasnTaskRun)
             .where(HasnTaskRun.task_id == task_id)
-            .order_by(HasnTaskRun.create_time.desc())
+            .order_by(HasnTaskRun.created_time.desc())
         )
         return await paging_data(db, select_stmt)
 
@@ -55,7 +55,7 @@ class HasnTaskRunService:
             select(HasnTaskRun)
             .join(HasnTask, HasnTask.id == HasnTaskRun.task_id)
             .where(HasnTask.owner_id == owner_id)
-            .order_by(HasnTaskRun.create_time.desc())
+            .order_by(HasnTaskRun.created_time.desc())
         )
         return await paging_data(db, select_stmt)
 

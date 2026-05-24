@@ -28,8 +28,8 @@ class HasnTaskSchemaBase(SchemaBase):
     run_count: int = Field(0, description='总执行次数')
     repeat_times: int | None = Field(None, description='重复次数（NULL=永久，N=执行N次）')
     repeat_completed: int = Field(0, description='已重复执行次数')
-    create_time: datetime | None = Field(None, description='创建时间')
-    update_time: datetime | None = Field(None, description='更新时间')
+    created_time: datetime | None = Field(None, description='创建时间')
+    updated_time: datetime | None = Field(None, description='更新时间')
     created_by: str | None = Field(None, description='创建者')
 
 

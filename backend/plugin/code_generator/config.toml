@@ -41,7 +41,7 @@ generate_dict_sql = true
 
 [backend]
 # 默认数据库 schema
-default_db_schema = "fba"
+default_db_schema = "huanxing"
 
 # 后端 API 版本
 api_version = "v1"

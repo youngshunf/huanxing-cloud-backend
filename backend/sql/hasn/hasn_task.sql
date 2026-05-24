@@ -27,8 +27,8 @@ CREATE TABLE "public"."hasn_task" (
   "run_count"             integer NOT NULL DEFAULT 0,
   "repeat_times"          integer,
   "repeat_completed"      integer NOT NULL DEFAULT 0,
-  "create_time"           timestamptz(6) NOT NULL DEFAULT now(),
-  "update_time"           timestamptz(6),
+  "created_time"          timestamptz(6) NOT NULL DEFAULT now(),
+  "updated_time"          timestamptz(6),
   "created_by"            varchar(64),
 
   CONSTRAINT "chk_hasn_task_schedule_type"
@@ -66,6 +66,6 @@ COMMENT ON COLUMN "public"."hasn_task"."last_error" IS '上次错误信息';
 COMMENT ON COLUMN "public"."hasn_task"."run_count" IS '总执行次数';
 COMMENT ON COLUMN "public"."hasn_task"."repeat_times" IS '重复次数（NULL=永久，N=执行N次）';
 COMMENT ON COLUMN "public"."hasn_task"."repeat_completed" IS '已重复执行次数';
-COMMENT ON COLUMN "public"."hasn_task"."create_time" IS '创建时间';
-COMMENT ON COLUMN "public"."hasn_task"."update_time" IS '更新时间';
+COMMENT ON COLUMN "public"."hasn_task"."created_time" IS '创建时间';
+COMMENT ON COLUMN "public"."hasn_task"."updated_time" IS '更新时间';
 COMMENT ON COLUMN "public"."hasn_task"."created_by" IS '创建者';
