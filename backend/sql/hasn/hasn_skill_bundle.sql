@@ -10,8 +10,8 @@ CREATE TABLE "public"."hasn_skill_bundle" (
   "description"    text,
   "skill_ids"      jsonb NOT NULL DEFAULT '[]',
   "instruction"    text,
-  "create_time"    timestamptz(6) NOT NULL DEFAULT now(),
-  "update_time"    timestamptz(6),
+  "created_time"   timestamptz(6) NOT NULL DEFAULT now(),
+  "updated_time"   timestamptz(6),
   UNIQUE("owner_id", "name")
 );
 
@@ -25,5 +25,5 @@ COMMENT ON COLUMN "public"."hasn_skill_bundle"."display_name" IS '显示名称';
 COMMENT ON COLUMN "public"."hasn_skill_bundle"."description" IS '描述';
 COMMENT ON COLUMN "public"."hasn_skill_bundle"."skill_ids" IS 'Skill 名称列表，如 ["github-code-review", "test-driven-development"]';
 COMMENT ON COLUMN "public"."hasn_skill_bundle"."instruction" IS '可选的额外指导语，会在加载 skills 前注入';
-COMMENT ON COLUMN "public"."hasn_skill_bundle"."create_time" IS '创建时间';
-COMMENT ON COLUMN "public"."hasn_skill_bundle"."update_time" IS '更新时间';
+COMMENT ON COLUMN "public"."hasn_skill_bundle"."created_time" IS '创建时间';
+COMMENT ON COLUMN "public"."hasn_skill_bundle"."updated_time" IS '更新时间';
