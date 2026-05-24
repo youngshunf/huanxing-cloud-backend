@@ -12,8 +12,8 @@ class HasnSkillBundleSchemaBase(SchemaBase):
     description: str | None = Field(None, description='描述')
     skill_ids: list[str] = Field(default_factory=list, description='Skill 名称列表，如 ["github-code-review", "test-driven-development"]')
     instruction: str | None = Field(None, description='可选的额外指导语，会在加载 skills 前注入')
-    create_time: datetime | None = Field(None, description='创建时间')
-    update_time: datetime | None = Field(None, description='更新时间')
+    created_time: datetime | None = Field(None, description='创建时间')
+    updated_time: datetime | None = Field(None, description='更新时间')
 
 
 class CreateHasnSkillBundleParam(HasnSkillBundleSchemaBase):
