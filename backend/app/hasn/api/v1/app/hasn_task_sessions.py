@@ -12,6 +12,7 @@ from fastapi import APIRouter, Path, Query, Request
 from pydantic import BaseModel, Field
 
 from backend.app.hasn.service.hasn_sessions_service import hasn_sessions_service
+from backend.common.pagination import DependsPagination
 from backend.common.response.response_schema import ResponseModel, response_base
 from backend.common.security.jwt import DependsJwtAuth
 from backend.database.db import CurrentSession, CurrentSessionTransaction
@@ -115,7 +116,7 @@ async def session_close(
 @router.get(
     '/sessions',
     summary='查询 Session 列表',
-    dependencies=[DependsJwtAuth],
+    dependencies=[DependsJwtAuth, DependsPagination],
     name='hasn_session_list',
 )
 async def session_list(
@@ -124,8 +125,6 @@ async def session_list(
     session_kind: Annotated[str | None, Query(description="Session 类型，逗号分隔")] = None,
     session_scope: Annotated[str | None, Query(description="同步范围")] = None,
     session_status: Annotated[str | None, Query(description="Session 状态")] = None,
-    page: Annotated[int, Query(description="页码", ge=1)] = 1,
-    page_size: Annotated[int, Query(description="每页数量", ge=1, le=100)] = 20,
 ) -> ResponseModel:
     """查询 Session 列表"""
     # TODO: 实现过滤逻辑

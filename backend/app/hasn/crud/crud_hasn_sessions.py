@@ -21,7 +21,7 @@ class CRUDHasnSessions(CRUDPlus[HasnSessions]):
 
     async def get_select(self) -> Select:
         """获取HASN 会话分层 - 逻辑会话列表查询表达式"""
-        return await self.select_order('id', 'desc')
+        return await self.select_order('created_time', 'desc')
 
     async def get_all(self, db: AsyncSession) -> Sequence[HasnSessions]:
         """

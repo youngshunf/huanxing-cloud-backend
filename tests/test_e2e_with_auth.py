@@ -54,7 +54,7 @@ def test_complete_flow_with_auth():
         "name": "端到端测试任务",
         "agent_id": "agent_e2e_test",
         "prompt": "这是一个端到端测试任务",
-        "schedule_type": "manual",
+        "schedule_type": "once",
         "schedule_config": {},
         "enabled": True
     }
@@ -68,7 +68,13 @@ def test_complete_flow_with_auth():
         print(f"Status: {response.status_code}")
         if response.status_code in [200, 201]:
             print("✅ 任务创建成功")
-            print(f"Response: {response.json()}")
+            result = response.json()
+            print(f"Response: {result}")
+            # 获取实际创建的任务 ID（整数）
+            created_task_id = result.get('data', {}).get('task_id')
+            if created_task_id:
+                task_id = created_task_id  # 使用返回的整数 ID
+                print(f"  使用返回的 Task ID: {task_id}")
         else:
             print(f"❌ 任务创建失败: {response.status_code}")
             print(f"Response: {response.text}")
@@ -90,7 +96,7 @@ def test_complete_flow_with_auth():
         "session_scope": "conversation_visible",
         "session_status": "active",
         "origin_type": "task_run",
-        "origin_ref": task_id,
+        "origin_ref": str(task_id),  # 转换为字符串
         "title": "端到端测试 Session"
     }
 

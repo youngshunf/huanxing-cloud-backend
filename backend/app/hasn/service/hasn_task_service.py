@@ -2,7 +2,7 @@ from typing import Any, Sequence
 
 from datetime import datetime, timedelta, timezone as tz
 from croniter import croniter
-from sqlalchemy import select
+from sqlalchemy import select, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn.crud.crud_hasn_task import hasn_task_dao
@@ -107,9 +107,28 @@ class HasnTaskService:
         task_dict['next_run_at'] = calc_next_run_at(
             obj.schedule_type, obj.schedule_config
         )
-        task = HasnTask(**task_dict)
-        db.add(task)
+
+        # 排除时间戳字段，让 SQLAlchemy 自动处理
+        task_dict.pop('created_time', None)
+        task_dict.pop('updated_time', None)
+        task_dict.pop('create_time', None)
+        task_dict.pop('update_time', None)
+
+        # 调试日志
+        print(f"DEBUG: task_dict keys = {list(task_dict.keys())}")
+
+        # 使用原生 SQLAlchemy insert 语句
+        stmt = insert(HasnTask).values(**task_dict).returning(HasnTask.id)
+
+        # 调试日志
+        print(f"DEBUG: SQL = {stmt.compile(compile_kwargs={'literal_binds': False})}")
+
+        result = await db.execute(stmt)
+        task_id = result.scalar_one()
         await db.flush()
+
+        # 查询并返回创建的任务
+        task = await hasn_task_dao.get(db, task_id)
         return task
 
     @staticmethod
@@ -151,7 +170,7 @@ class HasnTaskService:
             raise errors.NotFoundError(msg='任务不存在')
 
         task.enabled = True
-        task.update_time = datetime.now(tz.utc)
+        task.updated_time = datetime.now(tz.utc)
         await db.flush()
         return task
 
@@ -169,7 +188,7 @@ class HasnTaskService:
             raise errors.NotFoundError(msg='任务不存在')
 
         task.enabled = False
-        task.update_time = datetime.now(tz.utc)
+        task.updated_time = datetime.now(tz.utc)
         await db.flush()
         return task
 
