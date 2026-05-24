@@ -209,7 +209,7 @@ class TaskSchedulerService:
             select(HasnTaskRun)
             .where(HasnTaskRun.task_id == task_id)
             .where(HasnTaskRun.status == 'success')
-            .order_by(HasnTaskRun.create_time.desc())
+            .order_by(HasnTaskRun.created_time.desc())
             .limit(1)
         )
         result = await session.execute(stmt)
