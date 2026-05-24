@@ -53,5 +53,5 @@ class GetHasnTaskDetail(HasnTaskSchemaBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    created_time: datetime
-    updated_time: datetime | None = None
+    create_time: datetime
+    update_time: datetime | None = None

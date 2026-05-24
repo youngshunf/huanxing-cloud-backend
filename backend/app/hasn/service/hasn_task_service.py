@@ -151,7 +151,7 @@ class HasnTaskService:
             raise errors.NotFoundError(msg='任务不存在')
 
         task.enabled = True
-        task.updated_time = datetime.now(tz.utc)
+        task.update_time = datetime.now(tz.utc)
         await db.flush()
         return task
 
@@ -169,7 +169,7 @@ class HasnTaskService:
             raise errors.NotFoundError(msg='任务不存在')
 
         task.enabled = False
-        task.updated_time = datetime.now(tz.utc)
+        task.update_time = datetime.now(tz.utc)
         await db.flush()
         return task
 
