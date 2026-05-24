@@ -49,4 +49,3 @@ class HasnTaskRun(Base):
         default=None,
         comment=TOKEN_USAGE_COMMENT,
     )
-    create_time: Mapped[datetime] = mapped_column(TimeZone, default_factory=timezone.now, comment='创建时间')

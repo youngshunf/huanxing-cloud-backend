@@ -150,7 +150,6 @@ class TaskSchedulerService:
             source_message_id=None,
             status='pending',
             prompt_snapshot=prompt,
-            create_time=now,
         )
         session.add(task_run)
         await session.flush()  # 获取 task_run.id
