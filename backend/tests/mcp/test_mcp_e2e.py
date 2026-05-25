@@ -175,10 +175,10 @@ class TestMcpToolsList:
         assert tool_names == ["hasn.tool.search"]
 
     @patch("backend.app.mcp.auth.async_db_session")
-    def test_list_tools_with_namespace_filter(
+    def test_list_tools_with_namespace_filter_stays_bootstrap(
         self, mock_db_session, test_agent_token
     ):
-        """测试按命名空间过滤工具"""
+        """测试 namespace 参数不会绕过 bootstrap 暴露"""
         mock_agent = MagicMock()
         mock_agent.status = "active"
         mock_agent.hasn_id = "a_test_agent_001"

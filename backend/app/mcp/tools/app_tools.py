@@ -1,6 +1,8 @@
 """Compatibility AppTool surface for MCP tests and external extensions."""
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import TYPE_CHECKING, Any
 
 from backend.app.mcp.tools.base import BaseTool
@@ -70,15 +72,15 @@ class AppTool(BaseTool):
 
     async def execute(
         self,
-        arguments: dict[str, Any],
         agent_context: AgentContext,
+        arguments: dict[str, Any],
     ) -> Any:
         from backend.app.hasn.schema.ai_native_runtime import AiNativeToolCallRequest
         from backend.app.hasn.service.ai_native_runtime_gateway import ai_native_runtime_gateway
         from backend.database.db import async_db_session
 
         class _Request:
-            state = type("_State", (), {"agent": agent_context})()
+            state = type("_State", (), {"agent": agent_context.to_token_payload()})()
 
         async with async_db_session() as db:
             return await ai_native_runtime_gateway.call_tool(
@@ -90,6 +92,11 @@ class AppTool(BaseTool):
                     agent_hasn_id=agent_context.hasn_id,
                     workspace={"kind": "personal"},
                     input=arguments,
-                    trace_id=None,
+                    trace_id=self._trace_id(agent_context, arguments),
                 ),
             )
+
+    def _trace_id(self, agent_context: AgentContext, arguments: dict[str, Any]) -> str:
+        canonical_arguments = json.dumps(arguments, sort_keys=True, separators=(",", ":"), default=str)
+        raw = f"{agent_context.hasn_id}:{self.name}:{canonical_arguments}"
+        return "trace_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]

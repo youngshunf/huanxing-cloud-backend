@@ -4,7 +4,22 @@ from __future__ import annotations
 import pytest
 from datetime import datetime, timedelta, timezone
 
+from backend.common.security.agent_jwt import jwt_decode_agent
 from backend.common.security.agent_jwt import jwt_encode_agent
+
+
+@pytest.fixture(autouse=True)
+def mcp_agent_token_session(monkeypatch):
+    """MCP route tests use signed Agent JWTs without a live Redis token store."""
+
+    async def verify_test_agent_token(token: str):
+        return jwt_decode_agent(token)
+
+    monkeypatch.setattr(
+        "backend.app.mcp.auth.verify_agent_token",
+        verify_test_agent_token,
+        raising=False,
+    )
 
 
 @pytest.fixture

@@ -14,7 +14,7 @@ from starlette.types import Receive, Scope, Send
 
 from backend.app.mcp.auth import AgentContext
 from backend.app.mcp.server import mcp_server
-from backend.common.security.agent_jwt import jwt_decode_agent
+from backend.common.security.agent_jwt import verify_agent_token
 from backend.common.exception import errors
 from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
 from backend.database.db import async_db_session
@@ -128,9 +128,9 @@ class HasnMcpStreamableServer:
 
         hasn_id = agent_id_header.decode("utf-8")
 
-        # 验证 JWT
+        # 验证 Agent JWT and its revocable Redis-backed session record.
         try:
-            payload = jwt_decode_agent(token)
+            payload = await verify_agent_token(token)
         except errors.TokenError as e:
             raise ValueError(f"Invalid token: {e}")
 
@@ -148,13 +148,7 @@ class HasnMcpStreamableServer:
             if agent.status != 'active':
                 raise ValueError(f"Agent is {agent.status}")
 
-        return AgentContext(
-            hasn_id=payload.agent_hasn_id,
-            owner_id=payload.owner_user_id,
-            scopes=payload.scopes,
-            agent_status=agent.status,
-            metadata={}
-        )
+        return AgentContext.from_token_payload(payload, agent_status=agent.status)
 
     async def handle_request_with_auth(
         self,

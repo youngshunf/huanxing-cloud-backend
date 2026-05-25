@@ -19,6 +19,7 @@ from backend.app.hasn.api.v1.app import hasn_task as task_api
 from backend.app.hasn.api.v1.app import hasn_task_run as task_run_api
 from backend.app.hasn.api.v1.app import workspace as workspace_api
 from backend.app.hasn.api.v1 import sync as sync_api
+from backend.app.mcp.routes import mcp_router
 from backend.app.hasn.model import HasnAiNativeAppAudit, HasnUserActiveWorkspace
 from backend.app.hasn.schema.hasn_message_hub import InboxItem, InboxPullRequest, InboxPullResponse
 from backend.app.hasn.schema.hasn_onboarding import SandboxSummary
@@ -37,7 +38,6 @@ from backend.app.hasn.service.hasn_onboarding_service import (
     SMS_CODE_PREFIX,
     HasnOnboardingService,
     HasnPhoneAuthService,
-    SqlAlchemyAgentTokenIssuer,
 )
 from backend.app.hasn.service import hasn_onboarding_service as onboarding_service_module
 from backend.app.hasn.model import HasnAiNativeAppAudit
@@ -49,10 +49,51 @@ from backend.app.hasn.service.workspace_notification_subscriber import (
 )
 from backend.common.exception import errors
 from backend.common.exception.exception_handler import register_exception
+from backend.common.security.agent_jwt import jwt_encode_agent
 from backend.database.db import get_db, get_db_transaction
 
 if TYPE_CHECKING:
     import pytest
+
+P0_AGENT_ID = 'a_p0_default'
+P0_OWNER_ID = 'h_p0_owner'
+P0_OWNER_USER_ID = 7
+P0_AGENT_SESSION_UUID = 'session-p0-agent-jwt'
+P0_AGENT_SCOPES = ['message.read', 'knowledge.read']
+P0_AGENT_EXPIRE_TIME = datetime(2099, 1, 1, tzinfo=timezone.utc)
+
+
+def p0_agent_token(agent_name: str = DEFAULT_AGENT_DISPLAY_NAME) -> str:
+    return jwt_encode_agent(
+        {
+            'sub': P0_AGENT_ID,
+            'token_type': 'agent',
+            'agent_hasn_id': P0_AGENT_ID,
+            'agent_name': agent_name,
+            'owner_hasn_id': P0_OWNER_ID,
+            'owner_user_id': P0_OWNER_USER_ID,
+            'scopes': P0_AGENT_SCOPES,
+            'session_uuid': P0_AGENT_SESSION_UUID,
+            'exp': int(P0_AGENT_EXPIRE_TIME.timestamp()),
+        }
+    )
+
+
+async def fake_cloud_current_knowledge_credentials() -> dict[str, Any]:
+    return {
+        'code': 200,
+        'msg': 'ok',
+        'data': {
+            'workspace': {
+                'kind': 'enterprise',
+                'user_id': None,
+                'enterprise_id': 42,
+                'workspace_key': 'enterprise:42',
+            },
+            'status': 'pending',
+            'credential': None,
+        },
+    }
 
 
 class FakeRedis:
@@ -115,11 +156,23 @@ class FakeDb:
         self.active_workspaces: dict[int, SimpleNamespace] = {}
         self.enterprise_memberships: dict[tuple[int, int], SimpleNamespace] = {}
         self.humans_by_user_id: dict[int, SimpleNamespace] = {}
+        self.agents_by_hasn_id: dict[str, SimpleNamespace] = {}
         self.audit_rows: list[HasnAiNativeAppAudit] = []
 
     async def execute(self, stmt: Any) -> Any:
         sql = str(stmt)
         params = getattr(stmt.compile(), 'params', {})
+        if 'hasn_agents' in sql:
+            if 'hasn_id_1' in params:
+                row = self.agents_by_hasn_id.get(params.get('hasn_id_1'))
+                return _ScalarResult([row] if row is not None else [])
+            rows = [
+                agent
+                for agent in self.agents_by_hasn_id.values()
+                if agent.owner_id == params.get('owner_id_1')
+                and (params.get('status_1') is None or agent.status == params.get('status_1'))
+            ]
+            return _ScalarResult(rows)
         if 'hasn_workspace_app' in sql:
             row = self.workspace_apps.get(
                 (
@@ -292,13 +345,15 @@ class InMemoryTaskStore:
         timestamp = _fixture_time()
         create_time = payload.pop('create_time', None) or timestamp
         update_time = payload.pop('update_time', None)
+        created_time = payload.pop('created_time', None) or create_time
+        updated_time = payload.pop('updated_time', None) or update_time
         record = TaskRecord(
             id=self.next_id,
             **payload,
             create_time=create_time,
             update_time=update_time,
-            created_time=create_time,
-            updated_time=update_time,
+            created_time=created_time,
+            updated_time=updated_time,
         )
         self.records[self.next_id] = record
         self.next_id += 1
@@ -315,6 +370,8 @@ class InMemoryTaskStore:
         if record is None:
             return 0
         payload = obj.model_dump()
+        payload.pop('created_time', None)
+        payload.pop('updated_time', None)
         for key, value in payload.items():
             setattr(record, key, value)
         timestamp = _fixture_time()
@@ -346,13 +403,15 @@ class InMemorySkillBundleStore:
         timestamp = _fixture_time()
         create_time = payload.pop('create_time', None) or timestamp
         update_time = payload.pop('update_time', None)
+        created_time = payload.pop('created_time', None) or create_time
+        updated_time = payload.pop('updated_time', None) or update_time
         record = SkillBundleRecord(
             id=self.next_id,
             **payload,
             create_time=create_time,
             update_time=update_time,
-            created_time=create_time,
-            updated_time=update_time,
+            created_time=created_time,
+            updated_time=updated_time,
         )
         self.records[self.next_id] = record
         self.next_id += 1
@@ -369,6 +428,8 @@ class InMemorySkillBundleStore:
         if record is None:
             return 0
         payload = obj.model_dump()
+        payload.pop('created_time', None)
+        payload.pop('updated_time', None)
         for key, value in payload.items():
             setattr(record, key, value)
         timestamp = _fixture_time()
@@ -404,12 +465,14 @@ class InMemoryTaskRunStore:
         payload = obj.model_dump()
         timestamp = _fixture_time()
         create_time = payload.pop('create_time', None) or timestamp
+        created_time = payload.pop('created_time', None) or create_time
+        updated_time = payload.pop('updated_time', None)
         record = TaskRunRecord(
             id=self.next_id,
             **payload,
             create_time=create_time,
-            created_time=create_time,
-            updated_time=None,
+            created_time=created_time,
+            updated_time=updated_time,
         )
         self.records[self.next_id] = record
         self.next_id += 1
@@ -426,6 +489,8 @@ class InMemoryTaskRunStore:
         if record is None:
             return 0
         payload = obj.model_dump()
+        payload.pop('created_time', None)
+        payload.pop('updated_time', None)
         for key, value in payload.items():
             setattr(record, key, value)
         timestamp = _fixture_time()
@@ -464,6 +529,29 @@ class _ScalarResult:
 class FakeLlmCredentialIssuer:
     async def issue(self, _db: Any, user: FakeUser) -> tuple[str, str, str]:
         return f'sk-p0-{user.id}', 'https://llm.example/v1', 'test-model'
+
+
+class FakeAgentTokenIssuer:
+    def __init__(self, redis: FakeRedis) -> None:
+        self.redis = redis
+
+    async def issue(
+        self,
+        _db: Any,
+        *,
+        agent_hasn_id: str,
+        agent_name: str,
+        owner_hasn_id: str,
+        owner_user_id: int,
+    ) -> SimpleNamespace:
+        assert (agent_hasn_id, owner_hasn_id, owner_user_id) == (P0_AGENT_ID, P0_OWNER_ID, P0_OWNER_USER_ID)
+        access_token = p0_agent_token(agent_name)
+        await self.redis.setex(f'agent_token:{agent_hasn_id}:{P0_AGENT_SESSION_UUID}', 3600, access_token)
+        return SimpleNamespace(
+            access_token=access_token,
+            access_token_expire_time=P0_AGENT_EXPIRE_TIME,
+            scopes=P0_AGENT_SCOPES,
+        )
 
 
 class FakeOnboardingGateway:
@@ -651,10 +739,23 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app.include_router(ai_native_api.apps_router, prefix='/api/v1/ai-native/apps')
     app.include_router(ai_native_api.runtime_router, prefix='/api/v1/ai-native/runtime')
     app.include_router(ai_native_api.audit_router, prefix='/api/v1/ai-native/audit')
+    app.include_router(mcp_router, tags=['MCP'])
+    app.add_api_route(
+        '/api/v1/hasn/app/users/me/knowledge-credentials',
+        fake_cloud_current_knowledge_credentials,
+        methods=['GET'],
+    )
 
     fake_db_instance = FakeDb()
     async def fake_db():
         yield fake_db_instance
+
+    class FakeAsyncDbSession:
+        async def __aenter__(self) -> FakeDb:
+            return fake_db_instance
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+            return False
 
     app.dependency_overrides[get_db] = fake_db
     app.dependency_overrides[get_db_transaction] = fake_db
@@ -675,6 +776,9 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
 
     monkeypatch.setattr(agent_jwt_module, 'redis_client', redis)
     monkeypatch.setattr(ai_native_gateway_module, 'redis_client', redis)
+    monkeypatch.setattr('backend.app.mcp.auth.async_db_session', lambda: FakeAsyncDbSession())
+    monkeypatch.setattr('backend.database.db.async_db_session', lambda: FakeAsyncDbSession())
+    monkeypatch.setattr('backend.app.mcp.server.HasnCloudMcpServer._log_tool_call', _fake_mcp_log_tool_call)
     monkeypatch.setattr(onboarding_service_module, 'create_refresh_token', fake_refresh_token_creator)
     monkeypatch.setattr(agent_jwt_module, 'get_agent_scopes_cached', _fake_agent_scopes_cached)
     monkeypatch.setattr(
@@ -710,12 +814,13 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
         code_generator=lambda: '123456',
         token_creator=fake_token_creator,
         llm_credentials=FakeLlmCredentialIssuer(),
+        agent_tokens=FakeAgentTokenIssuer(redis),
     )
     monkeypatch.setattr(onboarding_api, 'hasn_phone_auth_service', phone_auth)
     monkeypatch.setattr(
         onboarding_api,
         'hasn_onboarding_service',
-        HasnOnboardingService(gateway=FakeOnboardingGateway(), agent_tokens=SqlAlchemyAgentTokenIssuer()),
+        HasnOnboardingService(gateway=FakeOnboardingGateway(), agent_tokens=FakeAgentTokenIssuer(redis)),
     )
     monkeypatch.setattr(ragflow_subscriber, 'actions', RecordingRAGFlowActions())
     monkeypatch.setattr(workspace_notification_subscriber, 'actions', RecordingWorkspaceNotificationActions())
@@ -775,6 +880,15 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
         status='approved',
     )
     fake_db_instance.humans_by_user_id[7] = SimpleNamespace(hasn_id='h_p0_owner', user_id=7)
+    fake_db_instance.agents_by_hasn_id[P0_AGENT_ID] = SimpleNamespace(
+        hasn_id=P0_AGENT_ID,
+        owner_id=P0_OWNER_ID,
+        name=DEFAULT_AGENT_DISPLAY_NAME,
+        display_name=DEFAULT_AGENT_DISPLAY_NAME,
+        agent_name=DEFAULT_AGENT_DISPLAY_NAME,
+        status='active',
+        star_id='100001#assistant',
+    )
     fake_db_instance.active_workspaces[7] = HasnUserActiveWorkspace(user_id=7, kind='personal', enterprise_id=None)
     return app
 
@@ -820,6 +934,10 @@ async def _fake_search_current_knowledge(
     return {'items': [{'id': 'chunk-1', 'content': query}], 'total': 1}
 
 
+async def _fake_mcp_log_tool_call(*_args: Any, **_kwargs: Any) -> None:
+    return None
+
+
 def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_and_inbox(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -853,6 +971,20 @@ def test_p0_real_http_flow_covers_auth_onboarding_sync_runtime_report_message_an
     assert onboarding.json()['human']['owner_id'] == 'h_p0_owner'
     assert onboarding.json()['default_agent']['hasn_id'] == 'a_p0_default'
     agent_auth = {'Authorization': f"Bearer {onboarding.json()['default_agent']['access_token']}"}
+    agent_mcp_auth = {**agent_auth, 'X-HASN-Agent-ID': 'a_p0_default'}
+
+    mcp_tools = client.post('/mcp/tools/list', headers=agent_mcp_auth, json={})
+    assert mcp_tools.status_code == 200, mcp_tools.text
+    assert [tool['name'] for tool in mcp_tools.json()['tools']] == ['hasn.tool.search']
+
+    mcp_search = client.post(
+        '/mcp/tools/call',
+        headers=agent_mcp_auth,
+        json={'tool_name': 'hasn.tool.search', 'arguments': {'query': 'sources'}},
+    )
+    assert mcp_search.status_code == 200, mcp_search.text
+    mcp_source_namespaces = {source['namespace'] for source in mcp_search.json()['result']['sources']}
+    assert 'hasn.tool' in mcp_source_namespaces
 
     runtime_report = client.post(
         '/api/v1/hasn/runtime/report',

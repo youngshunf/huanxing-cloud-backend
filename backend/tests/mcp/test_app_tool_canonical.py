@@ -9,10 +9,12 @@ import pytest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 
 from backend.app.mcp.routes import mcp_router
 from backend.app.mcp.tools.app_tools import AppTool
 from backend.common.exception.exception_handler import register_exception
+from backend.common.exception import errors
 from backend.common.security.agent_jwt import jwt_encode_agent
 
 if TYPE_CHECKING:
@@ -191,9 +193,9 @@ class TestCanonicalAppTool:
                 "backend.app.mcp.server.load_app_tools_for_owner",
                 new_callable=AsyncMock,
             ) as mock_load_owner_tools,
-            patch("backend.app.mcp.tools.app_tools.async_db_session", return_value=session_context),
+            patch("backend.database.db.async_db_session", return_value=session_context),
             patch(
-                "backend.app.mcp.tools.app_tools.runtime_gateway.handle_tool_call",
+                "backend.app.hasn.service.ai_native_runtime_gateway.ai_native_runtime_gateway.call_tool",
                 new_callable=AsyncMock,
             ) as mock_gateway_call,
             patch(
@@ -220,13 +222,73 @@ class TestCanonicalAppTool:
 
         assert response.status_code == 200
         assert response.json()["result"]["data"]["documents"][0]["id"] == "doc_1"
-        mock_gateway_call.assert_awaited_once_with(
-            db=session_context.session,
-            installation_id="appi_knowledge",
-            tool_id="knowledge.search",
-            input_data={"query": "runtime adapter"},
-            trace_id=None,
+        mock_gateway_call.assert_awaited_once()
+        args, kwargs = mock_gateway_call.await_args
+        assert args == (session_context.session,)
+        assert kwargs["app_id"] == "knowledge"
+        assert kwargs["tool_id"] == "knowledge.search"
+        assert kwargs["body"].input == {"query": "runtime adapter"}
+        assert kwargs["body"].workspace == {"kind": "personal"}
+        assert kwargs["body"].trace_id.startswith("trace_")
+        assert kwargs["request"].state.agent.agent_hasn_id == "a_test_agent_app_tool"
+        assert kwargs["request"].state.agent.owner_hasn_id == "h_test_owner"
+        assert kwargs["request"].state.agent.owner_user_id == 1001
+        assert kwargs["request"].state.agent.session_uuid == "test-session-app-tool"
+
+    def test_revoked_agent_jwt_is_rejected_before_app_tool_gateway(
+        self,
+        app_tool: AppTool,
+        mock_agent: MagicMock,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        async def reject_revoked_token(_token: str):
+            raise errors.TokenError(msg="Agent Token 已过期或已被吊销")
+
+        monkeypatch.setattr(
+            "backend.app.mcp.auth.verify_agent_token",
+            reject_revoked_token,
+            raising=False,
         )
+
+        app = make_test_app()
+        client = TestClient(app)
+        token = agent_token(["knowledge.read"])
+
+        with (
+            patch(
+                "backend.app.mcp.auth.hasn_agents_dao.get_by_hasn_id",
+                new_callable=AsyncMock,
+            ) as mock_get,
+            patch(
+                "backend.app.mcp.server.load_app_tools_for_agent",
+                new_callable=AsyncMock,
+            ) as mock_load_tools,
+            patch(
+                "backend.app.mcp.server.load_app_tools_for_owner",
+                new_callable=AsyncMock,
+            ) as mock_load_owner_tools,
+            patch(
+                "backend.app.hasn.service.ai_native_runtime_gateway.ai_native_runtime_gateway.call_tool",
+                new_callable=AsyncMock,
+            ) as mock_gateway_call,
+        ):
+            mock_get.return_value = mock_agent
+            mock_load_tools.return_value = [app_tool]
+            mock_load_owner_tools.return_value = []
+
+            response = client.post(
+                "/mcp/tools/call",
+                json={
+                    "tool_name": "hasn.knowledge.search",
+                    "arguments": {"query": "runtime adapter"},
+                },
+                headers=auth_headers(token),
+            )
+
+        assert response.status_code == 401
+        message = response.json().get("detail") or response.json().get("msg") or ""
+        assert "吊销" in message
+        mock_gateway_call.assert_not_awaited()
 
     def test_direct_call_scope_failure_is_authorization_not_exposure(
         self,

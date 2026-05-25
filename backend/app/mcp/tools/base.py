@@ -51,7 +51,7 @@ class BaseTool(ABC):
     @abstractmethod
     async def execute(
         self,
-        arguments: dict[str, Any],
         agent_context: AgentContext,
+        arguments: dict[str, Any],
     ) -> Any:
         """执行工具"""

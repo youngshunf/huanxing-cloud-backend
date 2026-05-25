@@ -8,10 +8,12 @@ from typing import Annotated
 from fastapi import Header, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.common.security.agent_jwt import jwt_decode_agent
+from backend.common.dataclasses import AgentTokenPayload
+from backend.common.security.agent_jwt import verify_agent_token
 from backend.common.exception import errors
 from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
 from backend.database.db import async_db_session
+from backend.utils.timezone import timezone
 
 
 class AgentContext:
@@ -23,13 +25,64 @@ class AgentContext:
         owner_id: int,
         scopes: list[str],
         agent_status: str,
-        metadata: dict
+        metadata: dict,
+        agent_name: str = "",
+        owner_hasn_id: str | None = None,
+        session_uuid: str | None = None,
+        token_payload: AgentTokenPayload | None = None,
     ):
         self.hasn_id = hasn_id
         self.owner_id = owner_id
         self.scopes = scopes
         self.agent_status = agent_status
         self.metadata = metadata
+        self.agent_name = agent_name
+        self.owner_hasn_id = owner_hasn_id
+        self.session_uuid = session_uuid
+        self._token_payload = token_payload
+
+    @classmethod
+    def from_token_payload(
+        cls,
+        payload: AgentTokenPayload,
+        *,
+        agent_status: str,
+        metadata: dict | None = None,
+    ) -> "AgentContext":
+        return cls(
+            hasn_id=payload.agent_hasn_id,
+            owner_id=payload.owner_user_id,
+            scopes=payload.scopes,
+            agent_status=agent_status,
+            metadata=metadata or {},
+            agent_name=payload.agent_name,
+            owner_hasn_id=payload.owner_hasn_id,
+            session_uuid=payload.session_uuid,
+            token_payload=payload,
+        )
+
+    def to_token_payload(self) -> AgentTokenPayload:
+        if self._token_payload is not None:
+            return self._token_payload
+        if self.owner_hasn_id is None or self.session_uuid is None:
+            raise errors.TokenError(msg='AgentContext 缺少 Agent JWT 字段')
+        return AgentTokenPayload(
+            agent_hasn_id=self.hasn_id,
+            agent_name=self.agent_name,
+            owner_hasn_id=self.owner_hasn_id,
+            owner_user_id=self.owner_id,
+            scopes=self.scopes,
+            session_uuid=self.session_uuid,
+            expire_time=timezone.now(),
+        )
+
+    @property
+    def agent_hasn_id(self) -> str:
+        return self.hasn_id
+
+    @property
+    def owner_user_id(self) -> int:
+        return self.owner_id
 
     def has_scope(self, scope: str) -> bool:
         """检查是否有指定权限"""
@@ -73,9 +126,9 @@ async def get_agent_context(
 
     token = authorization[7:]  # 移除 "Bearer " 前缀
 
-    # 验证 Agent JWT
+    # 验证 Agent JWT and its revocable Redis-backed session record.
     try:
-        payload = jwt_decode_agent(token)
+        payload = await verify_agent_token(token)
     except errors.TokenError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -111,13 +164,7 @@ async def get_agent_context(
                 detail=f"Agent is {agent.status}"
             )
 
-    return AgentContext(
-        hasn_id=payload.agent_hasn_id,
-        owner_id=payload.owner_user_id,
-        scopes=payload.scopes,
-        agent_status=agent.status,
-        metadata={}
-    )
+    return AgentContext.from_token_payload(payload, agent_status=agent.status)
 
 
 # 类型别名，方便在路由中使用

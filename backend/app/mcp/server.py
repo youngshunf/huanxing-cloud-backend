@@ -69,15 +69,10 @@ class HasnCloudMcpServer:
         try:
             await self._load_app_tools(agent_context)
 
-            if namespace:
-                tools = self.tool_registry.get_tools_by_namespace(namespace)
-                available_tools = [
-                    self.tool_directory._tool_schema(tool)
-                    for tool in tools
-                    if self._check_tool_permission(agent_context, tool)
-                ]
-            else:
-                available_tools = self.tool_directory.list_bootstrap_tools(agent_context)
+            # Progressive exposure keeps `tools/list` on the bootstrap surface.
+            # `namespace` is accepted for compatibility, but it must not widen
+            # the exposed set beyond the bootstrap projection.
+            available_tools = self.tool_directory.list_bootstrap_tools(agent_context)
 
             logger.info(
                 f"Agent {agent_context.hasn_id} listed {len(available_tools)} tools"
