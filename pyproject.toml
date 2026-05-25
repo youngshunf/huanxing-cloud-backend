@@ -73,6 +73,10 @@ dependencies = [
   "opendal>=0.46.0",
   "passlib>=1.7.4",
   "croniter>=6.0.0",
+  # 语言检测
+  "langdetect>=1.0.9",
+  # Git 操作
+  "gitpython>=3.1.43",
 ]
 dynamic = ["version"]
 
