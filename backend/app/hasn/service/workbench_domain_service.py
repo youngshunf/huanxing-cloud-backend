@@ -776,6 +776,51 @@ class WorkbenchDomainService:
             })
         return {'items': items, 'workspace': context['workspace']}
 
+    async def create_current_knowledge_dataset(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        name: str,
+        description: str | None = None,
+        embedding_model: str | None = None,
+        language: str | None = None,
+        permission: str | None = None,
+    ) -> dict[str, Any]:
+        context = await self._active_knowledge_context(db, user_id=user_id)
+
+        async def create_dataset(current_context: dict[str, Any]):
+            client = self.ragflow_client_factory(current_context['instance'].url)
+            payload = {'name': name}
+            if description:
+                payload['description'] = description
+            if embedding_model:
+                payload['embedding_model'] = embedding_model
+            if language:
+                payload['language'] = language
+            if permission:
+                payload['permission'] = permission
+
+            return await client.post(
+                '/api/v1/datasets',
+                json=payload,
+                headers=_ragflow_auth_headers(current_context['api_key']),
+            )
+
+        response, context = await self._call_ragflow_with_refresh(
+            db,
+            user_id=user_id,
+            context=context,
+            call=create_dataset,
+        )
+        dataset = _ragflow_data(response)
+        return {
+            'id': str(dataset.get('id') or ''),
+            'name': dataset.get('name') or '',
+            'description': dataset.get('description') or '',
+            'workspace': context['workspace'],
+        }
+
     async def search_current_knowledge(
         self,
         db: AsyncSession,
@@ -1171,18 +1216,24 @@ class WorkbenchDomainService:
         if workspace['kind'] == 'personal':
             return await _scalar(
                 db,
-                sa.select(HasnRagflowInstance).where(
+                sa.select(HasnRagflowInstance)
+                .where(
                     HasnRagflowInstance.scope == 'public',
                     HasnRagflowInstance.status == 'active',
-                ),
+                )
+                .order_by(HasnRagflowInstance.created_time.desc())
+                .limit(1),
             )
         return await _scalar(
             db,
-            sa.select(HasnRagflowInstance).where(
+            sa.select(HasnRagflowInstance)
+            .where(
                 HasnRagflowInstance.scope == 'enterprise',
                 HasnRagflowInstance.enterprise_id == workspace['enterprise_id'],
                 HasnRagflowInstance.status == 'active',
-            ),
+            )
+            .order_by(HasnRagflowInstance.created_time.desc())
+            .limit(1),
         )
 
 
