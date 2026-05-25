@@ -94,6 +94,7 @@ RuntimeUnavailable != ConversationSplit
 | 8032 | `ERR_CHANNEL_INBOUND_REJECTED` | 400 | false | 第三方渠道入站消息被拒绝 |
 | 8033 | `ERR_RUNTIME_REPORT_INVALID` | 400 | false | Runtime status report 格式或语义无效 |
 | 8034 | `ERR_RUNTIME_PRIVATE_METADATA_REJECTED` | 400 | false | 客户端试图上传 Runtime 私有本地元数据 |
+| 8035 | `ERR_MEMORY_SYNC_SCOPE_INVALID` | 400 | false | 记忆同步载荷缺少 sync_scope_kind / sync_scope_id / namespace |
 
 ---
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from backend.app.hasn.schema.hasn_sync import (
+    MemorySyncPullRequest,
+    MemorySyncPullResponse,
     RuntimeReportRequest,
     RuntimeReportResponse,
     SyncPullRequest,
@@ -34,6 +36,19 @@ async def push_sync_events(
     request_body: SyncPushRequest,
 ) -> SyncPushResponse:
     return await hasn_sync_service.push(db, request_body, user_id=request.user.id)
+
+
+@router.post(
+    '/memory/sync/pull',
+    summary='Pull HASN memory namespace events after namespace cursors',
+    dependencies=[DependsJwtAuth],
+)
+async def pull_memory_sync_events(
+    request: Request,
+    db: CurrentSession,
+    request_body: MemorySyncPullRequest,
+) -> MemorySyncPullResponse:
+    return await hasn_sync_service.pull_memory(db, request_body, user_id=request.user.id)
 
 
 @router.post('/runtime/report', summary='Report redacted local Runtime status', dependencies=[DependsJwtAuth])

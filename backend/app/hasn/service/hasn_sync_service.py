@@ -19,6 +19,9 @@ from backend.app.hasn.model import HasnHumans
 from backend.app.hasn.schema.hasn_message_hub import ErrorObject
 from backend.app.hasn.schema.hasn_sync import (
     ClientEvent,
+    MemorySyncCursor,
+    MemorySyncPullRequest,
+    MemorySyncPullResponse,
     RuntimeReportRequest,
     RuntimeReportResponse,
     RuntimeSummary,
@@ -30,6 +33,19 @@ from backend.app.hasn.schema.hasn_sync import (
 )
 from backend.common.exception import errors
 from backend.utils.timezone import timezone
+
+MEMORY_SYNC_SCOPE_KINDS = {'owner', 'agent'}
+
+OWNER_MEMORY_NAMESPACES = {'portraits', 'facts', 'events', 'procedures', 'work_state', 'summaries', 'audits'}
+AGENT_MEMORY_NAMESPACES = {
+    'episodic',
+    'agent_portraits',
+    'agent_facts',
+    'agent_events',
+    'agent_procedures',
+    'tasks',
+    'extract_jobs',
+}
 
 PRIVATE_RUNTIME_KEYS = {
     'workspace',
@@ -53,16 +69,39 @@ _PRIVATE_METADATA_ERROR = ErrorObject(
     message='Runtime report contains private local metadata.',
 )
 
+_MEMORY_SYNC_SCOPE_ERROR = ErrorObject(
+    code=8035,
+    name='ERR_MEMORY_SYNC_SCOPE_INVALID',
+    message='Memory sync payload missing sync_scope_kind, sync_scope_id, or namespace.',
+)
+
+_MEMORY_NAMESPACE_UNKNOWN_ERROR = ErrorObject(
+    code=8036,
+    name='ERR_MEMORY_NAMESPACE_UNKNOWN',
+    message='Memory sync payload references unknown namespace.',
+)
+
 
 class SyncGateway(Protocol):
     async def save_runtime_report(self, db: AsyncSession, report: dict[str, Any]) -> None: ...
     async def pull_events(
         self, db: AsyncSession, *, owner_id: str, after_revision: int, limit: int
     ) -> list[SyncEventRecord]: ...
+    async def pull_memory_events(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        selections: list[MemorySyncCursor],
+        limit: int,
+    ) -> list[SyncEventRecord]: ...
     async def owns_owner(self, db: AsyncSession, *, owner_id: str, user_id: int) -> bool: ...
     async def save_session(self, db: AsyncSession, session: dict[str, Any]) -> None: ...
     async def save_session_event(self, db: AsyncSession, event: dict[str, Any]) -> None: ...
     async def save_session_artifact(self, db: AsyncSession, artifact: dict[str, Any]) -> None: ...
+    async def existing_client_event_revision(
+        self, db: AsyncSession, *, owner_id: str, node_id: str, client_event_id: str
+    ) -> int | None: ...
 
 
 class SqlAlchemySyncGateway:
@@ -173,9 +212,110 @@ class SqlAlchemySyncGateway:
             for row in result.mappings().all()
         ]
 
+    async def pull_memory_events(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        selections: list[MemorySyncCursor],
+        limit: int,
+    ) -> list[SyncEventRecord]:
+        if not selections:
+            return []
+        selection_values = [
+            {
+                'sync_scope_kind': cursor.sync_scope_kind,
+                'sync_scope_id': cursor.sync_scope_id,
+                'namespace': cursor.namespace,
+                'last_pulled_revision': cursor.last_pulled_revision,
+            }
+            for cursor in selections
+        ]
+        result = await db.execute(
+            sa.text(
+                '''
+                WITH requested(sync_scope_kind, sync_scope_id, namespace, last_pulled_revision) AS (
+                    SELECT *
+                    FROM jsonb_to_recordset(CAST(:selections AS jsonb))
+                    AS x(sync_scope_kind text, sync_scope_id text, namespace text, last_pulled_revision bigint)
+                )
+                SELECT event_id, event_type, revision, occurred_at, payload
+                FROM public.hasn_sync_events e
+                JOIN requested r
+                  ON e.payload->>'sync_scope_kind' = r.sync_scope_kind
+                 AND e.payload->>'sync_scope_id' = r.sync_scope_id
+                 AND e.payload->>'namespace' = r.namespace
+                WHERE e.owner_id = :owner_id
+                  AND e.event_type LIKE 'memory.%'
+                  AND COALESCE((e.payload->>'namespace_revision')::bigint, 0) > r.last_pulled_revision
+                ORDER BY e.revision ASC
+                LIMIT :limit
+                '''
+            ),
+            {
+                'owner_id': owner_id,
+                'selections': json.dumps(selection_values, ensure_ascii=False, sort_keys=True, default=str),
+                'limit': limit,
+            },
+        )
+        return [
+            SyncEventRecord(
+                event_id=row['event_id'],
+                event_type=row['event_type'],
+                revision=int(row['revision']),
+                created_at=_coerce_datetime(row['occurred_at']),
+                payload=_coerce_dict(row['payload']),
+            )
+            for row in result.mappings().all()
+        ]
+
     async def save_client_event(
         self, db: AsyncSession, *, owner_id: str, node_id: str, event: ClientEvent
-    ) -> None:
+    ) -> int | None:
+        existing_revision = await self.existing_client_event_revision(
+            db,
+            owner_id=owner_id,
+            node_id=node_id,
+            client_event_id=event.client_event_id,
+        )
+        if existing_revision is not None:
+            return existing_revision
+
+        server_revision = None
+        if event.event_type.startswith('memory.'):
+            sync_scope_kind, sync_scope_id, namespace = _memory_namespace_revision_key(event)
+            if not _memory_namespace_allowed(sync_scope_kind, namespace):
+                raise errors.RequestError(
+                    msg=_MEMORY_NAMESPACE_UNKNOWN_ERROR.name,
+                    data=_MEMORY_NAMESPACE_UNKNOWN_ERROR.model_dump(),
+                )
+            namespace_revision = await self._advance_memory_namespace_revision(
+                db,
+                sync_scope_kind=sync_scope_kind,
+                sync_scope_id=sync_scope_id,
+                namespace=namespace,
+            )
+            server_revision, event_id = await self._append_sync_event_with_id(
+                db,
+                owner_id=owner_id,
+                hasn_id=event.hasn_id or owner_id,
+                event_type=event.event_type,
+                aggregate_type='memory',
+                aggregate_id=_memory_aggregate_id(event),
+                payload={
+                    **event.payload,
+                    'client_event_id': event.client_event_id,
+                    'node_id': node_id,
+                    'namespace_revision': namespace_revision,
+                },
+            )
+            await self._set_memory_namespace_last_event(
+                db,
+                sync_scope_kind=sync_scope_kind,
+                sync_scope_id=sync_scope_id,
+                namespace=namespace,
+                event_id=event_id,
+            )
         await db.execute(
             sa.text(
                 '''
@@ -188,6 +328,7 @@ class SqlAlchemySyncGateway:
                     payload,
                     dedupe_key,
                     status,
+                    server_revision,
                     received_at,
                     created_time,
                     updated_time
@@ -199,7 +340,8 @@ class SqlAlchemySyncGateway:
                     :event_type,
                     CAST(:payload AS jsonb),
                     :dedupe_key,
-                    'accepted',
+                    :status,
+                    :server_revision,
                     now(),
                     now(),
                     now()
@@ -215,6 +357,106 @@ class SqlAlchemySyncGateway:
                 'event_type': event.event_type,
                 'payload': json.dumps(event.payload, ensure_ascii=False, sort_keys=True, default=str),
                 'dedupe_key': event.dedupe_key,
+                'status': 'applied' if server_revision is not None else 'accepted',
+                'server_revision': server_revision,
+            },
+        )
+        return server_revision
+
+    async def existing_client_event_revision(
+        self, db: AsyncSession, *, owner_id: str, node_id: str, client_event_id: str
+    ) -> int | None:
+        result = await db.execute(
+            sa.text(
+                '''
+                SELECT server_revision
+                FROM public.hasn_sync_inbox_events
+                WHERE owner_id = :owner_id
+                  AND node_id = :node_id
+                  AND client_event_id = :client_event_id
+                LIMIT 1
+                '''
+            ),
+            {
+                'owner_id': owner_id,
+                'node_id': node_id,
+                'client_event_id': client_event_id,
+            },
+        )
+        row = result.mappings().first()
+        if row is None or row['server_revision'] is None:
+            return None
+        return int(row['server_revision'])
+
+    async def _advance_memory_namespace_revision(
+        self,
+        db: AsyncSession,
+        *,
+        sync_scope_kind: str,
+        sync_scope_id: str,
+        namespace: str,
+    ) -> int:
+        result = await db.execute(
+            sa.text(
+                '''
+                INSERT INTO public.memory_namespace_revisions (
+                    sync_scope_kind,
+                    sync_scope_id,
+                    namespace,
+                    revision,
+                    updated_at,
+                    created_time,
+                    updated_time
+                ) VALUES (
+                    :sync_scope_kind,
+                    :sync_scope_id,
+                    :namespace,
+                    1,
+                    now(),
+                    now(),
+                    now()
+                )
+                ON CONFLICT (sync_scope_kind, sync_scope_id, namespace)
+                DO UPDATE SET
+                    revision = public.memory_namespace_revisions.revision + 1,
+                    updated_at = now(),
+                    updated_time = now()
+                RETURNING revision
+                '''
+            ),
+            {
+                'sync_scope_kind': sync_scope_kind,
+                'sync_scope_id': sync_scope_id,
+                'namespace': namespace,
+            },
+        )
+        return int(result.mappings().one()['revision'])
+
+    async def _set_memory_namespace_last_event(
+        self,
+        db: AsyncSession,
+        *,
+        sync_scope_kind: str,
+        sync_scope_id: str,
+        namespace: str,
+        event_id: str,
+    ) -> None:
+        await db.execute(
+            sa.text(
+                '''
+                UPDATE public.memory_namespace_revisions
+                SET last_event_id = :event_id,
+                    updated_time = now()
+                WHERE sync_scope_kind = :sync_scope_kind
+                  AND sync_scope_id = :sync_scope_id
+                  AND namespace = :namespace
+                '''
+            ),
+            {
+                'sync_scope_kind': sync_scope_kind,
+                'sync_scope_id': sync_scope_id,
+                'namespace': namespace,
+                'event_id': event_id,
             },
         )
 
@@ -228,7 +470,29 @@ class SqlAlchemySyncGateway:
         aggregate_type: str,
         aggregate_id: str,
         payload: dict[str, Any],
-    ) -> None:
+    ) -> int:
+        revision, _event_id = await self._append_sync_event_with_id(
+            db,
+            owner_id=owner_id,
+            hasn_id=hasn_id,
+            event_type=event_type,
+            aggregate_type=aggregate_type,
+            aggregate_id=aggregate_id,
+            payload=payload,
+        )
+        return revision
+
+    async def _append_sync_event_with_id(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        hasn_id: str,
+        event_type: str,
+        aggregate_type: str,
+        aggregate_id: str,
+        payload: dict[str, Any],
+    ) -> tuple[int, str]:
         revision_result = await db.execute(
             sa.text(
                 '''
@@ -240,6 +504,7 @@ class SqlAlchemySyncGateway:
             {'owner_id': owner_id},
         )
         revision = int(revision_result.mappings().one()['revision'])
+        event_id = f'se_{uuid.uuid4().hex[:24]}'
         await db.execute(
             sa.text(
                 '''
@@ -271,7 +536,7 @@ class SqlAlchemySyncGateway:
                 '''
             ),
             {
-                'event_id': f'se_{uuid.uuid4().hex[:24]}',
+                'event_id': event_id,
                 'owner_id': owner_id,
                 'hasn_id': hasn_id,
                 'event_type': event_type,
@@ -281,6 +546,7 @@ class SqlAlchemySyncGateway:
                 'revision': revision,
             },
         )
+        return revision, event_id
 
     async def save_session(self, db: AsyncSession, session: dict[str, Any]) -> None:
         """保存或更新 session 到云端投影表"""
@@ -427,6 +693,7 @@ class HasnSyncService:
         await self._assert_owner_access(db, owner_id=request.owner_id, user_id=user_id)
         rejected: list[ErrorObject] = []
         node_id = request.node_id or 'unknown'
+        max_server_revision = 0
         for event in request.events:
             if _contains_private_runtime_key(event.payload):
                 rejected.append(_PRIVATE_METADATA_ERROR)
@@ -439,25 +706,72 @@ class HasnSyncService:
                     session_data = dict(event.payload)
                     session_data['owner_id'] = request.owner_id
                     await save_session(db, session_data)
+                continue
             elif event.event_type == 'session_event.sync':
                 save_session_event = getattr(self.gateway, 'save_session_event', None)
                 if save_session_event and event.payload:
                     await save_session_event(db, event.payload)
+                continue
             elif event.event_type == 'session_artifact.sync':
                 save_session_artifact = getattr(self.gateway, 'save_session_artifact', None)
                 if save_session_artifact and event.payload:
                     await save_session_artifact(db, event.payload)
-            else:
-                # 其他事件类型使用原有逻辑
-                save_client_event = getattr(self.gateway, 'save_client_event', None)
-                if save_client_event:
-                    await save_client_event(db, owner_id=request.owner_id, node_id=node_id, event=event)
+                continue
+            if event.event_type.startswith('memory.'):
+                try:
+                    sync_scope_kind, _, namespace = _memory_namespace_revision_key(event)
+                    if not _memory_namespace_allowed(sync_scope_kind, namespace):
+                        raise errors.RequestError(
+                            msg=_MEMORY_NAMESPACE_UNKNOWN_ERROR.name,
+                            data=_MEMORY_NAMESPACE_UNKNOWN_ERROR.model_dump(),
+                        )
+                except errors.RequestError as exc:
+                    if getattr(exc, 'msg', None) == _MEMORY_SYNC_SCOPE_ERROR.name:
+                        rejected.append(_MEMORY_SYNC_SCOPE_ERROR)
+                        continue
+                    if getattr(exc, 'msg', None) == _MEMORY_NAMESPACE_UNKNOWN_ERROR.name:
+                        rejected.append(_MEMORY_NAMESPACE_UNKNOWN_ERROR)
+                        continue
+                    raise
+            save_client_event = getattr(self.gateway, 'save_client_event', None)
+            if save_client_event:
+                try:
+                    server_revision = await save_client_event(
+                        db, owner_id=request.owner_id, node_id=node_id, event=event
+                    )
+                except errors.RequestError as exc:
+                    if event.event_type.startswith('memory.'):
+                        if getattr(exc, 'msg', None) == _MEMORY_SYNC_SCOPE_ERROR.name:
+                            rejected.append(_MEMORY_SYNC_SCOPE_ERROR)
+                            continue
+                        if getattr(exc, 'msg', None) == _MEMORY_NAMESPACE_UNKNOWN_ERROR.name:
+                            rejected.append(_MEMORY_NAMESPACE_UNKNOWN_ERROR)
+                            continue
+                    raise
+                if server_revision is not None:
+                    max_server_revision = max(max_server_revision, int(server_revision))
         accepted = len(request.events) - len(rejected)
         return SyncPushResponse(
             accepted=accepted,
             rejected=rejected,
-            next_cursor=_owner_cursor(request.owner_id, 0),
+            next_cursor=_owner_cursor(request.owner_id, max_server_revision),
         )
+
+    async def pull_memory(
+        self, db: AsyncSession, request: MemorySyncPullRequest, *, user_id: int | None = None
+    ) -> MemorySyncPullResponse:
+        await self._assert_owner_access(db, owner_id=request.owner_id, user_id=user_id)
+        selections = _memory_pull_selections(request)
+        events = await self.gateway.pull_memory_events(
+            db,
+            owner_id=request.owner_id,
+            selections=selections,
+            limit=request.max_events + 1,
+        )
+        limited = events[: request.max_events]
+        has_more = len(events) > request.max_events
+        next_cursors = _advance_memory_cursors(selections, limited)
+        return MemorySyncPullResponse(events=limited, next_cursors=next_cursors, has_more=has_more)
 
     async def report_runtime(
         self, db: AsyncSession, request: RuntimeReportRequest, *, user_id: int | None = None
@@ -514,6 +828,109 @@ def _parse_owner_cursor(cursor: str | None) -> int:
 
 def _owner_cursor(owner_id: str, revision: int) -> str:
     return f'owner:{owner_id}:{max(int(revision), 0)}'
+
+
+def _memory_aggregate_id(event: ClientEvent) -> str:
+    record_id = event.payload.get('record_id')
+    namespace = event.payload.get('namespace')
+    sync_scope_kind = event.payload.get('sync_scope_kind')
+    sync_scope_id = event.payload.get('sync_scope_id')
+    if record_id:
+        return str(record_id)
+    if namespace and sync_scope_kind and sync_scope_id:
+        return f'{sync_scope_kind}:{sync_scope_id}:{namespace}'
+    return event.client_event_id
+
+
+def _memory_pull_selections(request: MemorySyncPullRequest) -> list[MemorySyncCursor]:
+    namespace_map: dict[str, list[str]] = {}
+    for selector in request.namespaces:
+        namespace_map.setdefault(selector.sync_scope_kind, [])
+        for namespace in selector.names:
+            if not _memory_namespace_allowed(selector.sync_scope_kind, namespace):
+                raise errors.RequestError(
+                    msg=_MEMORY_NAMESPACE_UNKNOWN_ERROR.name,
+                    data=_MEMORY_NAMESPACE_UNKNOWN_ERROR.model_dump(),
+                )
+            if namespace not in namespace_map[selector.sync_scope_kind]:
+                namespace_map[selector.sync_scope_kind].append(namespace)
+
+    cursor_map = {
+        (cursor.sync_scope_kind, cursor.sync_scope_id, cursor.namespace): cursor.last_pulled_revision
+        for cursor in request.cursors
+    }
+    selections: list[MemorySyncCursor] = []
+    for namespace in namespace_map.get('owner', []):
+        selections.append(
+            MemorySyncCursor(
+                sync_scope_kind='owner',
+                sync_scope_id=request.owner_id,
+                namespace=namespace,
+                last_pulled_revision=cursor_map.get(('owner', request.owner_id, namespace), 0),
+            )
+        )
+    for agent_id in request.agent_ids:
+        for namespace in namespace_map.get('agent', []):
+            selections.append(
+                MemorySyncCursor(
+                    sync_scope_kind='agent',
+                    sync_scope_id=agent_id,
+                    namespace=namespace,
+                    last_pulled_revision=cursor_map.get(('agent', agent_id, namespace), 0),
+                )
+            )
+    return selections
+
+
+def _advance_memory_cursors(
+    selections: list[MemorySyncCursor], events: list[SyncEventRecord]
+) -> list[MemorySyncCursor]:
+    revisions = {
+        (cursor.sync_scope_kind, cursor.sync_scope_id, cursor.namespace): cursor.last_pulled_revision
+        for cursor in selections
+    }
+    for event in events:
+        sync_scope_kind = event.payload.get('sync_scope_kind')
+        sync_scope_id = event.payload.get('sync_scope_id')
+        namespace = event.payload.get('namespace')
+        namespace_revision = event.payload.get('namespace_revision')
+        key = (sync_scope_kind, sync_scope_id, namespace)
+        if key in revisions and isinstance(namespace_revision, int):
+            revisions[key] = max(revisions[key], namespace_revision)
+
+    return [
+        MemorySyncCursor(
+            sync_scope_kind=cursor.sync_scope_kind,
+            sync_scope_id=cursor.sync_scope_id,
+            namespace=cursor.namespace,
+            last_pulled_revision=revisions[(cursor.sync_scope_kind, cursor.sync_scope_id, cursor.namespace)],
+        )
+        for cursor in selections
+    ]
+
+
+def _memory_namespace_revision_key(event: ClientEvent) -> tuple[str, str, str]:
+    sync_scope_kind = _required_memory_payload_string(event, 'sync_scope_kind')
+    sync_scope_id = _required_memory_payload_string(event, 'sync_scope_id')
+    namespace = _required_memory_payload_string(event, 'namespace')
+    if sync_scope_kind not in MEMORY_SYNC_SCOPE_KINDS:
+        raise errors.RequestError(msg='ERR_MEMORY_SYNC_SCOPE_INVALID')
+    return sync_scope_kind, sync_scope_id, namespace
+
+
+def _memory_namespace_allowed(sync_scope_kind: str, namespace: str) -> bool:
+    if sync_scope_kind == 'owner':
+        return namespace in OWNER_MEMORY_NAMESPACES
+    if sync_scope_kind == 'agent':
+        return namespace in AGENT_MEMORY_NAMESPACES
+    return False
+
+
+def _required_memory_payload_string(event: ClientEvent, key: str) -> str:
+    value = event.payload.get(key)
+    if not isinstance(value, str) or not value:
+        raise errors.RequestError(msg='ERR_MEMORY_SYNC_SCOPE_INVALID')
+    return value
 
 
 def _report_id(owner_id: str, node_id: str, summary: RuntimeSummary) -> str:

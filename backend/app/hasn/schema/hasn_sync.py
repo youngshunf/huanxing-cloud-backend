@@ -60,6 +60,32 @@ class SyncPushResponse(SchemaBase):
     next_cursor: str = Field(description='下一游标')
 
 
+class MemorySyncNamespaceSelector(SchemaBase):
+    sync_scope_kind: Literal['owner', 'agent'] = Field(description='同步分区类型')
+    names: list[str] = Field(description='需要拉取的记忆 namespace')
+
+
+class MemorySyncCursor(SchemaBase):
+    sync_scope_kind: Literal['owner', 'agent'] = Field(description='同步分区类型')
+    sync_scope_id: str = Field(description='同步分区 ID')
+    namespace: str = Field(description='记忆 namespace')
+    last_pulled_revision: int = Field(default=0, ge=0, description='该 namespace 已应用到本地的 revision')
+
+
+class MemorySyncPullRequest(SchemaBase):
+    owner_id: str = Field(description='Owner HASN ID')
+    agent_ids: list[str] = Field(default_factory=list, description='参与 agent 级同步的 Agent HASN ID 列表')
+    namespaces: list[MemorySyncNamespaceSelector] = Field(description='按同步分区类型选择的 namespace 集合')
+    cursors: list[MemorySyncCursor] = Field(default_factory=list, description='客户端持久化的 namespace 游标')
+    max_events: int = Field(default=500, ge=1, le=500, description='最大返回事件数')
+
+
+class MemorySyncPullResponse(SchemaBase):
+    events: list[SyncEventRecord] = Field(description='按 namespace revision 过滤后的记忆事件')
+    next_cursors: list[MemorySyncCursor] = Field(description='每个请求 namespace 的下一游标')
+    has_more: bool = Field(description='是否还有更多事件')
+
+
 class RuntimeSummary(SchemaBase):
     agent_id: str = Field(description='Agent HASN ID')
     binding_id: str | None = Field(default=None, description='脱敏公共 Binding ID')

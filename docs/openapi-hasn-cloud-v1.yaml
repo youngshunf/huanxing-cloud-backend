@@ -107,6 +107,26 @@ paths:
                 $ref: '#/components/schemas/SyncPullResponse'
         default:
           $ref: '#/components/responses/ErrorResponse'
+  /api/v1/hasn/memory/sync/pull:
+    post:
+      tags: [Sync]
+      summary: Pull memory namespace events after namespace cursors
+      operationId: hasnMemorySyncPull
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemorySyncPullRequest'
+      responses:
+        '200':
+          description: Memory namespace event batch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemorySyncPullResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
   /api/v1/hasn/sync/push:
     post:
       tags: [Sync]
@@ -640,6 +660,71 @@ components:
             $ref: '#/components/schemas/ErrorObject'
         next_cursor:
           type: string
+    MemorySyncNamespaceSelector:
+      type: object
+      required: [sync_scope_kind, names]
+      properties:
+        sync_scope_kind:
+          type: string
+          enum: [owner, agent]
+        names:
+          type: array
+          items:
+            type: string
+    MemorySyncCursor:
+      type: object
+      required: [sync_scope_kind, sync_scope_id, namespace, last_pulled_revision]
+      properties:
+        sync_scope_kind:
+          type: string
+          enum: [owner, agent]
+        sync_scope_id:
+          type: string
+        namespace:
+          type: string
+        last_pulled_revision:
+          type: integer
+          minimum: 0
+          default: 0
+    MemorySyncPullRequest:
+      type: object
+      required: [owner_id, namespaces]
+      properties:
+        owner_id:
+          type: string
+        agent_ids:
+          type: array
+          items:
+            type: string
+          default: []
+        namespaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemorySyncNamespaceSelector'
+        cursors:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemorySyncCursor'
+          default: []
+        max_events:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 500
+    MemorySyncPullResponse:
+      type: object
+      required: [events, next_cursors, has_more]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/SyncEvent'
+        next_cursors:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemorySyncCursor'
+        has_more:
+          type: boolean
     SyncEvent:
       type: object
       required: [event_id, event_type, revision, created_at]
