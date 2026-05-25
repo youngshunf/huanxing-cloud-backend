@@ -1,3 +1,4 @@
+from backend.app.integration.api.router import v1 as integration_v1, app as integration_app, agent as integration_agent, open_api as integration_open
 from backend.app.hermes.api.router import v1 as hermes_v1, app as hermes_app, internal as hermes_internal
 from backend.app.hasn.api.router import (
     ai_native as hasn_ai_native,
@@ -73,6 +74,12 @@ router.include_router(hasn_ai_native)      # AI-Native 应用平台 API
 router.include_router(hermes_v1)
 router.include_router(hermes_app)
 router.include_router(hermes_internal)    # runtime ↔ backend 内部 service token 调用（X-Internal-Token）
+
+# Integration（第三方应用集成）
+router.include_router(integration_v1)     # 集成管理端 API
+router.include_router(integration_app)    # 集成用户端 API
+router.include_router(integration_agent)  # 集成 Agent API
+router.include_router(integration_open)   # 集成公开 API
 
 # 移动端 App API (M1: /api/v1/app/...)
 router.include_router(mobile_app_v1_router)  # 移动端用户端 API (owner_api_keys/current 等)
