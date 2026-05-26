@@ -337,6 +337,19 @@ class Settings(BaseSettings):
     LLM_COMPRESS_THRESHOLD_RATIO: float = 0.75
     LLM_COMPRESS_MESSAGE_THRESHOLD: int = 100
     LLM_COMPRESS_KEEP_MESSAGES: int = 6
+
+    ##################################################
+    # [ Marketplace ] 技能市场配置
+    ##################################################
+    # GitHub 仓库配置
+    HUANXING_HUB_REPO_URL: str = 'https://github.com/youngshunf/huanxing-hub.git'
+    HUANXING_HUB_LOCAL_PATH: str = '/tmp/huanxing-hub'
+
+    # GitHub Webhook 配置
+    GITHUB_WEBHOOK_SECRET: str = ''  # 生产环境在 .env 中设置
+
+    # 市场缓存配置
+    MARKETPLACE_CACHE_DIR: str = '/tmp/marketplace-cache'
     LLM_COMPRESS_SUMMARY_MODEL: str = 'claude-sonnet-4-5-20250929'
     LLM_COMPRESS_CACHE_TTL: int = 86400
 

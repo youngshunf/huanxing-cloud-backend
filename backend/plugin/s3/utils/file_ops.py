@@ -141,7 +141,7 @@ def object_key_from_url(s3_storage: S3Storage, url: str) -> str:
     return _strip_prefix(relative[len(expected):], s3_storage.prefix)
 
 
-async def presign_read_url(s3_storage: S3Storage, url: str, expires_in: int = 300) -> dict:
+async def presign_read_url(s3_storage: S3Storage, url: str, expires_in: int = 3600) -> dict:
     """Return a fresh signed read URL for a stable private storage URL."""
     object_key = object_key_from_url(s3_storage, url)
     op = get_operator_for_storage(s3_storage)
