@@ -15,7 +15,6 @@ class TranslationService:
     """Translation service for marketplace content"""
 
     def __init__(self):
-        self.llm_client = None  # Will be initialized when needed
         self._translation_cache = {}  # Simple in-memory cache
 
     def detect_language(self, text: str) -> Literal['en', 'zh', 'unknown']:
@@ -108,7 +107,7 @@ class TranslationService:
         target_lang: Literal['en', 'zh']
     ) -> str:
         """
-        Translate text using LLM API
+        Translate text using LLM API directly
 
         Args:
             text: Text to translate
@@ -118,23 +117,7 @@ class TranslationService:
         Returns:
             Translated text
         """
-        # Import here to avoid circular dependency
-        from openai import AsyncOpenAI
-
-        # Initialize client if needed
-        if self.llm_client is None:
-            # Use project's LLM gateway
-            api_base = getattr(settings, 'LLM_API_BASE_URL', None)
-            if not api_base:
-                api_base = getattr(settings, 'OPENAI_API_BASE', 'https://api.openai.com/v1')
-
-            # For local LLM gateway, use a dummy API key
-            api_key = getattr(settings, 'OPENAI_API_KEY', 'sk-dummy-key-for-local-gateway')
-
-            self.llm_client = AsyncOpenAI(
-                api_key=api_key,
-                base_url=api_base
-            )
+        import httpx
 
         # Prepare prompt
         lang_names = {'en': 'English', 'zh': 'Chinese'}
@@ -149,19 +132,45 @@ Text to translate:
 
 Translation:"""
 
-        # Call LLM
-        response = await self.llm_client.chat.completions.create(
-            model=getattr(settings, 'TRANSLATION_MODEL', 'gpt-4o-mini'),
-            messages=[
-                {"role": "system", "content": "You are a professional translator."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            max_tokens=1000
-        )
+        # Get LLM configuration
+        api_base = getattr(settings, 'LLM_API_BASE_URL', 'http://127.0.0.1:3180')
+        if not api_base.endswith('/v1'):
+            api_base = f"{api_base}/v1"
+        api_key = getattr(settings, 'LLM_API_KEY', 'sk-system-translation')
+        model = getattr(settings, 'TRANSLATION_MODEL', 'gpt-4o-mini')
 
-        translated = response.choices[0].message.content.strip()
-        return translated
+        # Call LLM API directly via HTTP
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{api_base}/chat/completions",
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": "You are a professional translator."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "max_tokens": 1000,
+                    "stream": False
+                },
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}"
+                }
+            )
+
+            if response.status_code != 200:
+                log.error(f"LLM API error: {response.status_code} - {response.text}")
+                raise Exception(f"LLM API error: {response.status_code}")
+
+            result = response.json()
+
+            # Check if we got a valid response
+            if 'choices' not in result or not result['choices']:
+                log.error(f"Invalid LLM response: {result}")
+                raise Exception("Invalid LLM response: no choices")
+
+            translated = result['choices'][0]['message']['content'].strip()
+            return translated
 
     async def translate_skill_metadata(
         self,
@@ -175,7 +184,7 @@ Translation:"""
         Args:
             name: Skill name
             description: Skill description
-            source_lang: Source language (auto-detect if None)
+            source_lang: Source language (auto-detect if None, only used for name)
 
         Returns:
             Dict with keys: name_en, name_zh, description_en, description_zh, source_language
@@ -188,29 +197,30 @@ Translation:"""
             'source_language': None
         }
 
-        # Detect source language from name or description
-        if source_lang is None:
-            if name:
-                source_lang = self.detect_language(name)
-            elif description:
-                source_lang = self.detect_language(description)
-            else:
-                source_lang = 'en'  # Default
+        # Detect source language from name
+        if source_lang is None and name:
+            source_lang = self.detect_language(name)
+        elif source_lang is None:
+            source_lang = 'en'  # Default
 
         result['source_language'] = source_lang
 
         # Translate name
         if name:
-            if source_lang == 'en':
+            name_lang = source_lang
+            if name_lang == 'en':
                 result['name_en'] = name
                 result['name_zh'] = await self.translate(name, 'en', 'zh')
             else:
                 result['name_zh'] = name
                 result['name_en'] = await self.translate(name, 'zh', 'en')
 
-        # Translate description
+        # Translate description (detect language separately)
         if description:
-            if source_lang == 'en':
+            # Detect description language independently
+            desc_lang = self.detect_language(description)
+
+            if desc_lang == 'en':
                 result['description_en'] = description
                 result['description_zh'] = await self.translate(description, 'en', 'zh')
             else:

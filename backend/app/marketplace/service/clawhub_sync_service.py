@@ -4,7 +4,11 @@ ClawHub Sync Service
 Syncs skills from ClawHub marketplace to Huanxing marketplace.
 """
 import json
+import os
+import shutil
+import zipfile
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -13,6 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skill_dao
 from backend.app.marketplace.crud.crud_marketplace_skill_version import marketplace_skill_version_dao
 from backend.app.marketplace.crud.crud_marketplace_sync_log import marketplace_sync_log_dao
+from backend.app.marketplace.schema.marketplace_sync_log import (
+    CreateMarketplaceSyncLogParam,
+    UpdateMarketplaceSyncLogParam
+)
 from backend.app.marketplace.service.translation_service import translation_service
 from backend.common.log import log
 from backend.core.conf import settings
@@ -22,11 +30,12 @@ class ClawHubSyncService:
     """ClawHub sync service for marketplace skills"""
 
     def __init__(self):
-        self.clawhub_api_url = getattr(settings, 'CLAWHUB_API_URL', 'https://hub.openclaw.com/api')
+        self.clawhub_api_url = getattr(settings, 'CLAWHUB_API_URL', 'https://clawhub.ai/api/v1')
+        self.hub_local_path = Path(getattr(settings, 'HUANXING_HUB_LOCAL_PATH', '/tmp/huanxing-hub'))
         self.sync_filters = {
-            'official_only': True,  # Only sync official skills
-            'min_downloads': 10,    # Minimum download count
-            'min_stars': 5          # Minimum star count
+            'official_only': False,  # Sync all skills (ClawHub doesn't have official flag)
+            'min_downloads': 10,     # Minimum download count
+            'min_stars': 1           # Minimum star count
         }
 
     async def sync_from_clawhub(
@@ -49,11 +58,21 @@ class ClawHubSyncService:
         sync_log_id = None
         try:
             # Create sync log
-            sync_log = await marketplace_sync_log_dao.create(db, {
-                'sync_type': 'clawhub',
-                'status': 'in_progress',
-                'started_at': datetime.now()
-            })
+            await marketplace_sync_log_dao.create(db, CreateMarketplaceSyncLogParam(
+                sync_type='clawhub',
+                status='in_progress',
+                started_at=datetime.now()
+            ))
+            # Flush to get the ID
+            await db.flush()
+            # Query the newly created log (get the latest one)
+            from sqlalchemy import select, desc
+            from backend.app.marketplace.model import MarketplaceSyncLog
+            stmt = select(MarketplaceSyncLog).order_by(desc(MarketplaceSyncLog.id)).limit(1)
+            result = await db.execute(stmt)
+            sync_log = result.scalar_one_or_none()
+            if not sync_log:
+                raise Exception("Failed to create sync log")
             sync_log_id = sync_log.id
 
             # Fetch skills from ClawHub
@@ -80,13 +99,16 @@ class ClawHubSyncService:
                     log.error(f"Failed to sync skill {skill_data.get('slug')}: {e}")
 
             # Update sync log
-            await marketplace_sync_log_dao.update(db, sync_log_id, {
-                'status': 'success' if failed_count == 0 else 'partial',
-                'items_synced': synced_count,
-                'items_failed': failed_count,
-                'error_message': '\n'.join(errors) if errors else None,
-                'completed_at': datetime.now()
-            })
+            await marketplace_sync_log_dao.update(db, sync_log_id, UpdateMarketplaceSyncLogParam(
+                status='success' if failed_count == 0 else 'partial',
+                items_synced=synced_count,
+                items_failed=failed_count,
+                error_message='\n'.join(errors) if errors else None,
+                completed_at=datetime.now()
+            ))
+
+            # Commit transaction
+            await db.commit()
 
             return {
                 'success': True,
@@ -100,11 +122,11 @@ class ClawHubSyncService:
 
             # Update sync log
             if sync_log_id:
-                await marketplace_sync_log_dao.update(db, sync_log_id, {
-                    'status': 'failed',
-                    'error_message': str(e),
-                    'completed_at': datetime.now()
-                })
+                await marketplace_sync_log_dao.update(db, sync_log_id, UpdateMarketplaceSyncLogParam(
+                    status='failed',
+                    error_message=str(e),
+                    completed_at=datetime.now()
+                ))
 
             return {
                 'success': False,
@@ -129,8 +151,7 @@ class ClawHubSyncService:
                         f"{self.clawhub_api_url}/skills",
                         params={
                             'page': page,
-                            'pageSize': page_size,
-                            'sortBy': 'popular'
+                            'pageSize': page_size
                         }
                     )
                     response.raise_for_status()
@@ -162,7 +183,7 @@ class ClawHubSyncService:
             skill_ids: List of skill IDs (slugs)
 
         Returns:
-            List of skill data
+            List of skill data (merged with owner and latestVersion)
         """
         skills = []
 
@@ -171,12 +192,39 @@ class ClawHubSyncService:
                 try:
                     response = await client.get(f"{self.clawhub_api_url}/skills/{skill_id}")
                     response.raise_for_status()
-                    skill_data = response.json()
+                    data = response.json()
+
+                    # Merge skill, owner, and latestVersion into one object
+                    skill_data = data.get('skill', {})
+                    skill_data['owner'] = data.get('owner', {})
+                    skill_data['latestVersion'] = data.get('latestVersion', {})
+
                     skills.append(skill_data)
                 except Exception as e:
                     log.error(f"Failed to fetch skill {skill_id} from ClawHub: {e}")
 
         return skills
+
+    async def _get_skill_owner(self, slug: str) -> str:
+        """
+        Get skill owner handle from ClawHub API
+
+        Args:
+            slug: Skill slug
+
+        Returns:
+            Owner handle (defaults to 'community' if not found)
+        """
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(f"{self.clawhub_api_url}/skills/{slug}")
+                response.raise_for_status()
+                data = response.json()
+                owner = data.get('owner', {})
+                return owner.get('handle', 'community')
+        except Exception as e:
+            log.warning(f"Failed to get owner for skill {slug}: {e}")
+            return 'community'
 
     def _filter_skills(self, skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
@@ -191,16 +239,14 @@ class ClawHubSyncService:
         filtered = []
 
         for skill in skills:
-            # Check official status
-            if self.sync_filters['official_only'] and not skill.get('isOfficial', False):
-                continue
+            stats = skill.get('stats', {})
 
             # Check download count
-            if skill.get('downloadCount', 0) < self.sync_filters['min_downloads']:
+            if stats.get('downloads', 0) < self.sync_filters['min_downloads']:
                 continue
 
             # Check star count
-            if skill.get('starCount', 0) < self.sync_filters['min_stars']:
+            if stats.get('stars', 0) < self.sync_filters['min_stars']:
                 continue
 
             filtered.append(skill)
@@ -215,14 +261,25 @@ class ClawHubSyncService:
             db: Database session
             clawhub_skill: ClawHub skill data
         """
+        # Get owner handle from detail API
+        slug = clawhub_skill['slug']
+
+        # Fetch full skill details to get owner info
+        owner_handle = await self._get_skill_owner(slug)
+
         # Convert ClawHub format to Huanxing format
-        skill_id = f"clawhub/{clawhub_skill['slug']}"
+        # Format: clawhub/{owner_handle}/{slug}
+        skill_id = f"clawhub/{owner_handle}/{slug}"
+        namespace = f"clawhub/{owner_handle}"
 
         # Check if skill exists
         existing_skill = await marketplace_skill_dao.get_by_id(db, skill_id)
 
+        # Get stats
+        stats = clawhub_skill.get('stats', {})
+
         # Translate name and description
-        name = clawhub_skill.get('displayName') or clawhub_skill.get('slug')
+        name = clawhub_skill.get('displayName') or slug
         description = clawhub_skill.get('summary', '')
 
         translated = await translation_service.translate_skill_metadata(
@@ -230,51 +287,117 @@ class ClawHubSyncService:
             description=description
         )
 
-        # Map category
-        category = self._map_category(clawhub_skill.get('tags', []))
+        # Extract tags from ClawHub tags object (it's a dict with version tags)
+        tags_obj = clawhub_skill.get('tags', {})
+        # For now, just use the slug as a tag
+        tags = [slug]
+
+        # Map category based on slug or summary using LLM
+        category = await self._classify_skill(db, name, description)
 
         # Prepare skill record
-        skill_record = {
+        from backend.app.marketplace.schema.marketplace_skill import (
+            CreateMarketplaceSkillParam,
+            UpdateMarketplaceSkillParam
+        )
+
+        skill_data = {
             'skill_id': skill_id,
+            'namespace': namespace,
+            'slug': slug,
             'name_en': translated['name_en'],
             'name_zh': translated['name_zh'],
             'description_en': translated['description_en'],
             'description_zh': translated['description_zh'],
             'source_language': translated['source_language'],
-            'icon_url': clawhub_skill.get('icon'),
+            'icon_url': None,
             'emoji': None,
-            'author_name': clawhub_skill.get('author', {}).get('name'),
+            'author_name': 'ClawHub Community',
             'category': category,
-            'tags': json.dumps(clawhub_skill.get('tags', [])),
+            'tags': ','.join(tags),
             'pricing_type': 'free',
             'price': 0,
-            'is_official': clawhub_skill.get('isOfficial', False),
+            'is_official': False,
             'is_private': False,
-            'source': 'clawhub',
-            'download_count': clawhub_skill.get('downloadCount', 0),
-            'star_count': clawhub_skill.get('starCount', 0),
+            'source_type': 'clawhub',
+            'source_repo_url': f"https://clawhub.ai/skills/{slug}",
+            'download_count': stats.get('downloads', 0),
+            'star_count': stats.get('stars', 0),
             'synced_at': datetime.now()
         }
 
         if existing_skill:
             # Update existing skill
-            await marketplace_skill_dao.update(db, existing_skill.id, skill_record)
-            db_skill_id = existing_skill.id
+            update_param = UpdateMarketplaceSkillParam(**skill_data)
+            await marketplace_skill_dao.update(db, existing_skill.id, update_param)
+            skill_id_for_version = skill_id
         else:
             # Create new skill
-            new_skill = await marketplace_skill_dao.create(db, skill_record)
-            db_skill_id = new_skill.id
+            create_param = CreateMarketplaceSkillParam(**skill_data)
+            await marketplace_skill_dao.create(db, create_param)
+            # Flush to get the ID
+            await db.flush()
+            # Query the newly created skill
+            created_skill = await marketplace_skill_dao.get_by_id(db, skill_id)
+            if not created_skill:
+                raise Exception(f"Failed to create skill: {skill_id}")
+            skill_id_for_version = skill_id
 
         # Sync latest version
-        versions = clawhub_skill.get('versions', [])
-        if versions:
-            latest_version = versions[0]
-            await self._sync_skill_version(db, db_skill_id, latest_version)
+        latest_version = clawhub_skill.get('latestVersion')
+        if latest_version:
+            version_str = latest_version.get('version', '1.0.0')
+
+            # Download skill file
+            repo_path = await self._download_skill_file(
+                skill_id=skill_id,
+                owner_handle=owner_handle,
+                slug=slug,
+                version=version_str
+            )
+
+            # Update skill with repo_path
+            if repo_path:
+                # Get the current skill
+                current_skill = await marketplace_skill_dao.get_by_id(db, skill_id)
+
+                if current_skill:
+                    # Create update param with repo_path (本地 huanxing-hub 路径)
+                    update_data = {
+                        'skill_id': skill_id,
+                        'namespace': namespace,
+                        'slug': slug,
+                        'name_en': translated['name_en'],
+                        'name_zh': translated['name_zh'],
+                        'description_en': translated['description_en'],
+                        'description_zh': translated['description_zh'],
+                        'source_language': translated['source_language'],
+                        'icon_url': None,
+                        'emoji': None,
+                        'author_name': 'ClawHub Community',
+                        'category': category,
+                        'tags': ','.join(tags),
+                        'pricing_type': 'free',
+                        'price': 0,
+                        'is_official': False,
+                        'is_private': False,
+                        'source_type': 'clawhub',
+                        'source_repo_url': f"https://clawhub.ai/skills/{slug}",
+                        'repo_path': repo_path,  # 本地 huanxing-hub 路径
+                        'download_count': stats.get('downloads', 0),
+                        'star_count': stats.get('stars', 0),
+                        'synced_at': datetime.now()
+                    }
+                    update_param = UpdateMarketplaceSkillParam(**update_data)
+                    await marketplace_skill_dao.update(db, current_skill.id, update_param)
+
+            # Sync version metadata
+            await self._sync_skill_version(db, skill_id_for_version, latest_version)
 
     async def _sync_skill_version(
         self,
         db: AsyncSession,
-        db_skill_id: int,
+        skill_id: str,
         version_data: dict[str, Any]
     ):
         """
@@ -282,14 +405,14 @@ class ClawHubSyncService:
 
         Args:
             db: Database session
-            db_skill_id: Database skill ID
+            skill_id: Skill ID (e.g., "clawhub/my-skill")
             version_data: Version data from ClawHub
         """
         version = version_data.get('version', '1.0.0')
 
         # Check if version exists
         existing_version = await marketplace_skill_version_dao.get_by_skill_and_version(
-            db, db_skill_id, version
+            db, skill_id, version
         )
 
         # Translate changelog
@@ -304,50 +427,172 @@ class ClawHubSyncService:
             changelog_en = None
             changelog_zh = None
 
+        # Convert timestamp to datetime
+        created_at = version_data.get('createdAt')
+        if created_at:
+            released_at = datetime.fromtimestamp(created_at / 1000)  # ClawHub uses milliseconds
+        else:
+            released_at = datetime.now()
+
         # Prepare version record
-        version_record = {
-            'skill_id': db_skill_id,
+        from backend.app.marketplace.schema.marketplace_skill_version import (
+            CreateMarketplaceSkillVersionParam,
+            UpdateMarketplaceSkillVersionParam
+        )
+
+        version_data_dict = {
+            'skill_id': skill_id,
             'version': version,
-            'changelog_en': changelog_en,
-            'changelog_zh': changelog_zh,
-            'released_at': version_data.get('releasedAt')
+            'changelog': changelog_en,  # Use English changelog as default
+            'package_url': f"https://clawhub.ai/api/v1/skills/{skill_id.split('/')[-1]}/versions/{version}/download",
+            'file_hash': None,
+            'file_size': None,
+            'is_latest': True,  # Mark as latest (we only sync latest version)
+            'published_at': released_at
         }
 
         if existing_version:
             # Update existing version
-            await marketplace_skill_version_dao.update(db, existing_version.id, version_record)
+            update_param = UpdateMarketplaceSkillVersionParam(**version_data_dict)
+            await marketplace_skill_version_dao.update(db, existing_version.id, update_param)
         else:
             # Create new version
-            await marketplace_skill_version_dao.create(db, version_record)
+            create_param = CreateMarketplaceSkillVersionParam(**version_data_dict)
+            await marketplace_skill_version_dao.create(db, create_param)
 
-    def _map_category(self, tags: list[str]) -> str:
+    async def _classify_skill(self, db: AsyncSession, name: str, description: str) -> str:
         """
-        Map ClawHub tags to Huanxing category
+        Classify skill using keyword matching
 
         Args:
-            tags: List of tags
+            db: Database session
+            name: Skill name
+            description: Skill description
 
         Returns:
-            Category name
+            Category slug
         """
-        # Category mapping rules
-        category_map = {
-            'automation': ['automation', 'workflow', 'task'],
-            'development': ['development', 'coding', 'programming', 'git'],
-            'productivity': ['productivity', 'note', 'writing'],
-            'data': ['data', 'analysis', 'database'],
-            'ai': ['ai', 'llm', 'machine-learning'],
-            'utility': ['utility', 'tool', 'helper']
+        from backend.app.marketplace.crud.crud_marketplace_category import marketplace_category_dao
+
+        # Get available categories from database
+        categories = await marketplace_category_dao.get_all(db)
+        category_slugs = [cat.slug for cat in categories]
+
+        # Use keyword matching (LLM classification disabled due to API issues)
+        return self._map_category_from_text(name + ' ' + description, category_slugs)
+
+    def _map_category_from_text(self, text: str, available_categories: list[str]) -> str:
+        """
+        Map category from text content using keyword matching
+
+        Args:
+            text: Text to analyze (name + description)
+            available_categories: List of available category slugs
+
+        Returns:
+            Category slug
+        """
+        text_lower = text.lower()
+
+        # Category mapping rules (keyword -> category slug)
+        keyword_map = {
+            'creativity': ['video', 'image', 'generation', 'creative', 'art', 'design', 'nsfw', 'media'],
+            'development': ['code', 'programming', 'development', 'git', 'debug', 'api'],
+            'data': ['data', 'analysis', 'database', 'sql', 'analytics'],
+            'data-analysis': ['data', 'analysis', 'analytics', 'statistics'],
+            'productivity': ['automation', 'workflow', 'task', 'schedule', 'productivity', 'efficiency'],
+            'communication': ['chat', 'communication', 'message', 'email', 'meeting'],
+            'ai-assistant': ['ai', 'llm', 'machine learning', 'model', 'assistant'],
+            'automation': ['automation', 'workflow', 'task', 'schedule'],
+            'content-creation': ['content', 'creation', 'writing', 'blog'],
+            'entertainment': ['game', 'entertainment', 'fun', 'play'],
+            'writing': ['writing', 'write', 'text', 'document'],
+            'video': ['video', 'movie', 'film'],
+            'image': ['image', 'photo', 'picture'],
+            'audio': ['audio', 'music', 'sound'],
+            'media': ['media', 'multimedia']
         }
 
         # Find matching category
-        for category, keywords in category_map.items():
-            for tag in tags:
-                if any(keyword in tag.lower() for keyword in keywords):
-                    return category
+        for category_slug, keywords in keyword_map.items():
+            # Only consider categories that exist in database
+            if category_slug not in available_categories:
+                continue
 
-        # Default category
-        return 'other'
+            for keyword in keywords:
+                if keyword in text_lower:
+                    return category_slug
+
+        # Default to 'other' if available, otherwise first category
+        if 'other' in available_categories:
+            return 'other'
+        elif available_categories:
+            return available_categories[0]
+        else:
+            return 'other'
+
+    async def _download_skill_file(
+        self,
+        skill_id: str,
+        owner_handle: str,
+        slug: str,
+        version: str
+    ) -> str | None:
+        """
+        Download skill file from ClawHub and save to local hub
+
+        Args:
+            skill_id: Full skill ID (e.g., "clawhub/owner/slug")
+            owner_handle: Owner handle
+            slug: Skill slug
+            version: Version to download
+
+        Returns:
+            Local repo path if successful, None otherwise
+        """
+        try:
+            # Create directory structure: huanxing-hub/clawhub/{owner}/{slug}
+            skill_dir = self.hub_local_path / 'clawhub' / owner_handle / slug
+            skill_dir.mkdir(parents=True, exist_ok=True)
+
+            # Download URL - ClawHub uses query parameters for skills
+            download_url = f"{self.clawhub_api_url}/download"
+            params = {
+                'slug': slug,
+                'version': version
+            }
+
+            log.info(f"Downloading skill {slug} version {version} from {download_url}")
+
+            # Download the skill file
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                response = await client.get(download_url, params=params)
+                response.raise_for_status()
+
+                # Save to file
+                zip_file = skill_dir / f"{slug}-{version}.zip"
+                zip_file.write_bytes(response.content)
+
+                log.info(f"Downloaded skill file to {zip_file} ({len(response.content)} bytes)")
+
+                # Extract the zip file
+                if zipfile.is_zipfile(zip_file):
+                    log.info(f"Extracting skill file...")
+                    with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                        zip_ref.extractall(skill_dir)
+
+                    # Remove the zip file after extraction
+                    zip_file.unlink()
+                    log.info(f"Extracted and removed zip file")
+                else:
+                    log.warning(f"Downloaded file is not a zip file, keeping as-is")
+
+                # Return the relative path from hub root
+                return f"clawhub/{owner_handle}/{slug}"
+
+        except Exception as e:
+            log.error(f"Failed to download skill {slug}: {e}")
+            return None
 
 
 # Singleton instance

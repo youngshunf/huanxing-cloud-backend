@@ -2,9 +2,14 @@
 
 提供技能和应用的下载功能，返回预签名 URL
 """
+import os
+import tempfile
+import zipfile
+from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Path, Request
+from fastapi import APIRouter, Path as PathParam, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skill_dao
@@ -14,11 +19,49 @@ from backend.app.marketplace.crud.crud_marketplace_template_version import marke
 from backend.app.marketplace.crud.crud_marketplace_download import marketplace_download_dao
 from backend.app.marketplace.schema.marketplace_download import CreateMarketplaceDownloadParam
 from backend.common.exception import errors
+from backend.common.log import log
 from backend.common.response.response_schema import ResponseSchemaModel, response_base
 from backend.common.security.jwt import DependsJwtAuth
+from backend.core.conf import settings
 from backend.database.db import CurrentSession, CurrentSessionTransaction
 
 router = APIRouter()
+
+
+def create_skill_package(repo_path: str, skill_id: str, version: str) -> str:
+    """
+    从本地 repo_path 创建技能包 zip 文件
+
+    Args:
+        repo_path: 技能在 huanxing-hub 中的路径（如 clawhub/owner/slug）
+        skill_id: 技能 ID
+        version: 版本号
+
+    Returns:
+        临时 zip 文件的路径
+    """
+    hub_path = Path(getattr(settings, 'HUANXING_HUB_LOCAL_PATH', '/tmp/huanxing-hub'))
+    skill_dir = hub_path / repo_path
+
+    if not skill_dir.exists():
+        raise errors.NotFoundError(msg=f'技能文件不存在: {repo_path}')
+
+    # 创建临时 zip 文件
+    temp_dir = tempfile.gettempdir()
+    zip_filename = f"{skill_id.replace('/', '_')}_{version}.zip"
+    zip_path = os.path.join(temp_dir, zip_filename)
+
+    # 打包技能目录
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(skill_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, skill_dir)
+                zipf.write(file_path, arcname)
+
+    log.info(f"Created skill package: {zip_path} from {skill_dir}")
+
+    return zip_path
 
 
 class DownloadResponse(BaseModel):
@@ -45,26 +88,40 @@ class AppDownloadResponse(BaseModel):
 )
 async def download_skill(
     db: CurrentSession,
-    skill_id: Annotated[str, Path(description='技能ID')],
-    version: Annotated[str, Path(description='版本号，可以是具体版本或 latest')],
-) -> ResponseSchemaModel[DownloadResponse]:
+    skill_id: Annotated[str, PathParam(description='技能ID')],
+    version: Annotated[str, PathParam(description='版本号，可以是具体版本或 latest')],
+):
     # 获取技能
     skill = await marketplace_skill_dao.get_by_id(db, skill_id)
     if not skill:
         raise errors.NotFoundError(msg='技能不存在')
-    
+
     # 获取版本
     if version == 'latest':
         skill_version = await marketplace_skill_version_dao.get_latest_by_skill(db, skill_id)
     else:
         skill_version = await marketplace_skill_version_dao.get_by_skill_and_version(db, skill_id, version)
-    
+
     if not skill_version:
         raise errors.NotFoundError(msg='版本不存在')
-    
+
+    # 优先使用本地 repo_path 打包
+    if skill.repo_path:
+        try:
+            zip_path = create_skill_package(skill.repo_path, skill_id, skill_version.version)
+            return FileResponse(
+                path=zip_path,
+                filename=f"{skill.slug or skill_id.replace('/', '_')}_{skill_version.version}.zip",
+                media_type='application/zip',
+            )
+        except Exception as e:
+            log.error(f"Failed to create package from repo_path: {e}")
+            # 如果本地打包失败，降级到使用 package_url
+
+    # 降级：使用 package_url（CDN 链接）
     if not skill_version.package_url:
         raise errors.NotFoundError(msg='包文件不存在')
-    
+
     return response_base.success(data=DownloadResponse(
         download_url=skill_version.package_url,
         version=skill_version.version,
