@@ -73,6 +73,27 @@ class CRUDMarketplaceSkill(CRUDPlus[MarketplaceSkill]):
         """
         return await self.select_model_by_column(db, skill_id=skill_id)
 
+    async def get_by_namespace_slug(
+        self,
+        db: AsyncSession,
+        namespace: str,
+        slug: str
+    ) -> MarketplaceSkill | None:
+        """
+        通过命名空间和 slug 获取技能
+
+        :param db: 数据库会话
+        :param namespace: 命名空间
+        :param slug: 技能 slug
+        :return:
+        """
+        stmt = select(MarketplaceSkill).where(
+            MarketplaceSkill.namespace == namespace,
+            MarketplaceSkill.slug == slug
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def increment_download_count(self, db: AsyncSession, skill_id: str) -> None:
         """
         增加技能下载次数
