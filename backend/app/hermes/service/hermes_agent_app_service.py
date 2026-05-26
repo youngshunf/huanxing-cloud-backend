@@ -18,8 +18,8 @@ from backend.app.hermes.model import (
 from backend.app.hermes.service.hermes_runtime_client import HermesRuntimeClient, HermesRuntimeError
 from backend.app.llm.service.llm_newapi_user_mapping_service import LlmNewapiUserMappingService
 from backend.app.admin.model.user import User
-from backend.app.marketplace.model.marketplace_app import MarketplaceApp
-from backend.app.marketplace.model.marketplace_app_version import MarketplaceAppVersion
+from backend.app.marketplace.model.marketplace_template import MarketplaceTemplate
+from backend.app.marketplace.model.marketplace_template_version import MarketplaceTemplateVersion
 from backend.common.exception import errors
 from backend.core.conf import settings
 from backend.utils.timezone import timezone
@@ -302,7 +302,7 @@ class HermesAgentAppService:
             app = next(
                 (
                     item for item in db.marketplace_apps
-                    if item.app_id == template_id and getattr(item, 'app_type', 'agent_template') == 'agent_template'
+                    if item.template_id == template_id and getattr(item, 'app_type', 'agent_template') == 'agent_template'
                 ),
                 None,
             )
@@ -311,31 +311,31 @@ class HermesAgentAppService:
             version = next(
                 (
                     item for item in getattr(db, 'marketplace_app_versions', [])
-                    if item.app_id == template_id and getattr(item, 'is_latest', False)
+                    if item.template_id == template_id and getattr(item, 'is_latest', False)
                 ),
                 None,
             )
         else:
             stmt = (
                 sa.select(
-                    MarketplaceApp.app_id,
+                    MarketplaceApp.template_id,
                     MarketplaceApp.name,
                     MarketplaceApp.description,
                     MarketplaceApp.emoji,
                     MarketplaceApp.icon_url,
                     MarketplaceApp.skill_dependencies,
-                    MarketplaceAppVersion.version,
-                    MarketplaceAppVersion.package_url,
-                    MarketplaceAppVersion.file_hash,
+                    MarketplaceTemplateVersion.version,
+                    MarketplaceTemplateVersion.package_url,
+                    MarketplaceTemplateVersion.file_hash,
                 )
                 .join(
-                    MarketplaceAppVersion,
-                    MarketplaceAppVersion.app_id == MarketplaceApp.app_id,
+                    MarketplaceTemplateVersion,
+                    MarketplaceTemplateVersion.template_id == MarketplaceApp.template_id,
                 )
                 .where(
-                    MarketplaceApp.app_id == template_id,
+                    MarketplaceApp.template_id == template_id,
                     sa.text("marketplace_app.app_type = 'agent_template'"),
-                    MarketplaceAppVersion.is_latest.is_(True),
+                    MarketplaceTemplateVersion.is_latest.is_(True),
                 )
                 .limit(1)
             )
@@ -356,7 +356,7 @@ class HermesAgentAppService:
         if not version:
             raise errors.NotFoundError(msg='template_not_found')
         return {
-            'app_id': app.app_id,
+            'app_id': app.template_id,
             'name': app.name,
             'description': getattr(app, 'description', None),
             'emoji': getattr(app, 'emoji', None),
