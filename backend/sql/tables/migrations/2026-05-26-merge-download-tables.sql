@@ -29,42 +29,6 @@ COMMENT ON COLUMN "public"."marketplace_download"."download_source" IS '下载�
 COMMENT ON COLUMN "public"."marketplace_download"."ip_address" IS 'IP 地址';
 COMMENT ON COLUMN "public"."marketplace_download"."user_agent" IS 'User Agent';
 
--- 5. 如果 marketplace_download_history 表存在数据，迁移到 marketplace_download
--- 注意：这里假设 marketplace_download_history 的 resource_type/resource_id 对应 marketplace_download 的字段
-INSERT INTO "public"."marketplace_download" (
-  "user_id",
-  "resource_type",
-  "resource_id",
-  "resource_name",
-  "version",
-  "download_source",
-  "ip_address",
-  "user_agent",
-  "downloaded_at",
-  "created_time"
-)
-SELECT
-  "user_id",
-  "resource_type",
-  "resource_id",
-  "resource_name",
-  "version",
-  "download_source",
-  "ip_address",
-  "user_agent",
-  "created_time" as "downloaded_at",
-  "created_time"
-FROM "public"."marketplace_download_history"
-WHERE NOT EXISTS (
-  SELECT 1 FROM "public"."marketplace_download" md
-  WHERE md."user_id" = "marketplace_download_history"."user_id"
-    AND md."resource_type" = "marketplace_download_history"."resource_type"
-    AND md."resource_id" = "marketplace_download_history"."resource_id"
-    AND md."version" = "marketplace_download_history"."version"
-    AND md."downloaded_at" = "marketplace_download_history"."created_time"
-);
 
--- 6. 删除 marketplace_download_history 表
-DROP TABLE IF EXISTS "public"."marketplace_download_history";
 
 COMMIT;

@@ -280,7 +280,6 @@ class SearchService:
             'author_name': skill.author_name,
             'category': skill.category,
             'tags': skill.tags,
-            'latest_version': skill.latest_version,
             'download_count': skill.download_count,
             'star_count': skill.star_count,
             'is_official': skill.is_official,

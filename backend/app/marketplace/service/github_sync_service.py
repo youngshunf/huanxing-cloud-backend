@@ -296,7 +296,7 @@ class GitHubSyncService:
         skill_id = skill_data['skill_id']
 
         # Check if skill exists
-        existing_skill = await marketplace_skill_dao.get_by_skill_id(db, skill_id)
+        existing_skill = await marketplace_skill_dao.get_by_id(db, skill_id)
 
         # Prepare skill record
         skill_record = {

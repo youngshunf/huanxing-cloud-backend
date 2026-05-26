@@ -34,7 +34,7 @@ async def translate_skill(
 ):
     """Manually trigger translation for a skill"""
     # Get skill
-    skill = await marketplace_skill_dao.get_by_skill_id(db, request.skill_id)
+    skill = await marketplace_skill_dao.get_by_id(db, request.skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail='Skill not found')
 
@@ -85,7 +85,7 @@ async def approve_skill(
 ):
     """Approve or reject a skill for publication"""
     # Get skill
-    skill = await marketplace_skill_dao.get_by_skill_id(db, request.skill_id)
+    skill = await marketplace_skill_dao.get_by_id(db, request.skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail='Skill not found')
 
@@ -110,7 +110,7 @@ async def feature_skill(
 ):
     """Mark a skill as featured"""
     # Get skill
-    skill = await marketplace_skill_dao.get_by_skill_id(db, skill_id)
+    skill = await marketplace_skill_dao.get_by_id(db, skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail='Skill not found')
 

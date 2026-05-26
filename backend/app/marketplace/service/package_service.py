@@ -47,7 +47,7 @@ class PackageService:
             Tuple of (package_path, package_hash)
         """
         # Get skill from database
-        skill = await marketplace_skill_dao.get_by_skill_id(db, skill_id)
+        skill = await marketplace_skill_dao.get_by_id(db, skill_id)
         if not skill:
             raise ValueError(f"Skill not found: {skill_id}")
 

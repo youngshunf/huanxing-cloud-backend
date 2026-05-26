@@ -219,7 +219,7 @@ class ClawHubSyncService:
         skill_id = f"clawhub/{clawhub_skill['slug']}"
 
         # Check if skill exists
-        existing_skill = await marketplace_skill_dao.get_by_skill_id(db, skill_id)
+        existing_skill = await marketplace_skill_dao.get_by_id(db, skill_id)
 
         # Translate name and description
         name = clawhub_skill.get('displayName') or clawhub_skill.get('slug')
