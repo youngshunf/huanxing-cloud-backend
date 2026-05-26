@@ -42,13 +42,34 @@ async def search_skills(
     return result
 
 
+@router.get('/skills/{namespace}/{slug}', summary='Get skill detail by namespace and slug')
+async def get_skill_by_namespace_slug(
+    db: CurrentSession,
+    namespace: str,
+    slug: str,
+    lang: str = Query('zh', description='Language (zh/en)')
+):
+    """Get skill detail using namespace/slug format"""
+    skill_id = f"{namespace}/{slug}"
+    skill = await search_service.get_skill_detail(db, skill_id, lang)
+
+    if not skill:
+        raise HTTPException(status_code=404, detail=f'Skill not found: {namespace}/{slug}')
+
+    return skill
+
+
 @router.get('/skills/{skill_id}', summary='Get skill detail')
 async def get_skill_detail(
     db: CurrentSession,
     skill_id: str,
     lang: str = Query('zh', description='Language (zh/en)')
 ):
-    """Get skill detail by ID"""
+    """Get skill detail by ID (supports both 'slug' and 'namespace/slug' formats)"""
+    # If skill_id doesn't contain '/', assume it's huanxing namespace
+    if '/' not in skill_id:
+        skill_id = f"huanxing/{skill_id}"
+
     skill = await search_service.get_skill_detail(db, skill_id, lang)
 
     if not skill:
@@ -57,13 +78,34 @@ async def get_skill_detail(
     return skill
 
 
+@router.get('/skills/{namespace}/{slug}/download', summary='Download skill package by namespace/slug')
+async def download_skill_by_namespace_slug(
+    db: CurrentSession,
+    namespace: str,
+    slug: str,
+    version: str | None = Query(None, description='Version (use latest if not specified)')
+):
+    """Download skill package using namespace/slug format"""
+    skill_id = f"{namespace}/{slug}"
+    return await _download_skill_package(db, skill_id, version)
+
+
 @router.get('/skills/{skill_id}/download', summary='Download skill package')
 async def download_skill_open(
     db: CurrentSession,
     skill_id: str,
     version: str | None = Query(None, description='Version (use latest if not specified)')
 ):
-    """Download skill package as zip file"""
+    """Download skill package as zip file (supports both 'slug' and 'namespace/slug' formats)"""
+    # If skill_id doesn't contain '/', assume it's huanxing namespace
+    if '/' not in skill_id:
+        skill_id = f"huanxing/{skill_id}"
+
+    return await _download_skill_package(db, skill_id, version)
+
+
+async def _download_skill_package(db: CurrentSession, skill_id: str, version: str | None):
+    """Internal helper to download skill package"""
     try:
         # Get package
         package_path, package_hash = await package_service.get_skill_package(

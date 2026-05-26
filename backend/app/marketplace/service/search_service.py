@@ -115,22 +115,35 @@ class SearchService:
         lang: str = 'zh'
     ) -> dict[str, Any] | None:
         """
-        Get skill detail by ID
+        Get skill detail by ID (supports both 'namespace/slug' and direct skill_id)
 
         Args:
             db: Database session
-            skill_id: Skill ID
+            skill_id: Skill ID (can be 'namespace/slug' or direct skill_id)
             lang: Language (zh/en)
 
         Returns:
             Skill detail dict or None
         """
-        query = select(MarketplaceSkill).where(
-            and_(
-                MarketplaceSkill.skill_id == skill_id,
-                MarketplaceSkill.is_private == False
+        # Try to parse namespace/slug format
+        if '/' in skill_id:
+            namespace, slug = skill_id.split('/', 1)
+            query = select(MarketplaceSkill).where(
+                and_(
+                    MarketplaceSkill.namespace == namespace,
+                    MarketplaceSkill.slug == slug,
+                    MarketplaceSkill.is_private == False
+                )
             )
-        )
+        else:
+            # Fallback to direct skill_id match
+            query = select(MarketplaceSkill).where(
+                and_(
+                    MarketplaceSkill.skill_id == skill_id,
+                    MarketplaceSkill.is_private == False
+                )
+            )
+
         result = await db.execute(query)
         skill = result.scalar_one_or_none()
 
@@ -258,6 +271,8 @@ class SearchService:
 
         result = {
             'skill_id': skill.skill_id,
+            'namespace': skill.namespace,
+            'slug': skill.slug,
             'name': name,
             'description': description,
             'icon_url': skill.icon_url,
@@ -270,7 +285,8 @@ class SearchService:
             'star_count': skill.star_count,
             'is_official': skill.is_official,
             'pricing_type': skill.pricing_type,
-            'price': skill.price,
+            'price': float(skill.price) if skill.price else 0,
+            'source_type': skill.source_type,
             'created_time': skill.created_time.isoformat() if skill.created_time else None,
             'updated_time': skill.updated_time.isoformat() if skill.updated_time else None
         }
@@ -278,9 +294,12 @@ class SearchService:
         if detailed:
             # Add detailed info
             result.update({
+                'source_repo_url': skill.source_repo_url,
+                'source_repo_path': skill.source_repo_path,
                 'repo_path': skill.repo_path,
-                'source': skill.source,
-                'synced_at': skill.synced_at.isoformat() if skill.synced_at else None
+                'git_commit_hash': skill.git_commit_hash,
+                'synced_at': skill.synced_at.isoformat() if skill.synced_at else None,
+                'translated_at': skill.translated_at.isoformat() if skill.translated_at else None
             })
 
         return result
