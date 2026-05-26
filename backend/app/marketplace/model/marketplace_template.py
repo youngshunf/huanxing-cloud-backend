@@ -1,0 +1,47 @@
+from datetime import datetime
+from decimal import Decimal
+
+import sqlalchemy as sa
+
+from sqlalchemy.orm import Mapped, mapped_column
+
+from backend.common.model import Base, id_key, UniversalText
+
+
+class MarketplaceTemplate(Base):
+    """技能市场模板表（Agent模板/技能包/SOP包）"""
+
+    __tablename__ = 'marketplace_template'
+
+    id: Mapped[id_key] = mapped_column(init=False)
+    template_id: Mapped[str] = mapped_column(sa.String(100), default='', comment='模板唯一标识')
+    namespace: Mapped[str | None] = mapped_column(sa.String(50), default=None, comment='命名空间（如 huanxing/clawhub）')
+    slug: Mapped[str | None] = mapped_column(sa.String(100), default=None, comment='模板标识符')
+    template_type: Mapped[str] = mapped_column(sa.String(20), default='', comment='模板类型 (agent_template:Agent模板:blue/skill_pack:技能包:cyan/sop_pack:SOP包:purple)')
+    name: Mapped[str] = mapped_column(sa.String(200), default='', comment='模板名称')
+    name_en: Mapped[str | None] = mapped_column(sa.String(200), default=None, comment='英文名称')
+    name_zh: Mapped[str | None] = mapped_column(sa.String(200), default=None, comment='中文名称')
+    description: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='模板描述')
+    description_en: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='英文描述')
+    description_zh: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='中文描述')
+    source_language: Mapped[str | None] = mapped_column(sa.String(10), default=None, comment='源语言（en/zh，用于判断哪个是原文）')
+    icon_url: Mapped[str | None] = mapped_column(sa.String(500), default=None, comment='模板图标URL')
+    emoji: Mapped[str | None] = mapped_column(sa.String(20), default=None, comment='emoji图标')
+    author_id: Mapped[int | None] = mapped_column(sa.BIGINT(), default=None, comment='作者用户ID')
+    author_name: Mapped[str | None] = mapped_column(sa.String(100), default=None, comment='作者名称')
+    pricing_type: Mapped[str] = mapped_column(sa.String(20), default='', comment='定价类型 (free:免费:green/paid:付费:orange/subscription:订阅:blue)')
+    price: Mapped[Decimal] = mapped_column(sa.NUMERIC(), default=None, comment='价格')
+    is_private: Mapped[bool] = mapped_column(sa.BOOLEAN(), default=True, comment='是否私有')
+    is_official: Mapped[bool] = mapped_column(sa.BOOLEAN(), default=True, comment='是否官方模板')
+    download_count: Mapped[int] = mapped_column(sa.INTEGER(), default=0, comment='下载次数')
+    category: Mapped[str | None] = mapped_column(sa.String(50), default=None, comment='分类')
+    tags: Mapped[str | None] = mapped_column(sa.String(500), default=None, comment='标签，逗号分隔')
+    source_type: Mapped[str | None] = mapped_column(sa.String(20), default=None, comment='来源类型 (github:GitHub:blue/clawhub:ClawHub:green/local:本地:gray)')
+    source_repo_url: Mapped[str | None] = mapped_column(sa.String(500), default=None, comment='源仓库 URL')
+    source_repo_path: Mapped[str | None] = mapped_column(sa.String(500), default=None, comment='仓库内路径')
+    skill_dependencies: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='依赖的技能ID列表，逗号分隔')
+    sop_dependencies: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='依赖的SOP ID列表，逗号分隔')
+    repo_path: Mapped[str | None] = mapped_column(sa.String(500), default=None, comment='在 huanxing-hub 中的路径')
+    git_commit_hash: Mapped[str | None] = mapped_column(sa.String(64), default=None, comment='最新同步的 commit hash')
+    synced_at: Mapped[datetime | None] = mapped_column(default=None, comment='最后同步时间')
+    translated_at: Mapped[datetime | None] = mapped_column(default=None, comment='最后翻译时间')
