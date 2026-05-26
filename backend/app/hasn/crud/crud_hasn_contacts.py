@@ -74,7 +74,10 @@ class CRUDHasnContacts(CRUDPlus[HasnContacts]):
         """获取收到的待处理好友请求 (我作为 peer_id 被加方)"""
         return (await db.execute(
             select(HasnContacts)
-            .where(HasnContacts.peer_id == peer_id)
+            .where(or_(
+                HasnContacts.peer_id == peer_id,
+                HasnContacts.peer_owner_id == peer_id,
+            ))
             .where(HasnContacts.status == 'pending')
             .where(HasnContacts.relation_type == 'social')
             .order_by(HasnContacts.created_time.desc())
@@ -135,4 +138,3 @@ class CRUDHasnContacts(CRUDPlus[HasnContacts]):
 
 
 hasn_contacts_dao: CRUDHasnContacts = CRUDHasnContacts(HasnContacts)
-

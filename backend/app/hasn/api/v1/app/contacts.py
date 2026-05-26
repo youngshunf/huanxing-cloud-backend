@@ -96,11 +96,22 @@ async def send_contact_request(
             res=CustomResponse(code=400, msg=f'与 {obj_in.target_star_id} 已存在关系 (status={existing.status})')
         )
 
+    target_owner_id = target.hasn_id
+    if target_type == 'agent':
+        target_owner_id = getattr(target, 'owner_id', None) or target.hasn_id
+    target_peer = HasnContactPeerOut(
+        hasn_id=target.hasn_id,
+        star_id=target.star_id,
+        name=_peer_display_name(target, peer_type=target_type),
+        type=target_type,
+    )
+
     # 创建 pending 关系
     contact = await hasn_contacts_dao.create_contact(
         db,
         owner_id=hasn_id,
         peer_id=target.hasn_id,
+        peer_owner_id=target_owner_id,
         peer_type=target_type,
         relation_type='social',
         trust_level=1,
@@ -117,13 +128,14 @@ async def send_contact_request(
         type='human',
     )
     await _push_contact_event(
-        target.hasn_id,
+        target_owner_id,
         {
             'method': 'hasn.contact.request_received',
             'params': {
-                'owner_id': target.hasn_id,
+                'owner_id': target_owner_id,
                 'request_id': contact.id,
                 'from_peer': sender_peer.model_dump(),
+                'target': target_peer.model_dump(),
                 'message': obj_in.message,
             },
         },
@@ -133,12 +145,8 @@ async def send_contact_request(
         data=HasnContactRequestOut(
             request_id=contact.id,
             status='pending',
-            target=HasnContactPeerOut(
-                hasn_id=target.hasn_id,
-                star_id=target.star_id,
-                name=target.name,
-                type=target_type,
-            ),
+            created_at=contact.created_time,
+            target=target_peer,
             message=obj_in.message,
         ).model_dump()
     )
@@ -169,7 +177,7 @@ async def list_pending_requests(
                 from_peer = HasnContactPeerOut(
                     hasn_id=sender.hasn_id,
                     star_id=sender.star_id,
-                    name=sender.name,
+                    name=_peer_display_name(sender, peer_type='human'),
                     type='human',
                 )
             else:
@@ -180,11 +188,30 @@ async def list_pending_requests(
                     name='',
                     type='human',
                 )
+            target = None
+            if getattr(req, 'peer_type', None) == 'agent':
+                target_agent = await hasn_agents_dao.get_by_hasn_id(db, req.peer_id)
+                if target_agent:
+                    target = HasnContactPeerOut(
+                        hasn_id=target_agent.hasn_id,
+                        star_id=target_agent.star_id,
+                        name=_peer_display_name(target_agent, peer_type='agent'),
+                        type='agent',
+                    )
+                else:
+                    target = HasnContactPeerOut(
+                        hasn_id=req.peer_id,
+                        star_id='',
+                        name='',
+                        type='agent',
+                    )
             items.append(
                 HasnContactRequestOut(
                     request_id=req.id,
                     status=req.status,
+                    created_at=req.created_time,
                     from_peer=from_peer,
+                    target=target,
                     message=req.request_message or '',
                 )
             )
@@ -218,6 +245,7 @@ async def list_pending_requests(
             HasnContactRequestOut(
                 request_id=req.id,
                 status=req.status,
+                created_at=req.created_time,
                 target=target,
                 message=req.request_message or '',
             )
@@ -250,12 +278,16 @@ async def respond_to_request(
                     trust_level=2,
                     status='connected',
                 )
-            acceptor = await hasn_humans_dao.get_by_hasn_id(db, contact.peer_id)
+            peer_type = getattr(contact, 'peer_type', 'human') or 'human'
+            if peer_type == 'agent':
+                acceptor = await hasn_agents_dao.get_by_hasn_id(db, contact.peer_id)
+            else:
+                acceptor = await hasn_humans_dao.get_by_hasn_id(db, contact.peer_id)
             peer = HasnContactPeerOut(
                 hasn_id=contact.peer_id,
                 star_id=getattr(acceptor, 'star_id', ''),
-                name=_peer_display_name(acceptor, peer_type='human') if acceptor else '',
-                type='human',
+                name=_peer_display_name(acceptor, peer_type=peer_type) if acceptor else '',
+                type=peer_type,
             )
             await _push_contact_event(
                 contact.owner_id,
@@ -297,6 +329,10 @@ async def list_contacts(
             peer_info = await hasn_agents_dao.get_by_hasn_id(db, c.peer_id)
         if not peer_info:
             continue
+        if c.peer_type == 'agent':
+            peer_owner_id = c.peer_owner_id or getattr(peer_info, 'owner_id', None)
+            if peer_owner_id == hasn_id:
+                continue
 
         # 阶段二: 查询 human 联系人名下的 Agent 列表
         owned_agents: list[AgentPeerOut] = []

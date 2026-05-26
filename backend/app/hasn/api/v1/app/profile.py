@@ -124,7 +124,7 @@ async def get_preset_avatars(db: CurrentSession) -> ResponseSchemaModel[list[dic
 async def sign_asset_url(
     db: CurrentSession,
     url: str = Query(..., min_length=1, description='稳定存储 URL'),
-    expires_in: int = Query(300, ge=60, le=3600, description='签名有效期（秒）'),
+    expires_in: int = Query(3600, ge=60, le=3600, description='签名有效期（秒）'),
 ) -> ResponseSchemaModel[dict]:
     """
     为已配置对象存储中的稳定 URL 生成临时读签名。
