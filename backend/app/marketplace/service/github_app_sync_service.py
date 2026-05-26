@@ -16,9 +16,10 @@ from backend.app.marketplace.crud.crud_marketplace_app import marketplace_app_da
 from backend.app.marketplace.crud.crud_marketplace_app_version import marketplace_app_version_dao
 from backend.app.marketplace.crud.crud_marketplace_sync_log import marketplace_sync_log_dao
 from backend.app.marketplace.service.app_package_service import app_package_service
-from backend.app.marketplace.service.cdn_upload_service import cdn_upload_service
 from backend.common.log import log
 from backend.core.conf import settings
+from backend.plugin.s3.crud.storage import s3_storage_dao
+from backend.plugin.s3.utils.file_ops import build_object_url, write_bytes
 
 
 class GitHubAppSyncService:
@@ -192,16 +193,16 @@ class GitHubAppSyncService:
         emoji = data.get('emoji', '')
 
         # Handle icon
-        icon_cdn_url = data.get('icon_cdn_url', '')
+        icon_s3_url = data.get('icon_s3_url', '')
 
-        # Check if we need to upload local icon to CDN
-        if not icon_cdn_url or not icon_cdn_url.startswith('https://cdn.huanxing.ai'):
+        # Check if we need to upload local icon to S3
+        if not icon_s3_url:
             app_dir = template_path.parent
-            icon_cdn_url = await self._upload_icon_to_cdn(app_dir, app_id)
+            icon_s3_url = await self._upload_icon_to_cdn(app_dir, app_id)
 
-            # Update template.yaml with CDN URL
-            if icon_cdn_url:
-                data['icon_cdn_url'] = icon_cdn_url
+            # Update template.yaml with S3 URL
+            if icon_s3_url:
+                data['icon_s3_url'] = icon_s3_url
                 await self._update_template_yaml(template_path, data)
 
         # Handle tags
@@ -225,7 +226,7 @@ class GitHubAppSyncService:
             'app_id': app_id,
             'name': name,
             'description': description,
-            'icon_url': icon_cdn_url,
+            'icon_url': icon_s3_url,
             'emoji': emoji,
             'author_name': 'huanxing',
             'category': 'assistant',  # TODO: extract from directory structure or metadata
@@ -246,34 +247,61 @@ class GitHubAppSyncService:
 
     async def _upload_icon_to_cdn(self, app_dir: Path, app_id: str) -> str | None:
         """
-        Upload local icon to CDN
+        Upload local icon to S3 storage
 
         Args:
             app_dir: App directory path
             app_id: App ID
 
         Returns:
-            CDN URL or None if no icon found
+            S3 URL or None if no icon found
         """
         # Check for icon files
         for icon_name in ['icon.png', 'icon.svg', 'icon.jpg', 'icon.jpeg']:
             icon_path = app_dir / icon_name
             if icon_path.exists():
                 try:
-                    log.info(f"Uploading icon to CDN: {icon_path}")
+                    log.info(f"Uploading icon to S3: {icon_path}")
 
+                    # Read icon file
                     with open(icon_path, 'rb') as f:
-                        cdn_url = await cdn_upload_service.upload_app_icon(
-                            app_id=app_id,
-                            icon_file=f,
-                            filename=icon_name
-                        )
+                        icon_content = f.read()
 
-                    log.info(f"Icon uploaded to CDN: {cdn_url}")
-                    return cdn_url
+                    # Get default S3 storage (assuming first storage is default)
+                    # TODO: Make this configurable via settings
+                    from sqlalchemy.ext.asyncio import AsyncSession
+                    from backend.database.db import async_db_session
+
+                    async with async_db_session() as db:
+                        s3_storages = await s3_storage_dao.get_all(db)
+                        if not s3_storages:
+                            log.error("No S3 storage configured")
+                            return None
+
+                        s3_storage = s3_storages[0]
+
+                        # Generate S3 path: marketplace/apps/{app_id}/icon.{ext}
+                        ext = icon_path.suffix
+                        s3_path = f"marketplace/apps/{app_id}/icon{ext}"
+
+                        # Determine content type
+                        content_type = None
+                        if ext == '.svg':
+                            content_type = 'image/svg+xml'
+                        elif ext in ['.png', '.jpg', '.jpeg']:
+                            content_type = f'image/{ext[1:]}'
+
+                        # Upload to S3
+                        await write_bytes(s3_storage, s3_path, icon_content, content_type)
+
+                        # Build public URL
+                        s3_url = build_object_url(s3_storage, s3_path)
+
+                    log.info(f"Icon uploaded to S3: {s3_url}")
+                    return s3_url
 
                 except Exception as e:
-                    log.error(f"Failed to upload icon to CDN: {e}")
+                    log.error(f"Failed to upload icon to S3: {e}")
                     return None
 
         log.warning(f"No icon found for app {app_id}")
