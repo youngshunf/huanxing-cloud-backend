@@ -1,14 +1,24 @@
-from typing import Any, Sequence
-from datetime import datetime
+import json
+
+from collections.abc import Sequence
+from typing import Any
+
+import sqlalchemy as sa
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn.crud.crud_hasn_sessions import hasn_sessions_dao
 from backend.app.hasn.model import HasnSessions
-from backend.app.hasn.schema.hasn_sessions import CreateHasnSessionsParam, DeleteHasnSessionsParam, UpdateHasnSessionsParam
+from backend.app.hasn.schema.hasn_sessions import (
+    CreateHasnSessionsParam,
+    DeleteHasnSessionsParam,
+    UpdateHasnSessionsParam,
+)
+from backend.app.hasn.service.hasn_conversations_service import hasn_conversations_service
 from backend.common.exception import errors
 from backend.common.pagination import paging_data
+from backend.utils.timezone import timezone
 
 
 class HasnSessionsService:
@@ -36,6 +46,32 @@ class HasnSessionsService:
         """
         hasn_sessions_select = await hasn_sessions_dao.get_select()
         return await paging_data(db, hasn_sessions_select)
+
+    @staticmethod
+    async def get_list_by_owner(
+        db: AsyncSession,
+        owner_id: str,
+        *,
+        session_kind: str | None = None,
+        session_scope: str | None = None,
+        session_status: str | None = None,
+        hasn_id: str | None = None,
+        origin_type: str | None = None,
+        origin_ref: str | None = None,
+    ) -> dict[str, Any]:
+        """获取当前 owner 可见的工作会话投影列表。"""
+        stmt = select(HasnSessions).where(HasnSessions.owner_id == owner_id)
+        stmt = _apply_csv_filter(stmt, HasnSessions.session_kind, session_kind)
+        stmt = _apply_csv_filter(stmt, HasnSessions.session_scope, session_scope)
+        stmt = _apply_csv_filter(stmt, HasnSessions.session_status, session_status)
+        if hasn_id:
+            stmt = stmt.where(HasnSessions.hasn_id == hasn_id)
+        if origin_type:
+            stmt = stmt.where(HasnSessions.origin_type == origin_type)
+        if origin_ref:
+            stmt = stmt.where(HasnSessions.origin_ref == origin_ref)
+        stmt = stmt.order_by(HasnSessions.updated_time.desc().nullslast(), HasnSessions.created_time.desc())
+        return await paging_data(db, stmt)
 
     @staticmethod
     async def get_all(*, db: AsyncSession) -> Sequence[HasnSessions]:
@@ -85,14 +121,16 @@ class HasnSessionsService:
         return count
 
     @staticmethod
-    async def upsert(*, db: AsyncSession, session_data: dict) -> HasnSessions:
+    async def upsert(*, db: AsyncSession, session_data: dict, owner_id: str | None = None) -> HasnSessions:
         """
         创建或更新 Session（幂等操作）
 
         :param db: 数据库会话
         :param session_data: Session 数据
+        :param owner_id: 当前认证 owner
         :return:
         """
+        _validate_cloud_session_payload(session_data, owner_id)
         session_id = session_data.get('session_id')
 
         # 查询是否已存在
@@ -101,22 +139,25 @@ class HasnSessionsService:
         existing = result.scalar_one_or_none()
 
         if existing:
+            if owner_id is not None and existing.owner_id != owner_id:
+                raise errors.ForbiddenError(msg='无权修改该 Session')
             # 更新现有 Session
             for key, value in session_data.items():
                 if hasattr(existing, key):
                     setattr(existing, key, value)
-            existing.updated_time = datetime.now()
+            existing.updated_time = timezone.now()
             await db.flush()
             return existing
-        else:
-            # 创建新 Session
-            new_session = HasnSessions(**session_data)
-            db.add(new_session)
-            await db.flush()
-            return new_session
+        # 创建新 Session
+        new_session = HasnSessions(**session_data)
+        db.add(new_session)
+        await db.flush()
+        return new_session
 
     @staticmethod
-    async def update_summary(*, db: AsyncSession, session_id: str, summary_data: dict) -> HasnSessions:
+    async def update_summary(
+        *, db: AsyncSession, session_id: str, summary_data: dict, owner_id: str | None = None
+    ) -> HasnSessions:
         """
         更新 Session 摘要
 
@@ -125,23 +166,20 @@ class HasnSessionsService:
         :param summary_data: 摘要数据
         :return:
         """
-        stmt = select(HasnSessions).where(HasnSessions.session_id == session_id)
-        result = await db.execute(stmt)
-        session = result.scalar_one_or_none()
-
-        if not session:
-            raise errors.NotFoundError(msg='Session 不存在')
+        session = await HasnSessionsService.get_by_session_id(db=db, session_id=session_id, owner_id=owner_id)
 
         # 更新摘要和最后消息时间
         session.summary_checkpoint_json = summary_data.get('summary_checkpoint_json', session.summary_checkpoint_json)
         session.last_message_at = summary_data.get('last_message_at', session.last_message_at)
-        session.updated_time = datetime.now()
+        session.updated_time = timezone.now()
 
         await db.flush()
         return session
 
     @staticmethod
-    async def close_session(*, db: AsyncSession, session_id: str, close_data: dict) -> HasnSessions:
+    async def close_session(
+        *, db: AsyncSession, session_id: str, close_data: dict, owner_id: str | None = None
+    ) -> HasnSessions:
         """
         关闭 Session
 
@@ -150,23 +188,18 @@ class HasnSessionsService:
         :param close_data: 关闭数据
         :return:
         """
-        stmt = select(HasnSessions).where(HasnSessions.session_id == session_id)
-        result = await db.execute(stmt)
-        session = result.scalar_one_or_none()
-
-        if not session:
-            raise errors.NotFoundError(msg='Session 不存在')
+        session = await HasnSessionsService.get_by_session_id(db=db, session_id=session_id, owner_id=owner_id)
 
         # 更新状态和关闭时间
         session.session_status = close_data.get('session_status', 'completed')
-        session.closed_at = datetime.now()
-        session.updated_time = datetime.now()
+        session.closed_at = timezone.now()
+        session.updated_time = timezone.now()
 
         await db.flush()
         return session
 
     @staticmethod
-    async def get_by_session_id(*, db: AsyncSession, session_id: str) -> HasnSessions:
+    async def get_by_session_id(*, db: AsyncSession, session_id: str, owner_id: str | None = None) -> HasnSessions:
         """
         根据 session_id 获取 Session
 
@@ -180,8 +213,344 @@ class HasnSessionsService:
 
         if not session:
             raise errors.NotFoundError(msg='Session 不存在')
+        if owner_id is not None and session.owner_id != owner_id:
+            raise errors.ForbiddenError(msg='无权访问该 Session')
 
         return session
 
+    @staticmethod
+    async def list_messages(
+        *,
+        db: AsyncSession,
+        owner_id: str,
+        session_id: str,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        """查询云端允许展示的工作会话投影消息。"""
+        await HasnSessionsService.get_by_session_id(db=db, session_id=session_id, owner_id=owner_id)
+        offset = max(page - 1, 0) * page_size
+        result = await db.execute(
+            sa.text(
+                """
+                SELECT id,
+                       conversation_id::text AS conversation_id,
+                       from_id,
+                       to_id,
+                       content,
+                       context,
+                       client_message_id,
+                       created_time
+                FROM public.hasn_messages
+                WHERE owner_id = :owner_id
+                  AND session_id = :session_id
+                ORDER BY id ASC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            {
+                'owner_id': owner_id,
+                'session_id': session_id,
+                'limit': page_size,
+                'offset': offset,
+            },
+        )
+        rows = list(result.mappings().all())
+        return {'messages': [dict(row) for row in rows], 'total': len(rows), 'page': page, 'page_size': page_size}
+
+    @staticmethod
+    async def project_work_session_result(
+        *,
+        db: AsyncSession,
+        owner_id: str,
+        session_id: str,
+        projection_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """幂等写入工作会话结果摘要消息。"""
+        session = await HasnSessionsService.get_by_session_id(db=db, session_id=session_id, owner_id=owner_id)
+        agent_id = str(projection_data.get('agent_id') or session.hasn_id)
+        if not agent_id:
+            raise errors.RequestError(msg='Session 缺少 Agent ID')
+        if projection_data.get('agent_id') and projection_data['agent_id'] != session.hasn_id:
+            raise errors.ForbiddenError(msg='投影 Agent 与 Session 不匹配')
+
+        conversation_id = await _resolve_projection_conversation(
+            db=db,
+            owner_id=owner_id,
+            agent_id=agent_id,
+            projection_data=projection_data,
+        )
+        dedupe_key = _projection_dedupe_key(session_id, projection_data)
+
+        existing = await _find_projection_message(db, owner_id=owner_id, dedupe_key=dedupe_key)
+        if existing:
+            return {
+                'result_message_id': str(existing['id']),
+                'conversation_id': str(existing['conversation_id']),
+                'dedupe_key': dedupe_key,
+                'created': False,
+            }
+
+        content_json = _projection_content_json(session=session, agent_id=agent_id, projection_data=projection_data)
+        content_text = _projection_content_text(session=session, content_json=content_json)
+        result = await db.execute(
+            sa.text(
+                """
+                INSERT INTO public.hasn_messages (
+                    conversation_id,
+                    owner_id,
+                    hasn_id,
+                    from_id,
+                    sender_hasn_id,
+                    from_type,
+                    to_id,
+                    recipient_hasn_id,
+                    to_type,
+                    content_type,
+                    content,
+                    process_blocks,
+                    msg_type,
+                    status,
+                    priority,
+                    local_id,
+                    client_message_id,
+                    mention_all,
+                    context,
+                    session_id,
+                    sync_status,
+                    delivery_status,
+                    dispatch_status,
+                    server_received_at,
+                    created_time
+                ) VALUES (
+                    CAST(:conversation_id AS uuid),
+                    :owner_id,
+                    :hasn_id,
+                    :from_id,
+                    :sender_hasn_id,
+                    2,
+                    :to_id,
+                    :recipient_hasn_id,
+                    1,
+                    5,
+                    CAST(:content AS jsonb),
+                    CAST(:process_blocks AS jsonb),
+                    'work_session_result',
+                    1,
+                    'normal',
+                    :local_id,
+                    :client_message_id,
+                    false,
+                    CAST(:context AS jsonb),
+                    :session_id,
+                    'pending',
+                    'delivered',
+                    'not_required',
+                    now(),
+                    now()
+                )
+                RETURNING id
+                """
+            ),
+            {
+                'conversation_id': str(conversation_id),
+                'owner_id': owner_id,
+                'hasn_id': owner_id,
+                'from_id': agent_id,
+                'sender_hasn_id': agent_id,
+                'to_id': owner_id,
+                'recipient_hasn_id': owner_id,
+                'content': json.dumps(
+                    {
+                        'text': content_text,
+                        'content_text': content_text,
+                        'content_json': content_json,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ),
+                'process_blocks': '[]',
+                'local_id': dedupe_key,
+                'client_message_id': dedupe_key,
+                'context': json.dumps(
+                    {
+                        'projection_kind': 'work_session_result_summary',
+                        'session_id': session_id,
+                        'dedupe_key': dedupe_key,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                'session_id': session_id,
+            },
+        )
+        row = result.mappings().one()
+        result_message_id = str(row['id'])
+        _record_projection_on_session(
+            session=session,
+            result_message_id=result_message_id,
+            conversation_id=str(conversation_id),
+            content_json=content_json,
+        )
+        await db.flush()
+        return {
+            'result_message_id': result_message_id,
+            'conversation_id': str(conversation_id),
+            'dedupe_key': dedupe_key,
+            'created': True,
+        }
+
 
 hasn_sessions_service: HasnSessionsService = HasnSessionsService()
+
+
+def _split_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(',') if item.strip()]
+
+
+def _apply_csv_filter(stmt: Any, column: Any, value: str | None) -> Any:
+    values = _split_csv(value)
+    if not values:
+        return stmt
+    if len(values) == 1:
+        return stmt.where(column == values[0])
+    return stmt.where(column.in_(values))
+
+
+def _validate_cloud_session_payload(session_data: dict[str, Any], owner_id: str | None) -> None:
+    request_owner_id = session_data.get('owner_id')
+    if owner_id is not None and request_owner_id != owner_id:
+        raise errors.ForbiddenError(msg='Session owner 与当前用户不一致')
+    if session_data.get('session_scope') == 'local_only':
+        raise errors.RequestError(msg='local_only Session 不允许同步到云端')
+
+
+async def _resolve_projection_conversation(
+    *,
+    db: AsyncSession,
+    owner_id: str,
+    agent_id: str,
+    projection_data: dict[str, Any],
+) -> str:
+    explicit_id = projection_data.get('target_conversation_id') or projection_data.get('source_conversation_id')
+    if explicit_id:
+        await _assert_projection_conversation_owned(
+            db=db,
+            owner_id=owner_id,
+            agent_id=agent_id,
+            conversation_id=str(explicit_id),
+        )
+        return str(explicit_id)
+
+    conversation = await hasn_conversations_service.ensure_conversation(
+        db=db,
+        caller_hasn_id=owner_id,
+        peer_hasn_id=agent_id,
+        relation_type='social',
+    )
+    return str(conversation.id)
+
+
+async def _assert_projection_conversation_owned(
+    *,
+    db: AsyncSession,
+    owner_id: str,
+    agent_id: str,
+    conversation_id: str,
+) -> None:
+    result = await db.execute(
+        sa.text(
+            """
+            SELECT id
+            FROM public.hasn_conversations
+            WHERE id = CAST(:conversation_id AS uuid)
+              AND type = 'direct'
+              AND (
+                    (participant_a_id = :owner_id AND participant_b_id = :agent_id)
+                 OR (participant_a_id = :agent_id AND participant_b_id = :owner_id)
+              )
+            LIMIT 1
+            """
+        ),
+        {'conversation_id': conversation_id, 'owner_id': owner_id, 'agent_id': agent_id},
+    )
+    if not result.mappings().first():
+        raise errors.ForbiddenError(msg='无权投影到该会话')
+
+
+async def _find_projection_message(db: AsyncSession, *, owner_id: str, dedupe_key: str) -> dict[str, Any] | None:
+    result = await db.execute(
+        sa.text(
+            """
+            SELECT id, conversation_id::text AS conversation_id
+            FROM public.hasn_messages
+            WHERE owner_id = :owner_id
+              AND client_message_id = :dedupe_key
+            ORDER BY id ASC
+            LIMIT 1
+            """
+        ),
+        {'owner_id': owner_id, 'dedupe_key': dedupe_key},
+    )
+    row = result.mappings().first()
+    return dict(row) if row else None
+
+
+def _projection_dedupe_key(session_id: str, projection_data: dict[str, Any]) -> str:
+    milestone_id = projection_data.get('milestone_id')
+    if milestone_id:
+        return f'work_session_result:{session_id}:milestone:{milestone_id}'
+    return f'work_session_result:{session_id}:final'
+
+
+def _projection_content_json(
+    *, session: HasnSessions, agent_id: str, projection_data: dict[str, Any]
+) -> dict[str, Any]:
+    deep_link = projection_data.get('deep_link') or f'/tasks/sessions/{session.session_id}'
+    return {
+        'projection_kind': 'work_session_result_summary',
+        'session_id': session.session_id,
+        'agent_id': agent_id,
+        'origin_type': session.origin_type,
+        'origin_ref': session.origin_ref,
+        'task_id': projection_data.get('task_id'),
+        'task_run_id': projection_data.get('task_run_id'),
+        'workflow_run_id': projection_data.get('workflow_run_id'),
+        'external_app_id': projection_data.get('external_app_id'),
+        'status': projection_data.get('status') or 'success',
+        'summary': projection_data.get('summary') or '',
+        'deep_link': deep_link,
+        'completion_reason': projection_data.get('completion_reason') or 'manual',
+        'dedupe_key': _projection_dedupe_key(session.session_id, projection_data),
+    }
+
+
+def _projection_content_text(*, session: HasnSessions, content_json: dict[str, Any]) -> str:
+    title = session.title or session.session_id
+    summary = content_json.get('summary') or '已完成。'
+    return f'工作会话「{title}」已完成：{summary}'
+
+
+def _record_projection_on_session(
+    *,
+    session: HasnSessions,
+    result_message_id: str,
+    conversation_id: str,
+    content_json: dict[str, Any],
+) -> None:
+    checkpoint = dict(session.summary_checkpoint_json or {})
+    checkpoint.update({
+        'summary': content_json.get('summary'),
+        'status': content_json.get('status'),
+        'result_message_id': result_message_id,
+        'projection_conversation_id': conversation_id,
+        'deep_link': content_json.get('deep_link'),
+        'completion_reason': content_json.get('completion_reason'),
+    })
+    session.summary_checkpoint_json = checkpoint
+    session.last_message_id = result_message_id
+    session.last_message_at = timezone.now()
+    session.updated_time = timezone.now()

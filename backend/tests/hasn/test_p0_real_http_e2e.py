@@ -17,10 +17,11 @@ from backend.app.hasn.api.v1.app import knowledge as knowledge_api
 from backend.app.hasn.api.v1.app import hasn_skill_bundle as skill_bundle_api
 from backend.app.hasn.api.v1.app import hasn_task as task_api
 from backend.app.hasn.api.v1.app import hasn_task_run as task_run_api
+from backend.app.hasn.api.v1.app import hasn_task_sessions as task_sessions_api
 from backend.app.hasn.api.v1.app import workspace as workspace_api
 from backend.app.hasn.api.v1 import sync as sync_api
 from backend.app.mcp.routes import mcp_router
-from backend.app.hasn.model import HasnAiNativeAppAudit, HasnUserActiveWorkspace
+from backend.app.hasn.model import HasnAiNativeAppAudit, HasnSessions, HasnUserActiveWorkspace
 from backend.app.hasn.schema.hasn_message_hub import InboxItem, InboxPullRequest, InboxPullResponse
 from backend.app.hasn.schema.hasn_onboarding import SandboxSummary
 from backend.app.hasn.service.hasn_message_hub_service import (
@@ -157,6 +158,7 @@ class FakeDb:
         self.enterprise_memberships: dict[tuple[int, int], SimpleNamespace] = {}
         self.humans_by_user_id: dict[int, SimpleNamespace] = {}
         self.agents_by_hasn_id: dict[str, SimpleNamespace] = {}
+        self.sessions_by_id: dict[str, Any] = {}
         self.audit_rows: list[HasnAiNativeAppAudit] = []
 
     async def execute(self, stmt: Any) -> Any:
@@ -196,11 +198,24 @@ class FakeDb:
         if 'hasn_humans' in sql:
             row = self.humans_by_user_id.get(params.get('user_id_1'))
             return _ScalarResult([row] if row is not None else [])
+        if 'hasn_sessions' in sql:
+            if 'session_id_1' in params:
+                row = self.sessions_by_id.get(params.get('session_id_1'))
+                return _ScalarResult([row] if row is not None else [])
+            rows = [
+                session
+                for session in self.sessions_by_id.values()
+                if session.owner_id == params.get('owner_id_1')
+            ]
+            return _ScalarResult(rows)
         return _ScalarResult([])
 
     def add(self, row: Any) -> None:
         if row.__class__.__name__ == 'HasnUserActiveWorkspace':
             self.active_workspaces[int(row.user_id)] = row
+            return
+        if isinstance(row, HasnSessions):
+            self.sessions_by_id[row.session_id] = row
             return
         if isinstance(row, HasnAiNativeAppAudit):
             if getattr(row, 'id', None) is None:
@@ -782,6 +797,8 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app.include_router(skill_bundle_api.router, prefix='/api/v1/hasn/app/hasn/skill/bundles')
     app.include_router(task_api.router, prefix='/api/v1/hasn/app/hasn/tasks')
     app.include_router(task_run_api.router, prefix='/api/v1/hasn/app/hasn/task/runs')
+    app.include_router(task_sessions_api.router, prefix='/api/v1/hasn/app')
+    app.include_router(task_sessions_api.work_sessions_router, prefix='/api/v1/hasn')
     app.include_router(sync_api.router, prefix='/api/v1/hasn')
     app.include_router(message_hub_api.router, prefix='/api/v1/hasn')
     app.include_router(ai_native_api.apps_router, prefix='/api/v1/ai-native/apps')
@@ -807,9 +824,20 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
 
     app.dependency_overrides[get_db] = fake_db
     app.dependency_overrides[get_db_transaction] = fake_db
-    app.dependency_overrides[sync_api.DependsJwtAuth.dependency] = _fake_jwt_user(7)
-    app.dependency_overrides[message_hub_api.DependsJwtAuth.dependency] = _fake_jwt_user(7)
-    app.dependency_overrides[onboarding_api.DependsJwtAuth.dependency] = _fake_jwt_user(7)
+    jwt_override = _fake_jwt_user(
+        7,
+        external_app_permissions={
+            'work_sessions': {
+                'skill_bundle_ids': ['backend-dev'],
+                'toolsets': ['crm'],
+                'workflow_ids': ['wf_p0_external'],
+            }
+        },
+    )
+    app.dependency_overrides[sync_api.DependsJwtAuth.dependency] = jwt_override
+    app.dependency_overrides[message_hub_api.DependsJwtAuth.dependency] = jwt_override
+    app.dependency_overrides[onboarding_api.DependsJwtAuth.dependency] = jwt_override
+    app.dependency_overrides[task_sessions_api.DependsJwtAuth.dependency] = jwt_override
     monkeypatch.setattr(onboarding_api, 'jwt_decode', lambda _token: SimpleNamespace(id=7))
 
     async def fake_token_creator(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
@@ -1073,9 +1101,11 @@ def make_sync_auth_app(monkeypatch: pytest.MonkeyPatch, user_id: int = 7) -> tup
     return app, sync_gateway
 
 
-def _fake_jwt_user(user_id: int):
+def _fake_jwt_user(user_id: int, *, external_app_permissions: dict[str, Any] | None = None):
     async def fake_jwt(request: Request) -> None:
         request.scope['user'] = SimpleNamespace(id=user_id)
+        if external_app_permissions is not None:
+            request.scope['external_app_permissions'] = external_app_permissions
 
     return fake_jwt
 
@@ -1584,6 +1614,50 @@ def test_p0_real_http_flow_covers_task_system_routes(monkeypatch: pytest.MonkeyP
     task_run_detail = client.get(f'/api/v1/hasn/app/hasn/task/runs/{task_run_id}', headers=auth)
     assert task_run_detail.status_code == 200, task_run_detail.text
     assert task_run_detail.json()['data']['session_id'] == 'sess_task_1'
+
+    external_launch = client.post(
+        '/api/v1/hasn/work-sessions',
+        headers=auth,
+        json={
+            'external_app_id': 'crm',
+            'external_trace_id': 'trace-p0',
+            'agent_id': 'a_p0_default',
+            'title': '外部客户整理',
+            'task_description': '整理 P0 客户清单',
+            'skill_bundle_ids': ['backend-dev'],
+            'enabled_toolsets': {'crm': True},
+            'workflow': {'workflow_id': 'wf_p0_external', 'workflow_run_id': 'wfr_p0_external'},
+            'projection_policy': {'project_summary_to_owner_conversation': True},
+        },
+    )
+    assert external_launch.status_code == 200, external_launch.text
+    external_session = external_launch.json()['data']
+    assert external_session['launch_spec']['origin_type'] == 'external_app'
+    assert external_session['launch_spec']['source'] == {
+        'external_app_id': 'crm',
+        'external_trace_id': 'trace-p0',
+    }
+    assert external_session['launch_spec']['completion_policy']['mode'] == 'external_controlled'
+
+    external_detail = client.get(
+        f"/api/v1/hasn/work-sessions/{external_session['session_id']}",
+        headers=auth,
+    )
+    assert external_detail.status_code == 200, external_detail.text
+    assert external_detail.json()['data']['agent_id'] == 'a_p0_default'
+    assert external_detail.json()['data']['summary']['external_trace_id'] == 'trace-p0'
+
+    external_complete = client.post(
+        f"/api/v1/hasn/work-sessions/{external_session['session_id']}/complete",
+        headers=auth,
+        json={'summary': '外部客户清单完成', 'reason': 'external_app_done'},
+    )
+    assert external_complete.status_code == 200, external_complete.text
+    assert external_complete.json()['data'] == {
+        'accepted': True,
+        'session_id': external_session['session_id'],
+        'control': 'complete',
+    }
 
     bundle_detail = client.get(f'/api/v1/hasn/app/hasn/skill/bundles/{bundle_id}', headers=auth)
     assert bundle_detail.status_code == 200, bundle_detail.text
