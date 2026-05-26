@@ -22,6 +22,7 @@ from backend.app.hasn.api.v1.app.contacts import list_contacts, list_pending_req
 
 SELF = "h_aaaaaaaaaaaaaaaaaa"
 PEER = "h_bbbbbbbbbbbbbbbbbb"
+PEER_AGENT = "a_bbbbbbbbbbbbbbbbbb"
 
 
 def _human(hasn_id: str, star_id: str, name: str) -> SimpleNamespace:
@@ -35,7 +36,14 @@ def _request(req_id: int, owner_id: str, peer_id: str, message: str = '') -> Sim
         peer_id=peer_id,
         status='pending',
         request_message=message,
+        peer_type='human',
     )
+
+
+def _agent_request(req_id: int, owner_id: str, peer_id: str, message: str = '') -> SimpleNamespace:
+    request = _request(req_id, owner_id, peer_id, message)
+    request.peer_type = 'agent'
+    return request
 
 
 def _connected_contact(contact_id: int, owner_id: str, peer_id: str) -> SimpleNamespace:
@@ -59,6 +67,19 @@ def _connected_contact(contact_id: int, owner_id: str, peer_id: str) -> SimpleNa
         auto_expire=None,
         peer_owner_id=None,
     )
+
+
+def _connected_agent_contact(
+    contact_id: int,
+    owner_id: str,
+    peer_id: str,
+    peer_owner_id: str,
+) -> SimpleNamespace:
+    contact = _connected_contact(contact_id, owner_id, peer_id)
+    contact.peer_type = 'agent'
+    contact.peer_owner_id = peer_owner_id
+    contact.trust_level = 5
+    return contact
 
 
 class _EmptyAgentResult:
@@ -116,6 +137,39 @@ async def test_sent_direction_returns_target() -> None:
     assert items[0]['target']['name'] == 'Bob'
     # received 路径不应被触发
     assert items[0]['from_peer'] is None
+
+
+@pytest.mark.asyncio
+async def test_received_agent_request_returns_target_agent() -> None:
+    """收到添加我 Agent 的请求时, 返回 from_peer + target Agent 供 UI 展示。"""
+    with patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.get_pending_requests',
+        new=AsyncMock(return_value=[_agent_request(203, PEER, PEER_AGENT, '想联系你的 Agent')]),
+    ), patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
+        new=AsyncMock(return_value=_human(PEER, '100002', 'Bob')),
+    ), patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_agents_dao.get_by_hasn_id',
+        new=AsyncMock(
+            return_value=SimpleNamespace(
+                hasn_id=PEER_AGENT,
+                star_id='100001#helper',
+                display_name='我的助手',
+                name='我的助手',
+            )
+        ),
+    ):
+        resp = await list_pending_requests(
+            db=AsyncMock(),
+            auth={'hasn_id': SELF},
+            direction='received',
+        )
+    items = resp.data
+    assert len(items) == 1
+    assert items[0]['from_peer']['hasn_id'] == PEER
+    assert items[0]['target']['hasn_id'] == PEER_AGENT
+    assert items[0]['target']['name'] == '我的助手'
+    assert items[0]['target']['type'] == 'agent'
 
 
 @pytest.mark.asyncio
@@ -263,3 +317,36 @@ async def test_contact_list_allows_unfiltered_full_snapshot() -> None:
     item = resp.data['items'][0]
     assert mock_list_contacts.await_args.kwargs['relation_type'] is None
     assert item['peer']['hasn_id'] == PEER
+
+
+@pytest.mark.asyncio
+async def test_contact_list_hides_own_agent_control_relation() -> None:
+    """Owner 自己的 Agent 控制边不应作为普通联系人返回。"""
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_EmptyAgentResult())
+
+    with patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.list_contacts',
+        new=AsyncMock(return_value=[_connected_agent_contact(707, SELF, PEER_AGENT, SELF)]),
+    ), patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
+        new=AsyncMock(return_value=None),
+    ), patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_agents_dao.get_by_hasn_id',
+        new=AsyncMock(
+            return_value=SimpleNamespace(
+                hasn_id=PEER_AGENT,
+                star_id='100001#helper',
+                display_name='我的助手',
+                name='我的助手',
+                owner_id=SELF,
+            )
+        ),
+    ):
+        resp = await list_contacts(
+            db=db,
+            auth={'hasn_id': SELF},
+            relation_type=None,
+        )
+
+    assert resp.data['items'] == []

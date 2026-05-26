@@ -26,12 +26,24 @@ from backend.app.hasn.schema.hasn_contacts_business import (
 
 SENDER = "h_aaaaaaaaaaaaaaaaaa"
 RECEIVER = "h_bbbbbbbbbbbbbbbbbb"
+RECEIVER_AGENT = "a_bbbbbbbbbbbbbbbbbb"
 SENDER_STAR = "100001"
 RECEIVER_STAR = "100002"
+RECEIVER_AGENT_STAR = "100002#helper"
 
 
 def _human(hasn_id: str, star_id: str, name: str) -> SimpleNamespace:
     return SimpleNamespace(hasn_id=hasn_id, star_id=star_id, name=name)
+
+
+def _agent(hasn_id: str, star_id: str, name: str, owner_id: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        hasn_id=hasn_id,
+        star_id=star_id,
+        display_name=name,
+        name=name,
+        owner_id=owner_id,
+    )
 
 
 def _contact(req_id: int, owner_id: str, peer_id: str) -> SimpleNamespace:
@@ -83,6 +95,52 @@ async def test_send_request_pushes_request_received_to_target() -> None:
     assert payload['params']['from_peer']['hasn_id'] == SENDER
     assert payload['params']['from_peer']['star_id'] == SENDER_STAR
     assert payload['params']['message'] == 'hi'
+
+
+@pytest.mark.asyncio
+async def test_send_agent_request_pushes_request_received_to_agent_owner() -> None:
+    """A 请求添加 B 的 Agent → 后端推 hasn.contact.request_received 给 B, 不是给 Agent ID."""
+    receiver_agent = _agent(RECEIVER_AGENT, RECEIVER_AGENT_STAR, 'Bob Helper', RECEIVER)
+    sender = _human(SENDER, SENDER_STAR, 'Alice')
+    push = AsyncMock(return_value=True)
+
+    with patch(
+        'backend.app.hasn.api.v1.app.contacts._resolve_star_id',
+        new=AsyncMock(return_value=(receiver_agent, 'agent')),
+    ), patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.get_relation',
+        new=AsyncMock(return_value=None),
+    ), patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.create_contact',
+        new=AsyncMock(return_value=_contact(43, SENDER, RECEIVER_AGENT)),
+    ) as create_contact, patch(
+        'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
+        new=AsyncMock(return_value=sender),
+    ), patch(
+        'backend.app.hasn.api.v1.app.contacts.ws_router.push_message_to',
+        new=push,
+    ):
+        db = AsyncMock()
+        await send_contact_request(
+            obj_in=HasnContactRequestReq(target_star_id=RECEIVER_AGENT_STAR, message='hi agent'),
+            db=db,
+            auth={'hasn_id': SENDER},
+        )
+
+    create_contact.assert_awaited_once()
+    assert create_contact.await_args.kwargs['peer_id'] == RECEIVER_AGENT
+    assert create_contact.await_args.kwargs['peer_type'] == 'agent'
+    assert create_contact.await_args.kwargs['peer_owner_id'] == RECEIVER
+
+    push.assert_awaited_once()
+    target, payload = push.await_args.args
+    assert target == RECEIVER
+    assert payload['method'] == 'hasn.contact.request_received'
+    assert payload['params']['owner_id'] == RECEIVER
+    assert payload['params']['request_id'] == 43
+    assert payload['params']['from_peer']['hasn_id'] == SENDER
+    assert payload['params']['target']['hasn_id'] == RECEIVER_AGENT
+    assert payload['params']['target']['type'] == 'agent'
 
 
 @pytest.mark.asyncio
