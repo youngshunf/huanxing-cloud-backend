@@ -123,9 +123,17 @@ class TranslationService:
 
         # Initialize client if needed
         if self.llm_client is None:
+            # Use project's LLM gateway
+            api_base = getattr(settings, 'LLM_API_BASE_URL', None)
+            if not api_base:
+                api_base = getattr(settings, 'OPENAI_API_BASE', 'https://api.openai.com/v1')
+
+            # For local LLM gateway, use a dummy API key
+            api_key = getattr(settings, 'OPENAI_API_KEY', 'sk-dummy-key-for-local-gateway')
+
             self.llm_client = AsyncOpenAI(
-                api_key=settings.OPENAI_API_KEY,
-                base_url=getattr(settings, 'OPENAI_API_BASE', None)
+                api_key=api_key,
+                base_url=api_base
             )
 
         # Prepare prompt
