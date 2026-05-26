@@ -1,6 +1,6 @@
 from typing import Sequence
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy_crud_plus import CRUDPlus
 
@@ -106,6 +106,20 @@ class CRUDMarketplaceAppVersion(CRUDPlus[MarketplaceAppVersion]):
 
     # 别名，兼容公开 API
     get_by_app = get_versions_by_app
+
+    async def mark_all_not_latest(self, db: AsyncSession, app_id: str) -> None:
+        """
+        将应用的所有版本标记为非最新
+
+        :param db: 数据库会话
+        :param app_id: 应用ID
+        """
+        stmt = (
+            update(MarketplaceAppVersion)
+            .where(MarketplaceAppVersion.app_id == app_id)
+            .values(is_latest=False)
+        )
+        await db.execute(stmt)
 
 
 marketplace_app_version_dao: CRUDMarketplaceAppVersion = CRUDMarketplaceAppVersion(MarketplaceAppVersion)

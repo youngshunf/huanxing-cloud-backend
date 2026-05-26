@@ -6,4 +6,5 @@ from backend.app.marketplace.model.marketplace_app_version import MarketplaceApp
 from backend.app.marketplace.model.marketplace_sop import MarketplaceSop as MarketplaceSop
 from backend.app.marketplace.model.marketplace_sop_version import MarketplaceSopVersion as MarketplaceSopVersion
 from backend.app.marketplace.model.marketplace_download import MarketplaceDownload as MarketplaceDownload
-
+from backend.app.marketplace.model.marketplace_sync_log import MarketplaceSyncLog as MarketplaceSyncLog
+from backend.app.marketplace.model.marketplace_download_history import MarketplaceDownloadHistory as MarketplaceDownloadHistory
