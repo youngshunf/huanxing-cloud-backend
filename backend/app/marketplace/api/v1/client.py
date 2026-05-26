@@ -122,7 +122,7 @@ async def list_apps(
     category: Optional[str] = Query(None, description='分类筛选'),
     pricing_type: Optional[str] = Query(None, description='定价类型: free/paid/subscription'),
     is_official: Optional[bool] = Query(None, description='是否官方'),
-) -> ResponseSchemaModel[PageData[GetMarketplaceAppDetail]]:
+) -> ResponseSchemaModel[PageData[GetMarketplaceTemplateDetail]]:
     """公开的应用列表接口，无需登录"""
     app_select = await marketplace_template_dao.get_select_public(
         category=category,
@@ -143,14 +143,14 @@ async def list_apps(
 async def get_app(
     db: CurrentSession,
     template_id: Annotated[str, Path(description='应用ID')],
-) -> ResponseSchemaModel[GetMarketplaceAppDetail]:
+) -> ResponseSchemaModel[GetMarketplaceTemplateDetail]:
     """公开的应用详情接口，无需登录"""
     app = await marketplace_template_dao.get_by_id(db, template_id)
     if not app:
         raise errors.NotFoundError(msg='应用不存在')
     
     # 转换为 schema 并填充 latest_version 字段
-    app_data = GetMarketplaceAppDetail.model_validate(app)
+    app_data = GetMarketplaceTemplateDetail.model_validate(app)
     latest = await marketplace_template_version_dao.get_latest_by_app(db, template_id)
     app_data.latest_version = latest.version if latest else None
     
@@ -161,7 +161,7 @@ async def get_app(
 async def get_app_versions(
     db: CurrentSession,
     template_id: Annotated[str, Path(description='应用ID')],
-) -> ResponseSchemaModel[list[GetMarketplaceAppVersionDetail]]:
+) -> ResponseSchemaModel[list[GetMarketplaceTemplateVersionDetail]]:
     """公开的应用版本列表接口，无需登录"""
     versions = await marketplace_template_version_dao.get_by_app(db, template_id)
     return response_base.success(data=versions)
@@ -205,7 +205,7 @@ async def get_app_skills(
 class SearchResult(BaseModel):
     """搜索结果"""
     skills: list[GetMarketplaceSkillDetail]
-    apps: list[GetMarketplaceAppDetail]
+    apps: list[GetMarketplaceTemplateDetail]
 
 
 @router.get('/search', summary='公开接口：搜索技能和应用')
@@ -243,7 +243,7 @@ async def client_search(
         )
         # 转换为 schema 并填充 latest_version 字段
         for app in app_results:
-            app_data = GetMarketplaceAppDetail.model_validate(app)
+            app_data = GetMarketplaceTemplateDetail.model_validate(app)
             latest = await marketplace_template_version_dao.get_latest_by_app(db, app.template_id)
             app_data.latest_version = latest.version if latest else None
             apps.append(app_data)
