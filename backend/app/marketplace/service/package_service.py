@@ -65,10 +65,10 @@ class PackageService:
 
             # Check if package is up-to-date
             skill_version = await marketplace_skill_version_dao.get_by_skill_and_version(
-                db, skill.id, version
+                db, skill_id, version
             )
 
-            if skill_version and skill_version.package_hash == cached_hash:
+            if skill_version and skill_version.file_hash == cached_hash:
                 log.info(f"Using cached package for {skill_id}@{version}")
                 return cached_package, cached_hash
 

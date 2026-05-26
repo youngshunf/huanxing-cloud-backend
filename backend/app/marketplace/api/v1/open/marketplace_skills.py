@@ -142,6 +142,9 @@ async def _download_skill_package(db: CurrentSession, skill_id: str, version: st
             )
             await marketplace_download_dao.create(db, download_record)
 
+            # Commit transaction before redirect to ensure record is saved
+            await db.commit()
+
             return RedirectResponse(url=skill_version.package_url, status_code=302)
 
         # Otherwise, try to create package from local repo
