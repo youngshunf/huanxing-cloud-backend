@@ -4,6 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn.crud.crud_hasn_contacts import hasn_contacts_dao
+from backend.app.hasn.constants import TRUST_LEVEL_LABELS
 from backend.app.hasn.model import HasnContacts
 from backend.app.hasn.model.hasn_humans import HasnHumans
 from backend.app.hasn.model.hasn_agents import HasnAgents
@@ -54,6 +55,7 @@ class HasnContactsService:
             "nickname": contact.nickname,
             "tags": contact.tags,
             "subscription": contact.subscription,
+            "channel_source": contact.channel_source,
             "status": contact.status,
             "request_message": contact.request_message,
             "auto_expire": contact.auto_expire.isoformat() if contact.auto_expire else None,
@@ -151,14 +153,7 @@ class HasnContactsService:
     @staticmethod
     def _get_trust_level_label(trust_level: int) -> str:
         """获取信任等级标签"""
-        labels = {
-            0: "已拉黑",
-            1: "陌生人",
-            2: "普通好友",
-            3: "信任好友",
-            4: "所有者",
-        }
-        return labels.get(trust_level, "未知")
+        return TRUST_LEVEL_LABELS.get(trust_level, "未知")
 
     @staticmethod
     async def get_list(

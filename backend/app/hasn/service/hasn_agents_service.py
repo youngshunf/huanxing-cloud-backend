@@ -522,6 +522,7 @@ class HasnAgentsService:
                 relation_type='service',
                 trust_level=5,
                 status='connected',
+                channel_source='system',
                 subscription=False,
                 interaction_count=0,
                 custom_permissions={},

@@ -17,6 +17,7 @@ class HasnContactsSchemaBase(SchemaBase):
     nickname: str | None = Field(None, description='备注名')
     tags: list[str] | None = Field(None, description='分组标签')
     subscription: bool = Field(description='是否订阅推送')
+    channel_source: str | None = Field(None, description='来源渠道类型 (wechat/feishu/qq/webhook/manual/system)')
     status: str = Field(description='状态 (pending:待处理:blue/connected:已连接:green/blocked:已拉黑:red/archived:已归档:gray)')
     request_message: str | None = Field(None, description='好友请求附言')
     auto_expire: datetime | None = Field(None, description='自动过期时间')

@@ -37,6 +37,7 @@ def _request(req_id: int, owner_id: str, peer_id: str, message: str = '') -> Sim
         status='pending',
         request_message=message,
         peer_type='human',
+        channel_source=None,
     )
 
 
@@ -58,6 +59,7 @@ def _connected_contact(contact_id: int, owner_id: str, peer_id: str) -> SimpleNa
         tags=None,
         subscription=False,
         status='connected',
+        channel_source=None,
         custom_permissions=None,
         scope=None,
         connected_at=None,
@@ -79,6 +81,7 @@ def _connected_agent_contact(
     contact.peer_type = 'agent'
     contact.peer_owner_id = peer_owner_id
     contact.trust_level = 5
+    contact.channel_source = 'system'
     return contact
 
 

@@ -116,6 +116,7 @@ async def send_contact_request(
         relation_type='social',
         trust_level=1,
         status='pending',
+        channel_source='manual',
         request_message=obj_in.message,
     )
     await db.commit()
@@ -146,6 +147,7 @@ async def send_contact_request(
             request_id=contact.id,
             status='pending',
             created_at=contact.created_time,
+            channel_source=contact.channel_source,
             target=target_peer,
             message=obj_in.message,
         ).model_dump()
@@ -210,6 +212,7 @@ async def list_pending_requests(
                     request_id=req.id,
                     status=req.status,
                     created_at=req.created_time,
+                    channel_source=req.channel_source,
                     from_peer=from_peer,
                     target=target,
                     message=req.request_message or '',
@@ -246,6 +249,7 @@ async def list_pending_requests(
                 request_id=req.id,
                 status=req.status,
                 created_at=req.created_time,
+                channel_source=req.channel_source,
                 target=target,
                 message=req.request_message or '',
             )
@@ -277,6 +281,7 @@ async def respond_to_request(
                     relation_type='social',
                     trust_level=2,
                     status='connected',
+                    channel_source=contact.channel_source or 'manual',
                 )
             peer_type = getattr(contact, 'peer_type', 'human') or 'human'
             if peer_type == 'agent':
@@ -373,6 +378,7 @@ async def list_contacts(
                 relation_type=c.relation_type,
                 trust_level=c.trust_level,
                 trust_level_label=TRUST_LEVEL_LABELS.get(c.trust_level, ''),
+                channel_source=c.channel_source,
                 nickname=c.nickname,
                 bio=getattr(peer_user, 'bio', None),
                 gender=getattr(peer_user, 'gender', None),

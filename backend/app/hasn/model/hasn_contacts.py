@@ -29,6 +29,7 @@ class HasnContacts(Base):
         postgresql.ARRAY(sa.String()), default=None, comment='分组标签',
     )
     subscription: Mapped[bool] = mapped_column(sa.BOOLEAN(), default=True, comment='是否订阅推送')
+    channel_source: Mapped[str | None] = mapped_column(sa.String(30), default=None, comment='来源渠道类型 (wechat:微信:green/feishu:飞书:blue/qq:QQ:cyan/webhook:Webhook:purple/manual:手动:gray/system:系统:orange)')
     status: Mapped[str] = mapped_column(sa.String(20), default='', comment='状态 (pending:待处理:blue/connected:已连接:green/blocked:已拉黑:red/archived:已归档:gray)')
     request_message: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='好友请求附言')
     auto_expire: Mapped[datetime | None] = mapped_column(TimeZone, default=None, comment='自动过期时间')

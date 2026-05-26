@@ -54,7 +54,7 @@ COMMENT ON COLUMN "public"."hasn_contacts"."nickname" IS '备注名';
 COMMENT ON COLUMN "public"."hasn_contacts"."tags" IS '分组标签';
 COMMENT ON COLUMN "public"."hasn_contacts"."subscription" IS '是否订阅推送';
 COMMENT ON COLUMN "public"."hasn_contacts"."source_channel_binding_id" IS '来源 Channel Binding ID（第三方渠道反向 onboarding 关联）';
-COMMENT ON COLUMN "public"."hasn_contacts"."channel_source" IS '来源渠道类型 (wechat:微信:green/feishu:飞书:blue/qq:QQ:cyan/webhook:Webhook:purple/manual:手动:gray)';
+COMMENT ON COLUMN "public"."hasn_contacts"."channel_source" IS '来源渠道类型 (wechat:微信:green/feishu:飞书:blue/qq:QQ:cyan/webhook:Webhook:purple/manual:好友请求:gray/system:AI分身:orange)';
 COMMENT ON COLUMN "public"."hasn_contacts"."relation_revision" IS '关系修订号（权限矩阵变化时递增）';
 COMMENT ON COLUMN "public"."hasn_contacts"."sync_revision" IS '服务端同步修订号';
 COMMENT ON COLUMN "public"."hasn_contacts"."status" IS '状态 (pending:待处理:blue/connected:已连接:green/blocked:已拉黑:red/archived:已归档:gray)';

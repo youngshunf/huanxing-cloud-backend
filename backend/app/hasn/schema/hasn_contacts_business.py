@@ -41,6 +41,7 @@ class HasnContactRequestOut(BaseModel):
     status: str
     created_at: datetime | None = None
     relation_type: str = 'social'
+    channel_source: str | None = None
     target: HasnContactPeerOut | None = None
     from_peer: HasnContactPeerOut | None = None
     message: str = ''
@@ -73,6 +74,7 @@ class HasnContactOut(BaseModel):
     district: str | None = None
     tags: list[str] | None = None
     subscription: bool = False
+    channel_source: str | None = None
     status: str = 'connected'
     # 阶段二新增
     owned_agents: list[AgentPeerOut] = []       # human 联系人名下 Agent 列表

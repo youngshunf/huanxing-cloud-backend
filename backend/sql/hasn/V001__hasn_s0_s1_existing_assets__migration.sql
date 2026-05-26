@@ -52,6 +52,7 @@ ALTER TABLE "public"."hasn_contacts"
   ADD COLUMN IF NOT EXISTS "sync_revision" bigint NOT NULL DEFAULT 1;
 CREATE INDEX IF NOT EXISTS "idx_contact_channel_binding" ON "public"."hasn_contacts" ("source_channel_binding_id") WHERE "source_channel_binding_id" IS NOT NULL;
 CREATE INDEX IF NOT EXISTS "idx_contact_sync_revision" ON "public"."hasn_contacts" ("sync_revision");
+COMMENT ON COLUMN "public"."hasn_contacts"."channel_source" IS '来源渠道类型 (wechat:微信:green/feishu:飞书:blue/qq:QQ:cyan/webhook:Webhook:purple/manual:好友请求:gray/system:AI分身:orange)';
 
 -- 4) hasn_conversations: owner-visible conversation view anchors。
 -- Backfill rule: direct conversations use participant_a as owner/subject and participant_b as peer;

@@ -53,6 +53,7 @@ def _contact(req_id: int, owner_id: str, peer_id: str) -> SimpleNamespace:
         peer_id=peer_id,
         status='pending',
         request_message='',
+        channel_source=None,
     )
 
 
@@ -72,7 +73,7 @@ async def test_send_request_pushes_request_received_to_target() -> None:
     ), patch(
         'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.create_contact',
         new=AsyncMock(return_value=_contact(42, SENDER, RECEIVER)),
-    ), patch(
+    ) as create_contact, patch(
         'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
         new=AsyncMock(return_value=sender),
     ), patch(
@@ -86,6 +87,8 @@ async def test_send_request_pushes_request_received_to_target() -> None:
             auth={'hasn_id': SENDER},
         )
 
+    create_contact.assert_awaited_once()
+    assert create_contact.await_args.kwargs['channel_source'] == 'manual'
     push.assert_awaited_once()
     target, payload = push.await_args.args
     assert target == RECEIVER
@@ -131,6 +134,7 @@ async def test_send_agent_request_pushes_request_received_to_agent_owner() -> No
     assert create_contact.await_args.kwargs['peer_id'] == RECEIVER_AGENT
     assert create_contact.await_args.kwargs['peer_type'] == 'agent'
     assert create_contact.await_args.kwargs['peer_owner_id'] == RECEIVER
+    assert create_contact.await_args.kwargs['channel_source'] == 'manual'
 
     push.assert_awaited_once()
     target, payload = push.await_args.args
@@ -162,7 +166,7 @@ async def test_respond_accept_pushes_connected_to_original_owner() -> None:
     ), patch(
         'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.create_contact',
         new=AsyncMock(),
-    ), patch(
+    ) as create_contact, patch(
         'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
         new=AsyncMock(return_value=acceptor),
     ), patch(
@@ -177,6 +181,8 @@ async def test_respond_accept_pushes_connected_to_original_owner() -> None:
             auth={'hasn_id': RECEIVER},
         )
 
+    create_contact.assert_awaited_once()
+    assert create_contact.await_args.kwargs['channel_source'] == 'manual'
     push.assert_awaited_once()
     target, payload = push.await_args.args
     assert target == SENDER  # 推给原发起方,不是 acceptor
