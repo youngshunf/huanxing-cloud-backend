@@ -1,6 +1,6 @@
 -- =====================================================
--- 技能市场技能管理 菜单初始化 SQL (PostgreSQL)
--- 自动生成于: 2026-05-25 18:35:08.269569
+-- 技能市场下载历史管理 菜单初始化 SQL (PostgreSQL)
+-- 自动生成于: 2026-05-25 18:32:56.607859
 -- 支持幂等操作：已存在则更新，不存在则新增
 -- =====================================================
 
@@ -20,48 +20,48 @@ BEGIN
         RETURNING id INTO v_parent_id;
     END IF;
 
-    -- 查找或创建主菜单 (path = /marketplace/marketplace_skill)
+    -- 查找或创建主菜单 (path = /marketplace/marketplace_download_history)
     SELECT id INTO v_menu_id FROM sys_menu 
-    WHERE path = '/marketplace/marketplace_skill' AND type = 1
+    WHERE path = '/marketplace/marketplace_download_history' AND type = 1
     ORDER BY id LIMIT 1;
     
     IF v_menu_id IS NULL THEN
         INSERT INTO sys_menu (title, name, path, sort, icon, type, component, perms, status, display, cache, link, remark, parent_id, created_time, updated_time)
-        VALUES ('技能市场技能管理', 'MarketplaceSkill', '/marketplace/marketplace_skill', 1, 'lucide:list', 1, '/marketplace/marketplace_skill/index', NULL, 1, 1, 1, '', '技能市场技能表', v_parent_id, NOW(), NULL)
+        VALUES ('技能市场下载历史管理', 'MarketplaceDownloadHistory', '/marketplace/marketplace_download_history', 1, 'lucide:list', 1, '/marketplace/marketplace_download_history/index', NULL, 1, 1, 1, '', '技能市场下载历史表', v_parent_id, NOW(), NULL)
         RETURNING id INTO v_menu_id;
     ELSE
         UPDATE sys_menu SET
-            title = '技能市场技能管理',
-            name = 'MarketplaceSkill',
-            component = '/marketplace/marketplace_skill/index',
-            remark = '技能市场技能表',
+            title = '技能市场下载历史管理',
+            name = 'MarketplaceDownloadHistory',
+            component = '/marketplace/marketplace_download_history/index',
+            remark = '技能市场下载历史表',
             parent_id = v_parent_id,
             updated_time = NOW()
         WHERE id = v_menu_id;
     END IF;
 
     -- 新增按钮（按 perms 判断）
-    IF NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'marketplace:skill:add' AND parent_id = v_menu_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'marketplace:download:history:add' AND parent_id = v_menu_id) THEN
         INSERT INTO sys_menu (title, name, path, sort, icon, type, component, perms, status, display, cache, link, remark, parent_id, created_time, updated_time)
-        VALUES ('新增', 'AddMarketplaceSkill', NULL, 1, NULL, 2, NULL, 'marketplace:skill:add', 1, 0, 1, '', NULL, v_menu_id, NOW(), NULL);
+        VALUES ('新增', 'AddMarketplaceDownloadHistory', NULL, 1, NULL, 2, NULL, 'marketplace:download:history:add', 1, 0, 1, '', NULL, v_menu_id, NOW(), NULL);
     END IF;
 
     -- 编辑按钮
-    IF NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'marketplace:skill:edit' AND parent_id = v_menu_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'marketplace:download:history:edit' AND parent_id = v_menu_id) THEN
         INSERT INTO sys_menu (title, name, path, sort, icon, type, component, perms, status, display, cache, link, remark, parent_id, created_time, updated_time)
-        VALUES ('编辑', 'EditMarketplaceSkill', NULL, 2, NULL, 2, NULL, 'marketplace:skill:edit', 1, 0, 1, '', NULL, v_menu_id, NOW(), NULL);
+        VALUES ('编辑', 'EditMarketplaceDownloadHistory', NULL, 2, NULL, 2, NULL, 'marketplace:download:history:edit', 1, 0, 1, '', NULL, v_menu_id, NOW(), NULL);
     END IF;
 
     -- 删除按钮
-    IF NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'marketplace:skill:del' AND parent_id = v_menu_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'marketplace:download:history:del' AND parent_id = v_menu_id) THEN
         INSERT INTO sys_menu (title, name, path, sort, icon, type, component, perms, status, display, cache, link, remark, parent_id, created_time, updated_time)
-        VALUES ('删除', 'DeleteMarketplaceSkill', NULL, 3, NULL, 2, NULL, 'marketplace:skill:del', 1, 0, 1, '', NULL, v_menu_id, NOW(), NULL);
+        VALUES ('删除', 'DeleteMarketplaceDownloadHistory', NULL, 3, NULL, 2, NULL, 'marketplace:download:history:del', 1, 0, 1, '', NULL, v_menu_id, NOW(), NULL);
     END IF;
 
     -- 查看按钮
-    IF NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'marketplace:skill:get' AND parent_id = v_menu_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM sys_menu WHERE perms = 'marketplace:download:history:get' AND parent_id = v_menu_id) THEN
         INSERT INTO sys_menu (title, name, path, sort, icon, type, component, perms, status, display, cache, link, remark, parent_id, created_time, updated_time)
-        VALUES ('查看', 'ViewMarketplaceSkill', NULL, 4, NULL, 2, NULL, 'marketplace:skill:get', 1, 0, 1, '', NULL, v_menu_id, NOW(), NULL);
+        VALUES ('查看', 'ViewMarketplaceDownloadHistory', NULL, 4, NULL, 2, NULL, 'marketplace:download:history:get', 1, 0, 1, '', NULL, v_menu_id, NOW(), NULL);
     END IF;
 END $$;
 
