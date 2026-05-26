@@ -11,8 +11,8 @@ class HasnCollectionsSchemaBase(SchemaBase):
     name: str = Field(description='None')
     is_public: bool = Field(description='None')
     item_count: int = Field(description='None')
-    create_time: datetime = Field(description='None')
-    update_time: datetime | None = Field(None, description='None')
+    created_time: datetime = Field(description='None')
+    updated_time: datetime | None = Field(None, description='None')
 
 
 class CreateHasnCollectionsParam(HasnCollectionsSchemaBase):
@@ -35,5 +35,3 @@ class GetHasnCollectionsDetail(HasnCollectionsSchemaBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    created_time: datetime
-    updated_time: datetime | None = None

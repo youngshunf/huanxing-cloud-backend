@@ -16,4 +16,4 @@ class HasnCollectionItems(Base):
     collection_id: Mapped[str] = mapped_column(sa.String(40), default='', comment=None)
     target_type: Mapped[str] = mapped_column(sa.String(10), default='', comment=None)
     target_id: Mapped[str] = mapped_column(sa.String(40), default='', comment=None)
-    create_time: Mapped[datetime] = mapped_column(TimeZone, default_factory=timezone.now, comment=None)
+    created_time: Mapped[datetime] = mapped_column(TimeZone, default_factory=timezone.now, comment=None)

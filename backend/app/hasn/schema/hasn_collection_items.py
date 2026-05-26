@@ -9,7 +9,7 @@ class HasnCollectionItemsSchemaBase(SchemaBase):
     collection_id: str = Field(description='None')
     target_type: str = Field(description='None')
     target_id: str = Field(description='None')
-    create_time: datetime = Field(description='None')
+    created_time: datetime = Field(description='None')
 
 
 class CreateHasnCollectionItemsParam(HasnCollectionItemsSchemaBase):
@@ -32,5 +32,3 @@ class GetHasnCollectionItemsDetail(HasnCollectionItemsSchemaBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    created_time: datetime
-    updated_time: datetime | None = None

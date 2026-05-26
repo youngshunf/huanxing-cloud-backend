@@ -26,8 +26,8 @@ class HasnPostsSchemaBase(SchemaBase):
     comment_count: int = Field(description='None')
     collect_count: int = Field(description='None')
     share_count: int = Field(description='None')
-    create_time: datetime = Field(description='None')
-    update_time: datetime | None = Field(None, description='None')
+    created_time: datetime = Field(description='None')
+    updated_time: datetime | None = Field(None, description='None')
     published_time: datetime | None = Field(None, description='None')
 
 

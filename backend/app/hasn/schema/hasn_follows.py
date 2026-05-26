@@ -9,7 +9,7 @@ class HasnFollowsSchemaBase(SchemaBase):
     follower_hasn_id: str = Field(description='None')
     target_type: str = Field(description='human / agent / topic')
     target_hasn_id: str = Field(description='被关注对象的 hasn_id 或 topic 标识')
-    create_time: datetime = Field(description='None')
+    created_time: datetime = Field(description='None')
 
 
 class CreateHasnFollowsParam(HasnFollowsSchemaBase):

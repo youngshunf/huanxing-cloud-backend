@@ -16,4 +16,4 @@ class HasnFollows(Base):
     follower_hasn_id: Mapped[str] = mapped_column(sa.String(40), default='', comment=None)
     target_type: Mapped[str] = mapped_column(sa.String(10), default='', comment='human / agent / topic')
     target_hasn_id: Mapped[str] = mapped_column(sa.String(40), default='', comment='被关注对象的 hasn_id 或 topic 标识')
-    create_time: Mapped[datetime] = mapped_column(TimeZone, default_factory=timezone.now, comment=None)
+    created_time: Mapped[datetime] = mapped_column(TimeZone, default_factory=timezone.now, comment=None)

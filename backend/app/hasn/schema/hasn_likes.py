@@ -9,7 +9,7 @@ class HasnLikesSchemaBase(SchemaBase):
     user_hasn_id: str = Field(description='None')
     target_type: str = Field(description='None')
     target_id: str = Field(description='None')
-    create_time: datetime = Field(description='None')
+    created_time: datetime = Field(description='None')
 
 
 class CreateHasnLikesParam(HasnLikesSchemaBase):

@@ -31,8 +31,8 @@ class HasnArticlesSchemaBase(SchemaBase):
     share_count: int = Field(description='None')
     word_count: int = Field(description='None')
     read_time_min: int = Field(description='None')
-    create_time: datetime = Field(description='None')
-    update_time: datetime | None = Field(None, description='None')
+    created_time: datetime = Field(description='None')
+    updated_time: datetime | None = Field(None, description='None')
     published_time: datetime | None = Field(None, description='None')
 
 

@@ -18,5 +18,5 @@ class HasnCollections(Base):
     name: Mapped[str] = mapped_column(sa.String(100), default='', comment=None)
     is_public: Mapped[bool] = mapped_column(sa.BOOLEAN(), default=True, comment=None)
     item_count: Mapped[int] = mapped_column(sa.INTEGER(), default=0, comment=None)
-    create_time: Mapped[datetime] = mapped_column(TimeZone, default_factory=timezone.now, comment=None)
-    update_time: Mapped[datetime | None] = mapped_column(TimeZone, default=None, comment=None)
+    created_time: Mapped[datetime] = mapped_column(TimeZone, default_factory=timezone.now, comment=None)
+    updated_time: Mapped[datetime | None] = mapped_column(TimeZone, default=None, comment=None)

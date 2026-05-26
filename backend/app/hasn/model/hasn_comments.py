@@ -28,4 +28,4 @@ class HasnComments(Base):
     is_auto_reply: Mapped[bool] = mapped_column(sa.BOOLEAN(), default=True, comment='Agent 自动回复标识，前端据此展示"自动回复"标签')
     like_count: Mapped[int] = mapped_column(sa.INTEGER(), default=0, comment=None)
     status: Mapped[str] = mapped_column(sa.String(20), default='', comment='visible / hidden / deleted')
-    create_time: Mapped[datetime] = mapped_column(TimeZone, default_factory=timezone.now, comment=None)
+    created_time: Mapped[datetime] = mapped_column(TimeZone, default_factory=timezone.now, comment=None)

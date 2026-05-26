@@ -4,6 +4,8 @@ HASN 联系人业务 Schema
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 # 从 constants 导入六级标签（统一数据源）
@@ -37,6 +39,7 @@ class HasnContactRespondReq(BaseModel):
 class HasnContactRequestOut(BaseModel):
     request_id: int
     status: str
+    created_at: datetime | None = None
     relation_type: str = 'social'
     target: HasnContactPeerOut | None = None
     from_peer: HasnContactPeerOut | None = None

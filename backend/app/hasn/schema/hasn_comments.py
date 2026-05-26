@@ -21,7 +21,7 @@ class HasnCommentsSchemaBase(SchemaBase):
     is_auto_reply: bool = Field(description='Agent 自动回复标识，前端据此展示"自动回复"标签')
     like_count: int = Field(description='None')
     status: str = Field(description='visible / hidden / deleted')
-    create_time: datetime = Field(description='None')
+    created_time: datetime = Field(description='None')
 
 
 class CreateHasnCommentsParam(HasnCommentsSchemaBase):
