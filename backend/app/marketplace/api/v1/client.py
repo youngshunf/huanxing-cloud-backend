@@ -12,15 +12,15 @@ import yaml
 
 from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skill_dao
 from backend.app.marketplace.crud.crud_marketplace_skill_version import marketplace_skill_version_dao
-from backend.app.marketplace.crud.crud_marketplace_app import marketplace_app_dao
-from backend.app.marketplace.crud.crud_marketplace_app_version import marketplace_app_version_dao
+from backend.app.marketplace.crud.crud_marketplace_template import marketplace_template_dao
+from backend.app.marketplace.crud.crud_marketplace_template_version import marketplace_template_version_dao
 from backend.app.marketplace.crud.crud_marketplace_sop import marketplace_sop_dao
 from backend.app.marketplace.crud.crud_marketplace_sop_version import marketplace_sop_version_dao
 from backend.app.marketplace.crud.crud_marketplace_category import marketplace_category_dao
 from backend.app.marketplace.schema.marketplace_skill import GetMarketplaceSkillDetail
 from backend.app.marketplace.schema.marketplace_skill_version import GetMarketplaceSkillVersionDetail
-from backend.app.marketplace.schema.marketplace_app import GetMarketplaceAppDetail
-from backend.app.marketplace.schema.marketplace_app_version import GetMarketplaceAppVersionDetail
+from backend.app.marketplace.schema.marketplace_template import GetMarketplaceTemplateDetail
+from backend.app.marketplace.schema.marketplace_template_version import GetMarketplaceTemplateVersionDetail
 from backend.app.marketplace.schema.marketplace_sop import GetMarketplaceSopDetail
 from backend.app.marketplace.schema.marketplace_sop_version import GetMarketplaceSopVersionDetail
 from backend.app.marketplace.schema.marketplace_category import GetMarketplaceCategoryDetail
@@ -124,7 +124,7 @@ async def list_apps(
     is_official: Optional[bool] = Query(None, description='是否官方'),
 ) -> ResponseSchemaModel[PageData[GetMarketplaceAppDetail]]:
     """公开的应用列表接口，无需登录"""
-    app_select = await marketplace_app_dao.get_select_public(
+    app_select = await marketplace_template_dao.get_select_public(
         category=category,
         pricing_type=pricing_type,
         is_official=is_official,
@@ -133,47 +133,47 @@ async def list_apps(
     
     # 填充 latest_version 字段
     for item in page_data['items']:
-        latest = await marketplace_app_version_dao.get_latest_by_app(db, item['app_id'])
+        latest = await marketplace_template_version_dao.get_latest_by_app(db, item['template_id'])
         item['latest_version'] = latest.version if latest else None
     
     return response_base.success(data=page_data)
 
 
-@router.get('/apps/{app_id}', summary='公开接口：获取应用详情')
+@router.get('/apps/{template_id}', summary='公开接口：获取应用详情')
 async def get_app(
     db: CurrentSession,
-    app_id: Annotated[str, Path(description='应用ID')],
+    template_id: Annotated[str, Path(description='应用ID')],
 ) -> ResponseSchemaModel[GetMarketplaceAppDetail]:
     """公开的应用详情接口，无需登录"""
-    app = await marketplace_app_dao.get_by_id(db, app_id)
+    app = await marketplace_template_dao.get_by_id(db, template_id)
     if not app:
         raise errors.NotFoundError(msg='应用不存在')
     
     # 转换为 schema 并填充 latest_version 字段
     app_data = GetMarketplaceAppDetail.model_validate(app)
-    latest = await marketplace_app_version_dao.get_latest_by_app(db, app_id)
+    latest = await marketplace_template_version_dao.get_latest_by_app(db, template_id)
     app_data.latest_version = latest.version if latest else None
     
     return response_base.success(data=app_data)
 
 
-@router.get('/apps/{app_id}/versions', summary='公开接口：获取应用版本列表', name='marketplace_get_app_versions')
+@router.get('/apps/{template_id}/versions', summary='公开接口：获取应用版本列表', name='marketplace_get_app_versions')
 async def get_app_versions(
     db: CurrentSession,
-    app_id: Annotated[str, Path(description='应用ID')],
+    template_id: Annotated[str, Path(description='应用ID')],
 ) -> ResponseSchemaModel[list[GetMarketplaceAppVersionDetail]]:
     """公开的应用版本列表接口，无需登录"""
-    versions = await marketplace_app_version_dao.get_by_app(db, app_id)
+    versions = await marketplace_template_version_dao.get_by_app(db, template_id)
     return response_base.success(data=versions)
 
 
-@router.get('/apps/{app_id}/skills', summary='公开接口：获取应用包含的技能列表')
+@router.get('/apps/{template_id}/skills', summary='公开接口：获取应用包含的技能列表')
 async def get_app_skills(
     db: CurrentSession,
-    app_id: Annotated[str, Path(description='应用ID')],
+    template_id: Annotated[str, Path(description='应用ID')],
 ) -> ResponseSchemaModel[list[GetMarketplaceSkillDetail]]:
     """根据应用ID获取其包含的技能列表，一次性返回所有技能详情"""
-    app = await marketplace_app_dao.get_by_id(db, app_id)
+    app = await marketplace_template_dao.get_by_id(db, template_id)
     if not app:
         raise errors.NotFoundError(msg='应用不存在')
     
@@ -235,7 +235,7 @@ async def client_search(
             skills.append(skill_data)
     
     if type in ('all', 'app'):
-        app_results = await marketplace_app_dao.search(
+        app_results = await marketplace_template_dao.search(
             db=db,
             keyword=q,
             category=category,
@@ -244,7 +244,7 @@ async def client_search(
         # 转换为 schema 并填充 latest_version 字段
         for app in app_results:
             app_data = GetMarketplaceAppDetail.model_validate(app)
-            latest = await marketplace_app_version_dao.get_latest_by_app(db, app.app_id)
+            latest = await marketplace_template_version_dao.get_latest_by_app(db, app.template_id)
             app_data.latest_version = latest.version if latest else None
             apps.append(app_data)
     
@@ -316,23 +316,23 @@ async def download_skill_version(
     ))
 
 
-@router.get('/download/app/{app_id}/latest', summary='公开接口：获取应用最新版本下载信息')
+@router.get('/download/app/{template_id}/latest', summary='公开接口：获取应用最新版本下载信息')
 async def download_app_latest(
     db: CurrentSession,
-    app_id: Annotated[str, Path(description='应用ID')],
+    template_id: Annotated[str, Path(description='应用ID')],
 ) -> ResponseSchemaModel[AppDownloadInfo]:
     """获取应用最新版本的下载信息"""
     # 获取应用信息（用于回退获取 skill_dependencies）
-    app = await marketplace_app_dao.get_by_id(db, app_id)
+    app = await marketplace_template_dao.get_by_id(db, template_id)
     if not app:
         raise errors.NotFoundError(msg='应用不存在')
     
-    version = await marketplace_app_version_dao.get_latest_by_app(db, app_id)
+    version = await marketplace_template_version_dao.get_latest_by_app(db, template_id)
     if not version:
         raise errors.NotFoundError(msg='应用版本不存在')
     
     # 增加下载计数
-    await marketplace_app_dao.increment_download_count(db, app_id)
+    await marketplace_template_dao.increment_download_count(db, template_id)
     await db.commit()
     
     # 解析技能依赖：优先使用版本级别的 skill_dependencies_versioned，回退到应用级别的 skill_dependencies
@@ -355,7 +355,7 @@ async def download_app_latest(
             })
     
     return response_base.success(data=AppDownloadInfo(
-        id=app_id,
+        id=template_id,
         version=version.version,
         package_url=version.package_url,
         file_hash=version.file_hash,
@@ -364,24 +364,24 @@ async def download_app_latest(
     ))
 
 
-@router.get('/download/app/{app_id}/{version}', summary='公开接口：获取应用指定版本下载信息')
+@router.get('/download/app/{template_id}/{version}', summary='公开接口：获取应用指定版本下载信息')
 async def download_app_version(
     db: CurrentSession,
-    app_id: Annotated[str, Path(description='应用ID')],
+    template_id: Annotated[str, Path(description='应用ID')],
     version: Annotated[str, Path(description='版本号')],
 ) -> ResponseSchemaModel[AppDownloadInfo]:
     """获取应用指定版本的下载信息"""
     # 获取应用信息（用于回退获取 skill_dependencies）
-    app = await marketplace_app_dao.get_by_id(db, app_id)
+    app = await marketplace_template_dao.get_by_id(db, template_id)
     if not app:
         raise errors.NotFoundError(msg='应用不存在')
     
-    ver = await marketplace_app_version_dao.get_by_app_and_version(db, app_id, version)
+    ver = await marketplace_template_version_dao.get_by_app_and_version(db, template_id, version)
     if not ver:
         raise errors.NotFoundError(msg='应用版本不存在')
     
     # 增加下载计数
-    await marketplace_app_dao.increment_download_count(db, app_id)
+    await marketplace_template_dao.increment_download_count(db, template_id)
     await db.commit()
     
     # 解析技能依赖：优先使用版本级别的 skill_dependencies_versioned，回退到应用级别的 skill_dependencies
@@ -404,7 +404,7 @@ async def download_app_version(
             })
     
     return response_base.success(data=AppDownloadInfo(
-        id=app_id,
+        id=template_id,
         version=ver.version,
         package_url=ver.package_url,
         file_hash=ver.file_hash,
@@ -479,7 +479,7 @@ async def client_sync_installed(
                         changelog=latest.changelog,
                     ))
         elif item.type == 'app':
-            latest = await marketplace_app_version_dao.get_latest_by_app(db, item.id)
+            latest = await marketplace_template_version_dao.get_latest_by_app(db, item.id)
             if latest and latest.version != item.version:
                 if _is_newer_version(latest.version, item.version):
                     updates.append(UpdateItem(

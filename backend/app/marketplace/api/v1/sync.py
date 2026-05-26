@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from backend.app.marketplace.crud.crud_marketplace_skill_version import marketplace_skill_version_dao
-from backend.app.marketplace.crud.crud_marketplace_app_version import marketplace_app_version_dao
+from backend.app.marketplace.crud.crud_marketplace_template_version import marketplace_template_version_dao
 from backend.common.response.response_schema import ResponseSchemaModel, response_base
 from backend.database.db import CurrentSession
 
@@ -70,7 +70,7 @@ async def sync_installed(
                     ))
         elif item.type == 'app':
             # 获取应用最新版本
-            latest = await marketplace_app_version_dao.get_latest_by_app(db, item.id)
+            latest = await marketplace_template_version_dao.get_latest_by_app(db, item.id)
             if latest and latest.version != item.version:
                 if _is_newer_version(latest.version, item.version):
                     updates.append(UpdateItem(

@@ -12,8 +12,8 @@ import yaml
 from git import Repo
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.marketplace.crud.crud_marketplace_app import marketplace_app_dao
-from backend.app.marketplace.crud.crud_marketplace_app_version import marketplace_app_version_dao
+from backend.app.marketplace.crud.crud_marketplace_template import marketplace_template_dao
+from backend.app.marketplace.crud.crud_marketplace_template_version import marketplace_template_version_dao
 from backend.app.marketplace.crud.crud_marketplace_sync_log import marketplace_sync_log_dao
 from backend.app.marketplace.service.app_package_service import app_package_service
 from backend.common.log import log
@@ -336,22 +336,22 @@ class GitHubAppSyncService:
         version = app_data.pop('version')
 
         # Check if app exists
-        existing_app = await marketplace_app_dao.get_by_id(db, app_id)
+        existing_app = await marketplace_template_dao.get_by_id(db, app_id)
 
         if existing_app:
             # Update existing app
-            await marketplace_app_dao.update(db, existing_app.id, app_data)
+            await marketplace_template_dao.update(db, existing_app.id, app_data)
             log.info(f"Updated app: {app_id}")
         else:
             # Create new app
-            await marketplace_app_dao.create(db, app_data)
+            await marketplace_template_dao.create(db, app_data)
             log.info(f"Created app: {app_id}")
 
         # Build package
         package_info = await app_package_service.build_app_package(app_id, version)
 
         # Create or update version
-        existing_version = await marketplace_app_version_dao.get_by_app_and_version(db, app_id, version)
+        existing_version = await marketplace_template_version_dao.get_by_app_and_version(db, app_id, version)
 
         version_data = {
             'app_id': app_id,
@@ -365,14 +365,14 @@ class GitHubAppSyncService:
         }
 
         if existing_version:
-            await marketplace_app_version_dao.update(db, existing_version.id, version_data)
+            await marketplace_template_version_dao.update(db, existing_version.id, version_data)
             log.info(f"Updated app version: {app_id} v{version}")
         else:
             # Mark all other versions as not latest
-            await marketplace_app_version_dao.mark_all_not_latest(db, app_id)
+            await marketplace_template_version_dao.mark_all_not_latest(db, app_id)
 
             # Create new version
-            await marketplace_app_version_dao.create(db, version_data)
+            await marketplace_template_version_dao.create(db, version_data)
             log.info(f"Created app version: {app_id} v{version}")
 
 

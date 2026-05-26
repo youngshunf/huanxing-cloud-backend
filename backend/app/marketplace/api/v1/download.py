@@ -9,8 +9,8 @@ from pydantic import BaseModel
 
 from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skill_dao
 from backend.app.marketplace.crud.crud_marketplace_skill_version import marketplace_skill_version_dao
-from backend.app.marketplace.crud.crud_marketplace_app import marketplace_app_dao
-from backend.app.marketplace.crud.crud_marketplace_app_version import marketplace_app_version_dao
+from backend.app.marketplace.crud.crud_marketplace_template import marketplace_template_dao
+from backend.app.marketplace.crud.crud_marketplace_template_version import marketplace_template_version_dao
 from backend.app.marketplace.crud.crud_marketplace_download import marketplace_download_dao
 from backend.app.marketplace.schema.marketplace_download import CreateMarketplaceDownloadParam
 from backend.common.exception import errors
@@ -132,15 +132,15 @@ async def download_app(
     version: Annotated[str, Path(description='版本号，可以是具体版本或 latest')],
 ) -> ResponseSchemaModel[AppDownloadResponse]:
     # 获取应用
-    app = await marketplace_app_dao.get_by_id(db, app_id)
+    app = await marketplace_template_dao.get_by_id(db, app_id)
     if not app:
         raise errors.NotFoundError(msg='应用不存在')
     
     # 获取版本
     if version == 'latest':
-        app_version = await marketplace_app_version_dao.get_latest_by_app(db, app_id)
+        app_version = await marketplace_template_version_dao.get_latest_by_app(db, app_id)
     else:
-        app_version = await marketplace_app_version_dao.get_by_app_and_version(db, app_id, version)
+        app_version = await marketplace_template_version_dao.get_by_app_and_version(db, app_id, version)
     
     if not app_version:
         raise errors.NotFoundError(msg='版本不存在')
@@ -184,15 +184,15 @@ async def download_app_with_record(
     version: Annotated[str, Path(description='版本号，可以是具体版本或 latest')],
 ) -> ResponseSchemaModel[AppDownloadResponse]:
     # 获取应用
-    app = await marketplace_app_dao.get_by_id(db, app_id)
+    app = await marketplace_template_dao.get_by_id(db, app_id)
     if not app:
         raise errors.NotFoundError(msg='应用不存在')
     
     # 获取版本
     if version == 'latest':
-        app_version = await marketplace_app_version_dao.get_latest_by_app(db, app_id)
+        app_version = await marketplace_template_version_dao.get_latest_by_app(db, app_id)
     else:
-        app_version = await marketplace_app_version_dao.get_by_app_and_version(db, app_id, version)
+        app_version = await marketplace_template_version_dao.get_by_app_and_version(db, app_id, version)
     
     if not app_version:
         raise errors.NotFoundError(msg='版本不存在')
@@ -209,7 +209,7 @@ async def download_app_with_record(
     ))
     
     # 更新下载计数
-    await marketplace_app_dao.increment_download_count(db, app_id)
+    await marketplace_template_dao.increment_download_count(db, app_id)
     
     # 解析技能依赖
     skill_dependencies = []
