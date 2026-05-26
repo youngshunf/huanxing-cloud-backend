@@ -23,8 +23,8 @@ from backend.app.llm.service.api_key_service import api_key_service
 from backend.app.marketplace.model import (
     MarketplaceSkill,
     MarketplaceSkillVersion,
-    MarketplaceApp,
-    MarketplaceAppVersion,
+    MarketplaceTemplate,
+    MarketplaceTemplateVersion,
     MarketplaceSop,
     MarketplaceSopVersion,
 )
@@ -626,13 +626,13 @@ async def _save_app_to_db(
     app_tags = ','.join(app_tags_list) if app_tags_list else None
     
     # 检查应用是否存在
-    stmt = select(MarketplaceApp).where(MarketplaceApp.app_id == app_id)
+    stmt = select(MarketplaceTemplate).where(MarketplaceTemplate.app_id == app_id)
     result = await db.execute(stmt)
     app = result.scalar_one_or_none()
     
     if not app:
         # 创建新应用
-        app = MarketplaceApp(
+        app = MarketplaceTemplate(
             app_id=app_id,
             name=manifest['name'],
             description=manifest['description'],
@@ -671,15 +671,15 @@ async def _save_app_to_db(
             update_data['author_id'] = author_id
             update_data['author_name'] = author_name
         
-        stmt = update(MarketplaceApp).where(
-            MarketplaceApp.app_id == app_id
+        stmt = update(MarketplaceTemplate).where(
+            MarketplaceTemplate.app_id == app_id
         ).values(**update_data)
         await db.execute(stmt)
     
     # 清除旧版本的 is_latest 标志
-    stmt = update(MarketplaceAppVersion).where(
-        MarketplaceAppVersion.app_id == app_id,
-        MarketplaceAppVersion.is_latest == True,
+    stmt = update(MarketplaceTemplateVersion).where(
+        MarketplaceTemplateVersion.app_id == app_id,
+        MarketplaceTemplateVersion.is_latest == True,
     ).values(is_latest=False)
     await db.execute(stmt)
     
@@ -693,18 +693,18 @@ async def _save_app_to_db(
             skill_deps_versioned[dep] = '*'
     
     # 检查版本是否存在
-    stmt = select(MarketplaceAppVersion).where(
-        MarketplaceAppVersion.app_id == app_id,
-        MarketplaceAppVersion.version == version,
+    stmt = select(MarketplaceTemplateVersion).where(
+        MarketplaceTemplateVersion.app_id == app_id,
+        MarketplaceTemplateVersion.version == version,
     )
     result = await db.execute(stmt)
     existing_version = result.scalar_one_or_none()
     
     if existing_version:
         # 更新版本
-        stmt = update(MarketplaceAppVersion).where(
-            MarketplaceAppVersion.app_id == app_id,
-            MarketplaceAppVersion.version == version,
+        stmt = update(MarketplaceTemplateVersion).where(
+            MarketplaceTemplateVersion.app_id == app_id,
+            MarketplaceTemplateVersion.version == version,
         ).values(
             changelog=changelog,
             skill_dependencies_versioned=skill_deps_versioned if skill_deps_versioned else None,
@@ -716,7 +716,7 @@ async def _save_app_to_db(
         await db.execute(stmt)
     else:
         # 创建版本
-        app_version = MarketplaceAppVersion(
+        app_version = MarketplaceTemplateVersion(
             app_id=app_id,
             version=version,
             changelog=changelog,

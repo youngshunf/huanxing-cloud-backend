@@ -11,7 +11,7 @@ from typing import Literal
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.marketplace.model import MarketplaceApp, MarketplaceAppVersion
+from backend.app.marketplace.model import MarketplaceTemplate, MarketplaceTemplateVersion
 from backend.app.marketplace.storage.s3_storage import marketplace_storage_service
 from backend.cli_tools.cli.common import (
     VersionInfo,
@@ -223,26 +223,26 @@ class AppPublisher:
         except Exception as e:
             print_error(f'更新 manifest.json 版本号失败: {e}')
     
-    async def _get_app(self, db: AsyncSession, app_id: str) -> MarketplaceApp | None:
+    async def _get_app(self, db: AsyncSession, app_id: str) -> MarketplaceTemplate | None:
         """获取应用"""
-        stmt = select(MarketplaceApp).where(MarketplaceApp.app_id == app_id)
+        stmt = select(MarketplaceTemplate).where(MarketplaceTemplate.app_id == app_id)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
     
-    async def _get_version(self, db: AsyncSession, app_id: str, version: str) -> MarketplaceAppVersion | None:
+    async def _get_version(self, db: AsyncSession, app_id: str, version: str) -> MarketplaceTemplateVersion | None:
         """获取应用版本"""
-        stmt = select(MarketplaceAppVersion).where(
-            MarketplaceAppVersion.app_id == app_id,
-            MarketplaceAppVersion.version == version,
+        stmt = select(MarketplaceTemplateVersion).where(
+            MarketplaceTemplateVersion.app_id == app_id,
+            MarketplaceTemplateVersion.version == version,
         )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
     
-    async def _get_latest_version(self, db: AsyncSession, app_id: str) -> MarketplaceAppVersion | None:
+    async def _get_latest_version(self, db: AsyncSession, app_id: str) -> MarketplaceTemplateVersion | None:
         """获取最新版本"""
-        stmt = select(MarketplaceAppVersion).where(
-            MarketplaceAppVersion.app_id == app_id,
-            MarketplaceAppVersion.is_latest == True,
+        stmt = select(MarketplaceTemplateVersion).where(
+            MarketplaceTemplateVersion.app_id == app_id,
+            MarketplaceTemplateVersion.is_latest == True,
         )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
@@ -253,7 +253,7 @@ class AppPublisher:
         # 将技能依赖列表转为逗号分隔字符串
         skill_deps_str = ','.join(manifest.skill_dependencies) if manifest.skill_dependencies else None
         
-        app = MarketplaceApp(
+        app = MarketplaceTemplate(
             app_id=manifest.id,
             name=manifest.name,
             description=manifest.description,
@@ -284,14 +284,14 @@ class AppPublisher:
         if icon_url:
             update_data['icon_url'] = icon_url
         
-        stmt = update(MarketplaceApp).where(MarketplaceApp.app_id == app_id).values(**update_data)
+        stmt = update(MarketplaceTemplate).where(MarketplaceTemplate.app_id == app_id).values(**update_data)
         await db.execute(stmt)
     
     async def _clear_latest_flag(self, db: AsyncSession, app_id: str) -> None:
         """清除旧版本的 is_latest 标志"""
-        stmt = update(MarketplaceAppVersion).where(
-            MarketplaceAppVersion.app_id == app_id,
-            MarketplaceAppVersion.is_latest == True,
+        stmt = update(MarketplaceTemplateVersion).where(
+            MarketplaceTemplateVersion.app_id == app_id,
+            MarketplaceTemplateVersion.is_latest == True,
         ).values(is_latest=False)
         await db.execute(stmt)
     
@@ -316,7 +316,7 @@ class AppPublisher:
             else:
                 skill_deps_versioned[dep] = '*'
         
-        app_version = MarketplaceAppVersion(
+        app_version = MarketplaceTemplateVersion(
             app_id=app_id,
             version=version,
             changelog=changelog,
