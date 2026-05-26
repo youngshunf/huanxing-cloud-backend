@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from sqlalchemy import select, or_
 
-from backend.app.marketplace.model import MarketplaceSkill, MarketplaceApp
+from backend.app.marketplace.model import MarketplaceSkill, MarketplaceTemplate
 from backend.common.response.response_schema import ResponseSchemaModel, response_base
 from backend.database.db import CurrentSession
 
@@ -119,23 +119,23 @@ async def search(
     
     # 搜索应用
     if type in ('app', 'all'):
-        app_query = select(MarketplaceApp).where(
-            MarketplaceApp.is_private == False,
+        app_query = select(MarketplaceTemplate).where(
+            MarketplaceTemplate.is_private == False,
             or_(
-                MarketplaceApp.name.ilike(search_pattern),
-                MarketplaceApp.description.ilike(search_pattern),
-                MarketplaceApp.app_id.ilike(search_pattern),
-                MarketplaceApp.tags.ilike(search_pattern),
-                MarketplaceApp.category.ilike(search_pattern),
+                MarketplaceTemplate.name.ilike(search_pattern),
+                MarketplaceTemplate.description.ilike(search_pattern),
+                MarketplaceTemplate.app_id.ilike(search_pattern),
+                MarketplaceTemplate.tags.ilike(search_pattern),
+                MarketplaceTemplate.category.ilike(search_pattern),
             )
         )
         
         if category:
-            app_query = app_query.where(MarketplaceApp.category == category)
+            app_query = app_query.where(MarketplaceTemplate.category == category)
 
         app_query = app_query.order_by(
-            MarketplaceApp.is_official.desc(),
-            MarketplaceApp.download_count.desc()
+            MarketplaceTemplate.is_official.desc(),
+            MarketplaceTemplate.download_count.desc()
         ).limit(limit)
         
         result = await db.execute(app_query)
