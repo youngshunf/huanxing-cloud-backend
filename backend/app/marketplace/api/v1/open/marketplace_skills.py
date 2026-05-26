@@ -6,7 +6,7 @@ Public API for browsing and downloading skills.
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 
-from backend.app.marketplace.crud.crud_marketplace_download_history import marketplace_download_history_dao
+from backend.app.marketplace.crud.crud_marketplace_download import marketplace_download_dao
 from backend.app.marketplace.service.package_service import package_service
 from backend.app.marketplace.service.search_service import search_service
 from backend.database.db import CurrentSession
@@ -113,7 +113,7 @@ async def _download_skill_package(db: CurrentSession, skill_id: str, version: st
         )
 
         # Record download
-        await marketplace_download_history_dao.create(db, {
+        await marketplace_download_dao.create(db, {
             'skill_id': skill_id,
             'version': version or 'latest',
             'user_id': None,  # Anonymous download
