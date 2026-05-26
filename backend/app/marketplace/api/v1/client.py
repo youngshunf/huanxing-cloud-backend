@@ -84,6 +84,26 @@ async def list_skills(
     return response_base.success(data=page_data)
 
 
+@router.get('/skills/{namespace}/{slug}', summary='公开接口：通过 namespace/slug 获取技能详情')
+async def get_skill_by_ns_slug_client(
+    db: CurrentSession,
+    namespace: Annotated[str, Path(description='命名空间')],
+    slug: Annotated[str, Path(description='技能标识符')],
+) -> ResponseSchemaModel[GetMarketplaceSkillDetail]:
+    """公开的技能详情接口（namespace/slug 格式），无需登录"""
+    skill_id = f"{namespace}/{slug}"
+    skill = await marketplace_skill_dao.get_by_id(db, skill_id)
+    if not skill:
+        raise errors.NotFoundError(msg='技能不存在')
+
+    # 转换为 schema 并填充 latest_version 字段
+    skill_data = GetMarketplaceSkillDetail.model_validate(skill)
+    latest = await marketplace_skill_version_dao.get_latest_by_skill(db, skill_id)
+    skill_data.latest_version = latest.version if latest else None
+
+    return response_base.success(data=skill_data)
+
+
 @router.get('/skills/{skill_id}', summary='公开接口：获取技能详情')
 async def get_skill(
     db: CurrentSession,
@@ -93,12 +113,12 @@ async def get_skill(
     skill = await marketplace_skill_dao.get_by_id(db, skill_id)
     if not skill:
         raise errors.NotFoundError(msg='技能不存在')
-    
+
     # 转换为 schema 并填充 latest_version 字段
     skill_data = GetMarketplaceSkillDetail.model_validate(skill)
     latest = await marketplace_skill_version_dao.get_latest_by_skill(db, skill_id)
     skill_data.latest_version = latest.version if latest else None
-    
+
     return response_base.success(data=skill_data)
 
 
