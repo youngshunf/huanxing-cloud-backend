@@ -107,23 +107,64 @@ async def download_skill_open(
 async def _download_skill_package(db: CurrentSession, skill_id: str, version: str | None):
     """Internal helper to download skill package"""
     try:
-        # Get package
+        # Get skill and version info
+        from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skill_dao
+        from backend.app.marketplace.crud.crud_marketplace_skill_version import marketplace_skill_version_dao
+        from backend.app.marketplace.schema.marketplace_download import CreateMarketplaceDownloadParam
+        from fastapi.responses import RedirectResponse
+
+        skill = await marketplace_skill_dao.get_by_id(db, skill_id)
+        if not skill:
+            raise HTTPException(status_code=404, detail=f'Skill not found: {skill_id}')
+
+        # Get version info
+        if version:
+            skill_version = await marketplace_skill_version_dao.get_by_skill_and_version(
+                db, skill_id, version
+            )
+        else:
+            # Get latest version
+            skill_version = await marketplace_skill_version_dao.get_latest_by_skill(db, skill_id)
+            version = skill_version.version if skill_version else 'latest'
+
+        # If package_url exists, redirect to it
+        if skill_version and skill_version.package_url:
+            # Record download
+            download_record = CreateMarketplaceDownloadParam(
+                resource_type='skill',
+                resource_id=skill_id,
+                resource_name=skill.name_zh or skill.name_en,
+                version=version,
+                download_source='web',
+                user_id=0,
+                ip_address=None,
+                user_agent=None
+            )
+            await marketplace_download_dao.create(db, download_record)
+
+            return RedirectResponse(url=skill_version.package_url, status_code=302)
+
+        # Otherwise, try to create package from local repo
         package_path, package_hash = await package_service.get_skill_package(
             db, skill_id, version
         )
 
         # Record download
-        await marketplace_download_dao.create(db, {
-            'skill_id': skill_id,
-            'version': version or 'latest',
-            'user_id': None,  # Anonymous download
-            'ip_address': None,
-            'user_agent': None
-        })
+        download_record = CreateMarketplaceDownloadParam(
+            resource_type='skill',
+            resource_id=skill_id,
+            resource_name=skill.name_zh or skill.name_en,
+            version=version,
+            download_source='web',
+            user_id=0,
+            ip_address=None,
+            user_agent=None
+        )
+        await marketplace_download_dao.create(db, download_record)
 
         # Return file stream
         file_stream = package_service.get_package_stream(package_path)
-        filename = f"{skill_id.replace('/', '_')}_{version or 'latest'}.zip"
+        filename = f"{skill_id.replace('/', '_')}_{version}.zip"
 
         return StreamingResponse(
             file_stream,

@@ -76,16 +76,8 @@ class PackageService:
         log.info(f"Creating package for {skill_id}@{version}")
         package_path, package_hash = await self._create_package(skill, version)
 
-        # Update version record with package info
-        skill_version = await marketplace_skill_version_dao.get_by_skill_and_version(
-            db, skill.id, version
-        )
-        if skill_version:
-            package_size = package_path.stat().st_size
-            await marketplace_skill_version_dao.update(db, skill_version.id, {
-                'package_hash': package_hash,
-                'package_size': package_size
-            })
+        # Note: Version record update skipped for now
+        # TODO: Implement partial update for version metadata
 
         return package_path, package_hash
 
