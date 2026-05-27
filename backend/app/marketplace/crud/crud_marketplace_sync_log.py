@@ -32,15 +32,15 @@ class CRUDMarketplaceSyncLog(CRUDPlus[MarketplaceSyncLog]):
         """
         return await self.select_models(db)
 
-    async def create(self, db: AsyncSession, obj: CreateMarketplaceSyncLogParam) -> None:
+    async def create(self, db: AsyncSession, obj: CreateMarketplaceSyncLogParam) -> MarketplaceSyncLog:
         """
         创建技能市场同步日志
 
         :param db: 数据库会话
         :param obj: 创建技能市场同步日志参数
-        :return:
+        :return: 创建的同步日志对象
         """
-        await self.create_model(db, obj)
+        return await self.create_model(db, obj)
 
     async def update(self, db: AsyncSession, pk: int, obj: UpdateMarketplaceSyncLogParam) -> int:
         """

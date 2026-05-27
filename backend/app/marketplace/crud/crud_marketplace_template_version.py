@@ -100,5 +100,15 @@ class CRUDMarketplaceTemplateVersion(CRUDPlus[MarketplaceTemplateVersion]):
         """
         return await self.select_models_by_column(db, template_id=template_id)
 
+    async def mark_all_not_latest(self, db: AsyncSession, template_id: str) -> int:
+        """
+        将应用的所有版本标记为非最新
+
+        :param db: 数据库会话
+        :param template_id: 应用ID
+        :return: 更新的行数
+        """
+        return await self.update_model_by_column(db, {'is_latest': False}, template_id=template_id)
+
 
 marketplace_template_version_dao: CRUDMarketplaceTemplateVersion = CRUDMarketplaceTemplateVersion(MarketplaceTemplateVersion)

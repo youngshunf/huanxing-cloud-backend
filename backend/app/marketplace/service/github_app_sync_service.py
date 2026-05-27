@@ -15,6 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.marketplace.crud.crud_marketplace_template import marketplace_template_dao
 from backend.app.marketplace.crud.crud_marketplace_template_version import marketplace_template_version_dao
 from backend.app.marketplace.crud.crud_marketplace_sync_log import marketplace_sync_log_dao
+from backend.app.marketplace.schema.marketplace_sync_log import CreateMarketplaceSyncLogParam, UpdateMarketplaceSyncLogParam
+from backend.app.marketplace.schema.marketplace_template import CreateMarketplaceTemplateParam, UpdateMarketplaceTemplateParam
+from backend.app.marketplace.schema.marketplace_template_version import CreateMarketplaceTemplateVersionParam, UpdateMarketplaceTemplateVersionParam
 from backend.app.marketplace.service.app_package_service import app_package_service
 from backend.common.log import log
 from backend.core.conf import settings
@@ -44,12 +47,12 @@ class GitHubAppSyncService:
         sync_log_id = None
         try:
             # Create sync log
-            sync_log = await marketplace_sync_log_dao.create(db, {
-                'sync_type': 'github',
-                'resource_type': 'app',
-                'status': 'in_progress',
-                'started_at': datetime.now()
-            })
+            sync_log = await marketplace_sync_log_dao.create(db, CreateMarketplaceSyncLogParam(
+                sync_type='github',
+                status='in_progress',
+                started_at=datetime.now()
+            ))
+            await db.flush()
             sync_log_id = sync_log.id
 
             # Clone or pull repository
@@ -76,15 +79,15 @@ class GitHubAppSyncService:
                     log.error(f"Failed to sync app {app_data.get('app_id')}: {e}")
 
             # Update sync log
-            await marketplace_sync_log_dao.update(db, sync_log_id, {
-                'status': 'success' if failed_count == 0 else 'partial',
-                'items_synced': synced_count,
-                'items_failed': failed_count,
-                'error_message': '\n'.join(errors) if errors else None,
-                'git_commit_before': old_commit,
-                'git_commit_after': new_commit,
-                'completed_at': datetime.now()
-            })
+            await marketplace_sync_log_dao.update(db, sync_log_id, UpdateMarketplaceSyncLogParam(
+                status='success' if failed_count == 0 else 'partial',
+                items_synced=synced_count,
+                items_failed=failed_count,
+                error_message='\n'.join(errors) if errors else None,
+                git_commit_before=old_commit,
+                git_commit_after=new_commit,
+                completed_at=datetime.now()
+            ))
 
             return {
                 'success': True,
@@ -98,11 +101,11 @@ class GitHubAppSyncService:
 
             # Update sync log
             if sync_log_id:
-                await marketplace_sync_log_dao.update(db, sync_log_id, {
-                    'status': 'failed',
-                    'error_message': str(e),
-                    'completed_at': datetime.now()
-                })
+                await marketplace_sync_log_dao.update(db, sync_log_id, UpdateMarketplaceSyncLogParam(
+                    status='failed',
+                    error_message=str(e),
+                    completed_at=datetime.now()
+                ))
 
             return {
                 'success': False,
@@ -223,7 +226,8 @@ class GitHubAppSyncService:
 
         # Build app data
         app_data = {
-            'app_id': app_id,
+            'template_id': app_id,
+            'template_type': 'agent',  # App templates are agent type
             'name': name,
             'description': description,
             'icon_url': icon_s3_url,
@@ -235,6 +239,7 @@ class GitHubAppSyncService:
             'price': 0,
             'is_private': False,
             'is_official': True,
+            'download_count': 0,
             'skill_dependencies': skill_dependencies,
             'sop_dependencies': sop_dependencies,
             'repo_path': f"templates/{app_slug}",
@@ -332,32 +337,34 @@ class GitHubAppSyncService:
             db: Database session
             app_data: App metadata
         """
-        app_id = app_data['app_id']
+        template_id = app_data['template_id']
         version = app_data.pop('version')
 
         # Check if app exists
-        existing_app = await marketplace_template_dao.get_by_id(db, app_id)
+        existing_app = await marketplace_template_dao.get_by_id(db, template_id)
 
         if existing_app:
             # Update existing app
-            await marketplace_template_dao.update(db, existing_app.id, app_data)
-            log.info(f"Updated app: {app_id}")
+            update_param = UpdateMarketplaceTemplateParam(**app_data)
+            await marketplace_template_dao.update(db, existing_app.id, update_param)
+            log.info(f"Updated app: {template_id}")
         else:
             # Create new app
-            await marketplace_template_dao.create(db, app_data)
-            log.info(f"Created app: {app_id}")
+            create_param = CreateMarketplaceTemplateParam(**app_data)
+            await marketplace_template_dao.create(db, create_param)
+            log.info(f"Created app: {template_id}")
 
         # Build package
-        package_info = await app_package_service.build_app_package(app_id, version)
+        package_info = await app_package_service.build_app_package(template_id, version)
 
         # Create or update version
-        existing_version = await marketplace_template_version_dao.get_by_app_and_version(db, app_id, version)
+        existing_version = await marketplace_template_version_dao.get_by_app_and_version(db, template_id, version)
 
         version_data = {
-            'app_id': app_id,
+            'template_id': template_id,
             'version': version,
             'git_commit_hash': app_data['git_commit_hash'],
-            'package_path': package_info['package_path'],
+            'package_url': package_info['package_path'],  # Local path stored as URL for now
             'file_hash': package_info['file_hash'],
             'file_size': package_info['file_size'],
             'is_latest': True,
@@ -365,15 +372,17 @@ class GitHubAppSyncService:
         }
 
         if existing_version:
-            await marketplace_template_version_dao.update(db, existing_version.id, version_data)
-            log.info(f"Updated app version: {app_id} v{version}")
+            update_version_param = UpdateMarketplaceTemplateVersionParam(**version_data)
+            await marketplace_template_version_dao.update(db, existing_version.id, update_version_param)
+            log.info(f"Updated app version: {template_id} v{version}")
         else:
             # Mark all other versions as not latest
-            await marketplace_template_version_dao.mark_all_not_latest(db, app_id)
+            await marketplace_template_version_dao.mark_all_not_latest(db, template_id)
 
             # Create new version
-            await marketplace_template_version_dao.create(db, version_data)
-            log.info(f"Created app version: {app_id} v{version}")
+            create_version_param = CreateMarketplaceTemplateVersionParam(**version_data)
+            await marketplace_template_version_dao.create(db, create_version_param)
+            log.info(f"Created app version: {template_id} v{version}")
 
 
 # Global instance

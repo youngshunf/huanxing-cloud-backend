@@ -1,8 +1,8 @@
 """Hermes 用户端 Agent 模板列表（M1 §5.4）。
 
 GET /api/v1/hermes/app/templates
-- JOIN marketplace_app (template_type='agent_template') + marketplace_app_version (is_latest=true)
-- 返回过滤敏感字段：只暴露 {app_id, name, description, emoji, icon_url, version}
+- JOIN marketplace_template (template_type='agent') + marketplace_template_version (is_latest=true)
+- 返回过滤敏感字段：只暴露 {template_id, name, description, emoji, icon_url, version}
   package_url + file_hash 是 backend 内部用（apply_template 时推给 runtime），不返给浏览器
 - marketplace 没有 publish 模板时返 []（不报错）
 """
@@ -36,7 +36,7 @@ async def list_agent_templates(db: CurrentSession) -> ResponseModel:
             MarketplaceTemplateVersion.template_id == MarketplaceTemplate.template_id,
         )
         .where(
-            sa.text("marketplace_app.app_type = 'agent_template'"),
+            MarketplaceTemplate.template_type == 'agent',
             MarketplaceTemplateVersion.is_latest.is_(True),
         )
         .order_by(MarketplaceTemplate.id.asc())
@@ -44,7 +44,7 @@ async def list_agent_templates(db: CurrentSession) -> ResponseModel:
     rows = (await db.execute(stmt)).mappings().all()
     items = [
         {
-            'app_id': row['app_id'],
+            'template_id': row['template_id'],
             'name': row['name'],
             'description': row['description'],
             'emoji': row['emoji'],

@@ -289,28 +289,28 @@ class HermesAgentAppService:
         }
 
     async def _resolve_template(self, db: AsyncSession, template_id: str) -> dict[str, Any]:
-        """Look up an agent template by app_id, returning the version + package metadata
+        """Look up an agent template by template_id, returning the version + package metadata
         backend will hand to runtime.apply_template (PROMPT.md §5.2 step 2).
 
-        - Filters marketplace_app.app_type = 'agent_template' to keep skill/sop packs out.
-        - Picks the marketplace_app_version row with is_latest = TRUE.
+        - Filters marketplace_template.template_type = 'agent' to keep skill/sop packs out.
+        - Picks the marketplace_template_version row with is_latest = TRUE.
         - Raises errors.NotFoundError(msg='template_not_found') when nothing matches.
         """
         if not template_id:
             raise errors.NotFoundError(msg='template_not_found')
-        if hasattr(db, 'marketplace_apps'):
-            app = next(
+        if hasattr(db, 'marketplace_templates'):
+            template = next(
                 (
-                    item for item in db.marketplace_apps
-                    if item.template_id == template_id and getattr(item, 'app_type', 'agent_template') == 'agent_template'
+                    item for item in db.marketplace_templates
+                    if item.template_id == template_id and getattr(item, 'template_type', 'agent') == 'agent'
                 ),
                 None,
             )
-            if not app:
+            if not template:
                 raise errors.NotFoundError(msg='template_not_found')
             version = next(
                 (
-                    item for item in getattr(db, 'marketplace_app_versions', [])
+                    item for item in getattr(db, 'marketplace_template_versions', [])
                     if item.template_id == template_id and getattr(item, 'is_latest', False)
                 ),
                 None,
@@ -318,23 +318,23 @@ class HermesAgentAppService:
         else:
             stmt = (
                 sa.select(
-                    MarketplaceApp.template_id,
-                    MarketplaceApp.name,
-                    MarketplaceApp.description,
-                    MarketplaceApp.emoji,
-                    MarketplaceApp.icon_url,
-                    MarketplaceApp.skill_dependencies,
+                    MarketplaceTemplate.template_id,
+                    MarketplaceTemplate.name,
+                    MarketplaceTemplate.description,
+                    MarketplaceTemplate.emoji,
+                    MarketplaceTemplate.icon_url,
+                    MarketplaceTemplate.skill_dependencies,
                     MarketplaceTemplateVersion.version,
                     MarketplaceTemplateVersion.package_url,
                     MarketplaceTemplateVersion.file_hash,
                 )
                 .join(
                     MarketplaceTemplateVersion,
-                    MarketplaceTemplateVersion.template_id == MarketplaceApp.template_id,
+                    MarketplaceTemplateVersion.template_id == MarketplaceTemplate.template_id,
                 )
                 .where(
-                    MarketplaceApp.template_id == template_id,
-                    sa.text("marketplace_app.app_type = 'agent_template'"),
+                    MarketplaceTemplate.template_id == template_id,
+                    MarketplaceTemplate.template_type == 'agent',
                     MarketplaceTemplateVersion.is_latest.is_(True),
                 )
                 .limit(1)
@@ -343,7 +343,7 @@ class HermesAgentAppService:
             if not row:
                 raise errors.NotFoundError(msg='template_not_found')
             return {
-                'app_id': row['app_id'],
+                'template_id': row['template_id'],
                 'name': row['name'],
                 'description': row['description'],
                 'emoji': row['emoji'],

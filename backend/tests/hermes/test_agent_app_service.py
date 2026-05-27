@@ -161,10 +161,10 @@ async def db_session(monkeypatch):
             ]
             # M1 §5.2: seed default 'assistant' template so create_agent's
             # _resolve_template call resolves without hitting a real DB.
-            self.marketplace_apps = [
+            self.marketplace_templates = [
                 _MarketplaceAppFixture(
-                    app_id='assistant',
-                    app_type='agent_template',
+                    template_id='assistant',
+                    template_type='agent',
                     name='通用助理',
                     description='Default M1 assistant template',
                     emoji='🤖',
@@ -172,9 +172,9 @@ async def db_session(monkeypatch):
                     skill_dependencies=None,
                 )
             ]
-            self.marketplace_app_versions = [
+            self.marketplace_template_versions = [
                 _MarketplaceAppFixture(
-                    app_id='assistant',
+                    template_id='assistant',
                     version='v1.0.0',
                     package_url='https://cdn.example.com/assistant-v1.0.0.tar.gz',
                     file_hash='sha256:fake-stub-hash',
