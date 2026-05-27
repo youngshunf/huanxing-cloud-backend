@@ -210,10 +210,14 @@ Translation:"""
             name_lang = source_lang
             if name_lang == 'en':
                 result['name_en'] = name
-                result['name_zh'] = await self.translate(name, 'en', 'zh')
+                translated_name = await self.translate(name, 'en', 'zh')
+                # 如果翻译失败（返回原文），则设置为 None
+                result['name_zh'] = translated_name if translated_name != name else None
             else:
                 result['name_zh'] = name
-                result['name_en'] = await self.translate(name, 'zh', 'en')
+                translated_name = await self.translate(name, 'zh', 'en')
+                # 如果翻译失败（返回原文），则设置为 None
+                result['name_en'] = translated_name if translated_name != name else None
 
         # Translate description (detect language separately)
         if description:
@@ -222,10 +226,14 @@ Translation:"""
 
             if desc_lang == 'en':
                 result['description_en'] = description
-                result['description_zh'] = await self.translate(description, 'en', 'zh')
+                translated_desc = await self.translate(description, 'en', 'zh')
+                # 如果翻译失败（返回原文），则设置为 None
+                result['description_zh'] = translated_desc if translated_desc != description else None
             else:
                 result['description_zh'] = description
-                result['description_en'] = await self.translate(description, 'zh', 'en')
+                translated_desc = await self.translate(description, 'zh', 'en')
+                # 如果翻译失败（返回原文），则设置为 None
+                result['description_en'] = translated_desc if translated_desc != description else None
 
         return result
 

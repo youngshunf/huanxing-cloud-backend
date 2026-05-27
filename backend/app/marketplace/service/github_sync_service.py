@@ -302,17 +302,26 @@ class GitHubSyncService:
         """
         skill_id = skill_data['skill_id']
 
+        # Translate name and description
+        name = skill_data.get('name', '')
+        description = skill_data.get('description', '')
+
+        translated = await translation_service.translate_skill_metadata(
+            name=name,
+            description=description
+        )
+
         # Check if skill exists
         existing_skill = await marketplace_skill_dao.get_by_id(db, skill_id)
 
         # Prepare skill record
         skill_record = {
             'skill_id': skill_id,
-            'name_en': skill_data.get('name_en'),
-            'name_zh': skill_data.get('name_zh'),
-            'description_en': skill_data.get('description_en'),
-            'description_zh': skill_data.get('description_zh'),
-            'source_language': skill_data.get('source_language'),
+            'name_en': translated.get('name_en'),
+            'name_zh': translated.get('name_zh'),
+            'description_en': translated.get('description_en'),
+            'description_zh': translated.get('description_zh'),
+            'source_language': translated.get('source_language', skill_data.get('source_language')),
             'icon_url': skill_data.get('icon_url'),
             'emoji': skill_data.get('emoji'),
             'author_name': skill_data.get('author_name'),
@@ -325,7 +334,8 @@ class GitHubSyncService:
             'download_count': skill_data.get('download_count', 0),
             'repo_path': skill_data.get('repo_path'),
             'git_commit_hash': skill_data.get('git_commit_hash'),
-            'synced_at': datetime.now()
+            'synced_at': datetime.now(),
+            'translated_at': datetime.now()
         }
 
         if existing_skill:
