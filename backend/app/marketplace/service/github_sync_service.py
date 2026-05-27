@@ -220,6 +220,8 @@ class GitHubSyncService:
         # Build skill data
         skill_data = {
             'skill_id': f"{category}/{skill_id}",
+            'namespace': category,  # 使用 category 作为 namespace
+            'slug': skill_slug,     # 使用目录名作为 slug
             'category': category,
             'repo_path': f"skills/{category}/{skill_slug}",
             'git_commit_hash': commit_hash,
@@ -274,6 +276,8 @@ class GitHubSyncService:
         # Build skill data
         skill_data = {
             'skill_id': f"{category}/{skill_slug}",
+            'namespace': category,  # 使用 category 作为 namespace
+            'slug': skill_slug,     # 使用目录名作为 slug
             'category': category,
             'repo_path': f"skills/{category}/{skill_slug}",
             'git_commit_hash': commit_hash,
