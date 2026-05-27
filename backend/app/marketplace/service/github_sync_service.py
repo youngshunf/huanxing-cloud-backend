@@ -16,6 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skill_dao
 from backend.app.marketplace.crud.crud_marketplace_skill_version import marketplace_skill_version_dao
 from backend.app.marketplace.crud.crud_marketplace_sync_log import marketplace_sync_log_dao
+from backend.app.marketplace.schema.marketplace_skill import CreateMarketplaceSkillParam, UpdateMarketplaceSkillParam
+from backend.app.marketplace.schema.marketplace_skill_version import CreateMarketplaceSkillVersionParam, UpdateMarketplaceSkillVersionParam
+from backend.app.marketplace.schema.marketplace_sync_log import CreateMarketplaceSyncLogParam, UpdateMarketplaceSyncLogParam
 from backend.app.marketplace.service.translation_service import translation_service
 from backend.common.log import log
 from backend.core.conf import settings
@@ -43,12 +46,13 @@ class GitHubSyncService:
         sync_log_id = None
         try:
             # Create sync log
-            sync_log = await marketplace_sync_log_dao.create(db, {
-                'sync_type': 'github',
-                'status': 'in_progress',
-                'started_at': datetime.now()
-            })
-            sync_log_id = sync_log.id
+            sync_log = await marketplace_sync_log_dao.create(db, CreateMarketplaceSyncLogParam(
+                sync_type='github',
+                status='in_progress',
+                started_at=datetime.now()
+            ))
+            await db.flush()
+            sync_log_id = sync_log.id if sync_log else None
 
             # Clone or pull repository
             await self._update_repository()
@@ -71,13 +75,15 @@ class GitHubSyncService:
                     log.error(f"Failed to sync skill {skill_data.get('skill_id')}: {e}")
 
             # Update sync log
-            await marketplace_sync_log_dao.update(db, sync_log_id, {
-                'status': 'success' if failed_count == 0 else 'partial',
-                'items_synced': synced_count,
-                'items_failed': failed_count,
-                'error_message': '\n'.join(errors) if errors else None,
-                'completed_at': datetime.now()
-            })
+            if sync_log_id:
+                await marketplace_sync_log_dao.update(db, sync_log_id, UpdateMarketplaceSyncLogParam(
+                    status='success' if failed_count == 0 else 'partial',
+                    items_synced=synced_count,
+                    items_failed=failed_count,
+                    error_message='\n'.join(errors) if errors else None,
+                    completed_at=datetime.now()
+                ))
+                await db.commit()
 
             return {
                 'success': True,
@@ -91,11 +97,12 @@ class GitHubSyncService:
 
             # Update sync log
             if sync_log_id:
-                await marketplace_sync_log_dao.update(db, sync_log_id, {
-                    'status': 'failed',
-                    'error_message': str(e),
-                    'completed_at': datetime.now()
-                })
+                await marketplace_sync_log_dao.update(db, sync_log_id, UpdateMarketplaceSyncLogParam(
+                    status='failed',
+                    error_message=str(e),
+                    completed_at=datetime.now()
+                ))
+                await db.commit()
 
             return {
                 'success': False,
@@ -314,7 +321,8 @@ class GitHubSyncService:
             'pricing_type': skill_data.get('pricing_type'),
             'price': skill_data.get('price'),
             'is_official': skill_data.get('is_official'),
-            'is_private': skill_data.get('is_private'),
+            'is_private': skill_data.get('is_private', False),
+            'download_count': skill_data.get('download_count', 0),
             'repo_path': skill_data.get('repo_path'),
             'git_commit_hash': skill_data.get('git_commit_hash'),
             'synced_at': datetime.now()
@@ -322,12 +330,15 @@ class GitHubSyncService:
 
         if existing_skill:
             # Update existing skill
-            await marketplace_skill_dao.update(db, existing_skill.id, skill_record)
+            await marketplace_skill_dao.update(db, existing_skill.id, UpdateMarketplaceSkillParam(**skill_record))
             db_skill_id = existing_skill.id
         else:
             # Create new skill
-            new_skill = await marketplace_skill_dao.create(db, skill_record)
-            db_skill_id = new_skill.id
+            await marketplace_skill_dao.create(db, CreateMarketplaceSkillParam(**skill_record))
+            await db.flush()
+            # Re-query to get the created skill
+            new_skill = await marketplace_skill_dao.get_by_id(db, skill_id)
+            db_skill_id = new_skill.id if new_skill else None
 
         # Sync versions
         versions = skill_data.get('versions', [])
@@ -359,20 +370,21 @@ class GitHubSyncService:
 
         # Prepare version record
         version_record = {
-            'skill_id': db_skill_id,
+            'skill_id': skill_id,
             'version': version,
-            'changelog_en': version_data.get('changelog_en'),
-            'changelog_zh': version_data.get('changelog_zh'),
-            'git_commit_hash': version_data.get('git_commit_hash'),
-            'released_at': version_data.get('released_at')
+            'changelog': version_data.get('changelog'),
+            'package_url': version_data.get('package_url'),
+            'file_hash': version_data.get('file_hash'),
+            'file_size': version_data.get('file_size'),
+            'is_latest': version_data.get('is_latest', True)
         }
 
         if existing_version:
             # Update existing version
-            await marketplace_skill_version_dao.update(db, existing_version.id, version_record)
+            await marketplace_skill_version_dao.update(db, existing_version.id, UpdateMarketplaceSkillVersionParam(**version_record))
         else:
             # Create new version
-            await marketplace_skill_version_dao.create(db, version_record)
+            await marketplace_skill_version_dao.create(db, CreateMarketplaceSkillVersionParam(**version_record))
 
 
 # Singleton instance
