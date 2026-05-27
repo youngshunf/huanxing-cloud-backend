@@ -38,14 +38,15 @@ def verify_github_signature(payload: bytes, signature: str) -> bool:
     Returns:
         True if signature is valid
     """
-    if not signature:
-        return False
-
     # Get webhook secret from settings
     secret = getattr(settings, 'GITHUB_WEBHOOK_SECRET', '')
     if not secret:
         log.warning("GITHUB_WEBHOOK_SECRET not configured, skipping signature verification")
         return True  # Allow if secret not configured (for development)
+
+    # If secret is configured but no signature provided, reject
+    if not signature:
+        return False
 
     # Signature format: sha256=<hash>
     if not signature.startswith('sha256='):
@@ -122,11 +123,19 @@ async def github_webhook_skills(
                 failed=result.get('failed', 0)
             ))
         else:
-            return response_base.fail(message=f"Skill sync failed: {result.get('error')}")
+            from backend.common.response.response_code import CustomResponse
+            return response_base.fail(
+                res=CustomResponse(code=500, msg=f"Skill sync failed: {result.get('error')}"),
+                data=WebhookResponse(message="Sync failed", synced=0, failed=0)
+            )
 
     except Exception as e:
         log.error(f"GitHub webhook error: {e}")
-        return response_base.fail(message=str(e))
+        from backend.common.response.response_code import CustomResponse
+        return response_base.fail(
+            res=CustomResponse(code=500, msg=str(e)),
+            data=WebhookResponse(message="Webhook error", synced=0, failed=0)
+        )
 
 
 @router.post(
@@ -191,8 +200,16 @@ async def github_webhook_apps(
                 failed=result.get('failed', 0)
             ))
         else:
-            return response_base.fail(message=f"App template sync failed: {result.get('error')}")
+            from backend.common.response.response_code import CustomResponse
+            return response_base.fail(
+                res=CustomResponse(code=500, msg=f"App template sync failed: {result.get('error')}"),
+                data=WebhookResponse(message="Sync failed", synced=0, failed=0)
+            )
 
     except Exception as e:
         log.error(f"GitHub webhook error: {e}")
-        return response_base.fail(message=str(e))
+        from backend.common.response.response_code import CustomResponse
+        return response_base.fail(
+            res=CustomResponse(code=500, msg=str(e)),
+            data=WebhookResponse(message="Webhook error", synced=0, failed=0)
+        )
