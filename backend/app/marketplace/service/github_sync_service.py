@@ -22,6 +22,9 @@ from backend.app.marketplace.schema.marketplace_sync_log import CreateMarketplac
 from backend.app.marketplace.service.translation_service import translation_service
 from backend.common.log import log
 from backend.core.conf import settings
+from backend.plugin.s3.crud.storage import s3_storage_dao
+from backend.plugin.s3.utils.file_ops import build_object_url, write_bytes
+from backend.database.db import async_db_session
 
 
 class GitHubSyncService:
@@ -201,13 +204,26 @@ class GitHubSyncService:
         # Detect if official skill
         is_official = review_status == 'official' or author == 'huanxing'
 
+        # Handle icon - upload to S3 if local file exists
+        icon_url = data.get('icon_s3_url') or data.get('icon_cdn_url') or data.get('icon')
+
+        # Check if we need to upload local icon to S3
+        if not icon_url or icon_url.startswith('https://cdn.huanxing.ai/'):
+            skill_dir = manifest_path.parent
+            uploaded_url = await self._upload_icon_to_s3(skill_dir, f"{category}/{skill_id}")
+            if uploaded_url:
+                icon_url = uploaded_url
+                # Update manifest.yaml with S3 URL
+                data['icon_s3_url'] = uploaded_url
+                await self._update_manifest_yaml(manifest_path, data)
+
         # Build skill data
         skill_data = {
             'skill_id': f"{category}/{skill_id}",
             'category': category,
             'repo_path': f"skills/{category}/{skill_slug}",
             'git_commit_hash': commit_hash,
-            'icon_url': data.get('icon_cdn_url', data.get('icon')),
+            'icon_url': icon_url,
             'emoji': data.get('emoji'),
             'author_name': author,
             'tags': json.dumps(data.get('tags', [])),
@@ -242,13 +258,26 @@ class GitHubSyncService:
         # Get git commit hash
         commit_hash = self.repo.head.commit.hexsha if self.repo else None
 
+        # Handle icon - upload to S3 if local file exists
+        icon_url = data.get('icon_s3_url') or data.get('icon')
+
+        # Check if we need to upload local icon to S3
+        if not icon_url or (isinstance(icon_url, str) and icon_url.startswith('https://cdn.huanxing.ai/')):
+            skill_dir = skill_json_path.parent
+            uploaded_url = await self._upload_icon_to_s3(skill_dir, f"{category}/{skill_slug}")
+            if uploaded_url:
+                icon_url = uploaded_url
+                # Update skill.json with S3 URL
+                data['icon_s3_url'] = uploaded_url
+                await self._update_skill_json(skill_json_path, data)
+
         # Build skill data
         skill_data = {
             'skill_id': f"{category}/{skill_slug}",
             'category': category,
             'repo_path': f"skills/{category}/{skill_slug}",
             'git_commit_hash': commit_hash,
-            'icon_url': data.get('icon'),
+            'icon_url': icon_url,
             'emoji': data.get('emoji'),
             'author_name': data.get('author'),
             'tags': json.dumps(data.get('tags', [])),
@@ -395,6 +424,98 @@ class GitHubSyncService:
         else:
             # Create new version
             await marketplace_skill_version_dao.create(db, CreateMarketplaceSkillVersionParam(**version_record))
+
+    async def _upload_icon_to_s3(self, skill_dir: Path, skill_id: str) -> str | None:
+        """
+        Upload local icon to S3 storage
+
+        Args:
+            skill_dir: Skill directory path
+            skill_id: Skill ID (e.g., "health/fitness")
+
+        Returns:
+            S3 URL or None if no icon found
+        """
+        # Check for icon files
+        for icon_name in ['icon.png', 'icon.svg', 'icon.jpg', 'icon.jpeg']:
+            icon_path = skill_dir / icon_name
+            if icon_path.exists():
+                try:
+                    log.info(f"Uploading icon to S3: {icon_path}")
+
+                    # Read icon file
+                    with open(icon_path, 'rb') as f:
+                        icon_content = f.read()
+
+                    # Get default S3 storage
+                    async with async_db_session() as db:
+                        s3_storages = await s3_storage_dao.get_all(db)
+                        if not s3_storages:
+                            log.error("No S3 storage configured")
+                            return None
+
+                        s3_storage = s3_storages[0]
+
+                        # Generate S3 path: marketplace/skills/{skill_id}/icon.{ext}
+                        ext = icon_path.suffix
+                        s3_path = f"marketplace/skills/{skill_id.replace('/', '-')}/icon{ext}"
+
+                        # Determine content type
+                        content_type = None
+                        if ext == '.svg':
+                            content_type = 'image/svg+xml'
+                        elif ext in ['.png', '.jpg', '.jpeg']:
+                            content_type = f'image/{ext[1:]}'
+
+                        # Upload to S3
+                        await write_bytes(s3_storage, s3_path, icon_content, content_type)
+
+                        # Build public URL
+                        s3_url = build_object_url(s3_storage, s3_path)
+
+                    log.info(f"Icon uploaded to S3: {s3_url}")
+                    return s3_url
+
+                except Exception as e:
+                    log.error(f"Failed to upload icon to S3: {e}")
+                    return None
+
+        log.warning(f"No icon found for skill {skill_id}")
+        return None
+
+    async def _update_manifest_yaml(self, manifest_path: Path, data: dict):
+        """
+        Update manifest.yaml with new data (e.g., icon_s3_url)
+
+        Args:
+            manifest_path: Path to manifest.yaml
+            data: Updated data
+        """
+        try:
+            with open(manifest_path, 'w', encoding='utf-8') as f:
+                yaml.dump(data, f, allow_unicode=True, sort_keys=False)
+
+            log.info(f"Updated manifest.yaml: {manifest_path}")
+
+        except Exception as e:
+            log.error(f"Failed to update manifest.yaml: {e}")
+
+    async def _update_skill_json(self, skill_json_path: Path, data: dict):
+        """
+        Update skill.json with new data (e.g., icon_s3_url)
+
+        Args:
+            skill_json_path: Path to skill.json
+            data: Updated data
+        """
+        try:
+            with open(skill_json_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            log.info(f"Updated skill.json: {skill_json_path}")
+
+        except Exception as e:
+            log.error(f"Failed to update skill.json: {e}")
 
 
 # Singleton instance
