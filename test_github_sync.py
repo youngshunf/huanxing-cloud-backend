@@ -14,6 +14,10 @@ async def test_sync():
     async with AsyncSession(engine) as db:
         print("开始 GitHub 同步...")
         result = await github_sync_service.sync_from_github(db, force=True)
+
+        # 提交事务
+        await db.commit()
+
         print(f"\n同步结果:")
         print(f"  成功: {result.get('success')}")
         print(f"  已同步: {result.get('synced', 0)}")

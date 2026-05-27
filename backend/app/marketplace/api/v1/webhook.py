@@ -15,7 +15,7 @@ from backend.app.marketplace.service.github_app_sync_service import github_app_s
 from backend.common.log import log
 from backend.common.response.response_schema import ResponseSchemaModel, response_base
 from backend.core.conf import settings
-from backend.database.db import CurrentSession
+from backend.database.db import CurrentSessionTransaction
 
 router = APIRouter()
 
@@ -68,7 +68,7 @@ def verify_github_signature(payload: bytes, signature: str) -> bool:
 )
 async def github_webhook_skills(
     request: Request,
-    db: CurrentSession,
+    db: CurrentSessionTransaction,
     x_hub_signature_256: str | None = Header(None, alias='X-Hub-Signature-256'),
     x_github_event: str | None = Header(None, alias='X-GitHub-Event'),
 ) -> ResponseSchemaModel[WebhookResponse]:
@@ -145,7 +145,7 @@ async def github_webhook_skills(
 )
 async def github_webhook_apps(
     request: Request,
-    db: CurrentSession,
+    db: CurrentSessionTransaction,
     x_hub_signature_256: str | None = Header(None, alias='X-Hub-Signature-256'),
     x_github_event: str | None = Header(None, alias='X-GitHub-Event'),
 ) -> ResponseSchemaModel[WebhookResponse]:
