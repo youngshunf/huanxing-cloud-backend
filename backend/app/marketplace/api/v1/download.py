@@ -82,13 +82,13 @@ class AppDownloadResponse(BaseModel):
 
 
 @router.get(
-    '/skill/{skill_id}/{version}',
+    '/skill/{skill_id:path}/{version}',
     summary='下载技能包',
     description='获取技能包的下载链接，同时记录下载历史',
 )
 async def download_skill(
     db: CurrentSession,
-    skill_id: Annotated[str, PathParam(description='技能ID')],
+    skill_id: Annotated[str, PathParam(description='技能ID，支持包含斜杠的格式（如 clawhub/owner/slug）')],
     version: Annotated[str, PathParam(description='版本号，可以是具体版本或 latest')],
 ):
     # 获取技能
@@ -131,7 +131,7 @@ async def download_skill(
 
 
 @router.post(
-    '/skill/{skill_id}/{version}',
+    '/skill/{skill_id:path}/{version}',
     summary='下载技能包并记录',
     description='获取技能包的下载链接，需要登录，记录下载历史',
     dependencies=[DependsJwtAuth],
@@ -139,8 +139,8 @@ async def download_skill(
 async def download_skill_with_record(
     db: CurrentSessionTransaction,
     request: Request,
-    skill_id: Annotated[str, Path(description='技能ID')],
-    version: Annotated[str, Path(description='版本号，可以是具体版本或 latest')],
+    skill_id: Annotated[str, PathParam(description='技能ID，支持包含斜杠的格式（如 clawhub/owner/slug）')],
+    version: Annotated[str, PathParam(description='版本号，可以是具体版本或 latest')],
 ) -> ResponseSchemaModel[DownloadResponse]:
     # 获取技能
     skill = await marketplace_skill_dao.get_by_id(db, skill_id)
@@ -179,14 +179,14 @@ async def download_skill_with_record(
 
 
 @router.get(
-    '/app/{app_id}/{version}',
+    '/app/{app_id:path}/{version}',
     summary='下载应用包',
     description='获取应用包的下载链接，包含依赖技能信息',
 )
 async def download_app(
     db: CurrentSession,
-    app_id: Annotated[str, Path(description='应用ID')],
-    version: Annotated[str, Path(description='版本号，可以是具体版本或 latest')],
+    app_id: Annotated[str, PathParam(description='应用ID，支持包含斜杠的格式')],
+    version: Annotated[str, PathParam(description='版本号，可以是具体版本或 latest')],
 ) -> ResponseSchemaModel[AppDownloadResponse]:
     # 获取应用
     app = await marketplace_template_dao.get_by_id(db, app_id)
@@ -229,7 +229,7 @@ async def download_app(
 
 
 @router.post(
-    '/app/{app_id}/{version}',
+    '/app/{app_id:path}/{version}',
     summary='下载应用包并记录',
     description='获取应用包的下载链接，需要登录，记录下载历史',
     dependencies=[DependsJwtAuth],
@@ -237,8 +237,8 @@ async def download_app(
 async def download_app_with_record(
     db: CurrentSessionTransaction,
     request: Request,
-    app_id: Annotated[str, Path(description='应用ID')],
-    version: Annotated[str, Path(description='版本号，可以是具体版本或 latest')],
+    app_id: Annotated[str, PathParam(description='应用ID，支持包含斜杠的格式')],
+    version: Annotated[str, PathParam(description='版本号，可以是具体版本或 latest')],
 ) -> ResponseSchemaModel[AppDownloadResponse]:
     # 获取应用
     app = await marketplace_template_dao.get_by_id(db, app_id)
