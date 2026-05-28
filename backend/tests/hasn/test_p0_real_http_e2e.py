@@ -22,6 +22,7 @@ from backend.app.hasn.api.v1.app import workspace as workspace_api
 from backend.app.hasn.api.v1 import sync as sync_api
 from backend.app.mcp.routes import mcp_router
 from backend.app.hasn.model import HasnAiNativeAppAudit, HasnSessions, HasnUserActiveWorkspace
+from backend.common.dataclasses import AgentTokenPayload
 from backend.app.hasn.schema.hasn_message_hub import InboxItem, InboxPullRequest, InboxPullResponse
 from backend.app.hasn.schema.hasn_onboarding import SandboxSummary
 from backend.app.hasn.service.hasn_message_hub_service import (
@@ -50,7 +51,7 @@ from backend.app.hasn.service.workspace_notification_subscriber import (
 )
 from backend.common.exception import errors
 from backend.common.exception.exception_handler import register_exception
-from backend.common.security.agent_jwt import jwt_encode_agent
+from backend.common.security.agent_jwt import jwt_decode_agent, jwt_encode_agent
 from backend.database.db import get_db, get_db_transaction
 
 if TYPE_CHECKING:
@@ -260,14 +261,22 @@ class TaskRecord:
     name: str
     description: str | None
     prompt: str
+    system_prompt: str | None
+    input_template: str | None
     skill_bundle_ids: list[str]
+    skill_bundle_refs: list[dict[str, Any]]
     skill_ids: list[str]
+    skill_refs: list[dict[str, Any]]
     workflow_id: int | None
+    workflow: dict[str, Any]
     enabled_toolsets: list[str] | None
     context_from_task_id: int | None
     schedule_type: str
     schedule_config: dict[str, Any]
     schedule_display: str | None
+    timezone: str
+    misfire_policy: str
+    catchup_limit: int | None
     enabled: bool
     state: str
     next_run_at: Any
@@ -282,6 +291,11 @@ class TaskRecord:
     created_time: Any
     updated_time: Any
     created_by: str | None
+    task_uuid: str | None
+    executor_policy: str
+    executor_node_id: str | None
+    task_revision: int
+    deleted_at: Any
 
 
 @dataclass
@@ -619,21 +633,77 @@ class FakeOnboardingGateway:
 @dataclass
 class InMemorySyncGateway:
     reports: list[dict[str, Any]] = field(default_factory=list)
+    run_summaries: dict[str, dict[str, Any]] = field(default_factory=dict)
     client_events: list[Any] = field(default_factory=list)
     sync_events: list[Any] = field(default_factory=list)
     owner_user_ids: dict[str, int] = field(default_factory=lambda: {'h_p0_owner': 7})
     namespace_revisions: dict[tuple[str, str, str], dict[str, Any]] = field(default_factory=dict)
+    task_records: dict[str, dict[str, Any]] = field(default_factory=dict)
+    assignments: dict[str, dict[str, Any]] = field(default_factory=dict)
+    inbox_event_ids: set[tuple[str, str, str]] = field(default_factory=set)
 
     async def owns_owner(self, _db: Any, *, owner_id: str, user_id: int) -> bool:
         return self.owner_user_ids.get(owner_id) == user_id
 
     async def save_runtime_report(self, _db: Any, report: dict[str, Any]) -> None:
         self.reports.append(report)
+        assignment = _fake_assignment_from_runtime_report(report)
+        for task_id, task in list(self.task_records.items()):
+            if task.get('owner_id') != report['owner_id'] or task.get('agent_id') != report['agent_hasn_id']:
+                continue
+            previous = self.assignments.get(task_id)
+            old_node_id = str((previous or {}).get('executor_node_id') or '')
+            if previous == assignment:
+                continue
+            self.assignments[task_id] = dict(assignment)
+            self._append_event(
+                event_type='task.assignment_updated',
+                payload={
+                    **task,
+                    'task_uuid': task_id,
+                    'executor_kind': assignment['executor_kind'],
+                    'executor_policy': assignment['executor_kind'],
+                    'executor_node_id': assignment['executor_node_id'],
+                    'binding_id': assignment['binding_id'],
+                    'assignment_state': assignment['assignment_state'],
+                    'previous_executor_node_id': old_node_id or None,
+                    'visible_node_ids': [assignment['executor_node_id']] if assignment['executor_node_id'] else [],
+                },
+            )
+            if old_node_id and old_node_id != assignment['executor_node_id']:
+                self._append_event(
+                    event_type='task.updated',
+                    payload={
+                        **task,
+                        'state': 'waiting_for_runtime',
+                        'executor_policy': assignment['executor_kind'],
+                        'executor_node_id': assignment['executor_node_id'],
+                        'assignment_state': assignment['assignment_state'],
+                        'visible_node_ids': [old_node_id],
+                    },
+                )
+            if assignment['executor_node_id']:
+                self._append_event(
+                    event_type='task.updated',
+                    payload={
+                        **task,
+                        'executor_policy': assignment['executor_kind'],
+                        'executor_node_id': assignment['executor_node_id'],
+                        'assignment_state': assignment['assignment_state'],
+                        'visible_node_ids': [assignment['executor_node_id']],
+                    },
+                )
 
     async def pull_events(self, _db: Any, *, owner_id: str, after_revision: int, limit: int) -> list[Any]:
         from backend.app.hasn.schema.hasn_sync import SyncEventRecord
 
-        events = [event for event in self.sync_events if event.revision > after_revision]
+        events = [
+            event
+            for event in self.sync_events
+            if event.payload.get('owner_id', owner_id) == owner_id and event.revision > after_revision
+            and not event.event_type.startswith('task.')
+            and event.event_type != 'task_run.summary_reported'
+        ]
         if self.reports and not events:
             events.append(SyncEventRecord(
                 event_id='se_runtime_reported',
@@ -691,6 +761,157 @@ class InMemorySyncGateway:
         self.namespace_revisions[revision_key] = {'revision': namespace_revision, 'last_event_id': event_id}
         self.client_events.append((owner_id, node_id, event))
         return revision
+
+    async def save_task_event(self, _db: Any, *, owner_id: str, node_id: str, event: Any) -> int | None:
+        from backend.app.hasn.service.hasn_sync_service import TaskSyncConflictError
+
+        if (owner_id, node_id, event.client_event_id) in self.inbox_event_ids:
+            return self._latest_revision()
+
+        self.inbox_event_ids.add((owner_id, node_id, event.client_event_id))
+        payload = dict(event.payload.get('task') if isinstance(event.payload.get('task'), dict) else event.payload)
+        task_id = str(payload.get('task_id') or event.dedupe_key or event.client_event_id)
+        existing = self.task_records.get(task_id)
+        if existing is not None:
+            if event.event_type != 'task.deleted' and existing.get('state') == 'deleted':
+                raise TaskSyncConflictError
+            base_revision = payload.get('base_revision')
+            if base_revision is not None and int(base_revision) < int(existing.get('task_revision', 0)):
+                raise TaskSyncConflictError
+        payload['task_id'] = task_id
+        payload['owner_id'] = owner_id
+        if event.event_type == 'task.deleted':
+            payload.setdefault('state', 'deleted')
+            payload.setdefault('deleted_at', payload.get('updated_at'))
+            updated_record = dict(existing or {})
+            updated_record.update(payload)
+            updated_record['task_revision'] = int(updated_record.get('task_revision', 0)) + 1
+            self.task_records[task_id] = updated_record
+        else:
+            previous_revision = int(existing.get('task_revision', 0)) if existing else 0
+            payload['task_revision'] = int(payload.get('base_revision') or previous_revision) + 1
+            self.task_records[task_id] = payload
+        self.assignments[task_id] = {
+            'executor_kind': str(self.task_records[task_id].get('executor_policy') or 'local_node'),
+            'executor_node_id': str(self.task_records[task_id].get('executor_node_id') or node_id),
+            'binding_id': self.task_records[task_id].get('binding_id'),
+            'assignment_state': 'unresolved' if self.task_records[task_id].get('state') == 'deleted' else 'assigned',
+        }
+
+        revision = self._append_event(
+            event_type=event.event_type,
+            payload={
+                **self.task_records[task_id],
+                'client_event_id': event.client_event_id,
+                'node_id': node_id,
+            },
+        )
+        self.client_events.append((owner_id, node_id, event))
+        return revision
+
+    async def pull_task_events(
+        self, _db: Any, *, owner_id: str, node_id: str | None, after_revision: int, limit: int
+    ) -> list[Any]:
+        return [
+            event
+            for event in self.sync_events
+            if (event.event_type.startswith('task.') or event.event_type == 'task_run.summary_reported')
+            and event.payload.get('owner_id') == owner_id
+            and event.revision > after_revision
+            and self._task_event_visible_to_node(event, node_id)
+        ][:limit]
+
+    def _task_event_visible_to_node(self, event: Any, node_id: str | None) -> bool:
+        if not node_id or event.event_type == 'task_run.summary_reported':
+            return True
+        visible_node_ids = event.payload.get('visible_node_ids')
+        if isinstance(visible_node_ids, list):
+            return node_id in {str(item) for item in visible_node_ids}
+        task_id = str(event.payload.get('task_uuid') or event.payload.get('task_id') or '')
+        assignment = self.assignments.get(task_id)
+        if assignment is not None:
+            return assignment.get('assignment_state') == 'assigned' and assignment.get('executor_node_id') == node_id
+        return event.payload.get('node_id') == node_id or not event.payload.get('node_id')
+
+    async def save_task_run_summary(
+        self,
+        _db: Any,
+        *,
+        owner_id: str,
+        agent_hasn_id: str,
+        summary: dict[str, Any],
+    ) -> dict[str, Any]:
+        task_uuid = str(summary.get('task_uuid') or summary.get('task_id') or '')
+        task = self.task_records.get(task_uuid)
+        if task is not None and (task.get('owner_id') != owner_id or task.get('agent_id') != agent_hasn_id):
+            raise PermissionError('agent cannot report this task run')
+        dedupe_key = str(summary.get('dedupe_key') or summary.get('run_uuid') or summary.get('run_id'))
+        stored = {
+            **summary,
+            'run_uuid': str(summary.get('run_uuid') or summary.get('run_id') or summary.get('task_run_id')),
+            'task_uuid': task_uuid,
+            'owner_id': owner_id,
+            'agent_id': agent_hasn_id,
+            'dedupe_key': dedupe_key,
+        }
+        if dedupe_key not in self.run_summaries:
+            self.run_summaries[dedupe_key] = stored
+            self._append_event(
+                event_type='task_run.summary_reported',
+                payload={
+                    'owner_id': owner_id,
+                    'agent_id': agent_hasn_id,
+                    'task_id': task_uuid,
+                    'task_uuid': task_uuid,
+                    'run_uuid': stored['run_uuid'],
+                    'dedupe_key': dedupe_key,
+                    'status': stored.get('status'),
+                    'output_summary': stored.get('output_summary'),
+                    'error': stored.get('error'),
+                    'deep_link': stored.get('deep_link'),
+                },
+            )
+        return self.run_summaries[dedupe_key]
+
+    def _append_event(self, *, event_type: str, payload: dict[str, Any]) -> int:
+        from backend.app.hasn.schema.hasn_sync import SyncEventRecord
+
+        revision = self._latest_revision() + 1
+        self.sync_events.append(SyncEventRecord(
+            event_id=f'se_task_{revision}',
+            event_type=event_type,
+            revision=revision,
+            created_at=datetime(2026, 5, 1, 0, revision, tzinfo=timezone.utc),
+            payload=payload,
+        ))
+        return revision
+
+    def _latest_revision(self) -> int:
+        return max((event.revision for event in self.sync_events), default=0)
+
+
+def _fake_assignment_from_runtime_report(report: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(report.get('summary_json') or {})
+    dispatchable = (
+        report.get('runtime_status') == 'online'
+        and report.get('adapter_registered', True)
+        and report.get('handle_available', True)
+        and report.get('node_id')
+    )
+    if not dispatchable:
+        return {
+            'executor_kind': 'unresolved',
+            'executor_node_id': '',
+            'binding_id': report.get('binding_id'),
+            'assignment_state': 'unresolved',
+        }
+    is_cloud = bool(summary.get('cloud_runtime_host')) or summary.get('runtime_host') == 'cloud'
+    return {
+        'executor_kind': 'cloud_runtime_host' if is_cloud else 'local_node',
+        'executor_node_id': report['node_id'],
+        'binding_id': report.get('binding_id'),
+        'assignment_state': 'assigned',
+    }
 
 
 @dataclass
@@ -838,6 +1059,34 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app.dependency_overrides[message_hub_api.DependsJwtAuth.dependency] = jwt_override
     app.dependency_overrides[onboarding_api.DependsJwtAuth.dependency] = jwt_override
     app.dependency_overrides[task_sessions_api.DependsJwtAuth.dependency] = jwt_override
+    async def fake_agent_jwt(request: Request) -> AgentTokenPayload:
+        auth = request.headers.get('Authorization', '')
+        if not auth.startswith('Bearer '):
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=401, detail='Agent JWT required')
+        token = auth.removeprefix('Bearer ').strip()
+        if token == 'agent.jwt.task':
+            payload = AgentTokenPayload(
+                agent_hasn_id=P0_AGENT_ID,
+                agent_name=DEFAULT_AGENT_DISPLAY_NAME,
+                owner_hasn_id=P0_OWNER_ID,
+                owner_user_id=P0_OWNER_USER_ID,
+                scopes=['task.run.report'],
+                session_uuid=P0_AGENT_SESSION_UUID,
+                expire_time=P0_AGENT_EXPIRE_TIME,
+            )
+        else:
+            from fastapi import HTTPException
+
+            try:
+                payload = jwt_decode_agent(token)
+            except Exception as exc:
+                raise HTTPException(status_code=401, detail='Agent JWT required') from exc
+        request.state.agent = payload
+        return payload
+
+    app.dependency_overrides[sync_api.DependsAgentJwtAuth.dependency] = fake_agent_jwt
     monkeypatch.setattr(onboarding_api, 'jwt_decode', lambda _token: SimpleNamespace(id=7))
 
     async def fake_token_creator(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
@@ -1478,6 +1727,451 @@ def test_runtime_report_rejects_owner_not_bound_to_authenticated_user(monkeypatc
 
     assert response.status_code == 403
     assert sync_gateway.reports == []
+
+
+def test_task_sync_push_pull_deduplicates_and_uses_task_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, sync_gateway = make_sync_auth_app(monkeypatch, user_id=7)
+    client = TestClient(app)
+    auth = {'Authorization': 'Bearer jwt-p0-task-sync'}
+    task_event = {
+        'client_event_id': 'ce_task_created_1',
+        'event_type': 'task.created',
+        'hasn_id': 'h_p0_owner',
+        'dedupe_key': 'task_local_1',
+        'payload': {
+            'task_id': 'task_local_1',
+            'owner_id': 'h_p0_owner',
+            'agent_id': 'a_p0_default',
+            'name': '日报任务',
+            'description': '生成日报',
+            'prompt': '生成日报',
+            'system_prompt': '你是任务执行 Agent',
+            'skill_bundle_ids': ['legacy-backend-dev'],
+            'skill_bundle_refs': [
+                {
+                    'package_id': 'huanxing/backend-dev',
+                    'version': '1.0.0',
+                    'bundle_slug': 'backend-dev',
+                    'command_key': '/backend-dev',
+                    'content_hash': 'sha256:abc123',
+                }
+            ],
+            'skill_ids': ['pytest'],
+            'schedule_type': 'once',
+            'schedule_config': {'run_at': '2026-05-22T09:00:00Z'},
+            'schedule_display': '一次性执行',
+            'enabled': True,
+            'state': 'scheduled',
+            'next_run_at': 1_779_721_000,
+            'run_count': 0,
+            'repeat_times': None,
+            'repeat_completed': 0,
+            'sync_status': 'synced',
+            'created_at': 1_779_720_000,
+            'updated_at': 1_779_720_000,
+        },
+    }
+
+    first_push = client.post(
+        '/api/v1/hasn/tasks/sync/push',
+        headers=auth,
+        json={'owner_id': 'h_p0_owner', 'node_id': 'n_a', 'events': [task_event]},
+    )
+    duplicate_push = client.post(
+        '/api/v1/hasn/tasks/sync/push',
+        headers=auth,
+        json={'owner_id': 'h_p0_owner', 'node_id': 'n_a', 'events': [task_event]},
+    )
+    general_pull = client.post(
+        '/api/v1/hasn/sync/pull',
+        headers=auth,
+        json={'owner_id': 'h_p0_owner', 'cursor': 'owner:h_p0_owner:0'},
+    )
+    task_pull = client.post(
+        '/api/v1/hasn/tasks/sync/pull',
+        headers=auth,
+        json={'owner_id': 'h_p0_owner', 'cursor': 'owner:h_p0_owner::tasks:0', 'limit': 10},
+    )
+
+    assert first_push.status_code == 200, first_push.text
+    assert first_push.json()['accepted'] == 1
+    assert first_push.json()['next_cursor'] == 'owner:h_p0_owner:task:1'
+    assert duplicate_push.status_code == 200, duplicate_push.text
+    assert duplicate_push.json()['accepted'] == 1
+    assert len(sync_gateway.task_records) == 1
+    assert len([event for event in sync_gateway.sync_events if event.event_type == 'task.created']) == 1
+    assert general_pull.status_code == 200
+    assert general_pull.json()['next_cursor'] == 'owner:h_p0_owner:0'
+    assert general_pull.json()['events'] == []
+    assert task_pull.status_code == 200, task_pull.text
+    body = task_pull.json()
+    assert body['next_cursor'] == 'owner:h_p0_owner:task:1'
+    assert [event['event_type'] for event in body['events']] == ['task.created']
+    assert body['events'][0]['payload']['task_id'] == 'task_local_1'
+    assert body['events'][0]['payload']['skill_bundle_refs'][0]['bundle_slug'] == 'backend-dev'
+
+
+def test_task_sync_push_rejects_private_runtime_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, sync_gateway = make_sync_auth_app(monkeypatch, user_id=7)
+    client = TestClient(app)
+
+    response = client.post(
+        '/api/v1/hasn/tasks/sync/push',
+        headers={'Authorization': 'Bearer jwt-p0-task-sync'},
+        json={
+            'owner_id': 'h_p0_owner',
+            'node_id': 'n_a',
+            'events': [
+                {
+                    'client_event_id': 'ce_task_private_runtime',
+                    'event_type': 'task.created',
+                    'dedupe_key': 'task_private_runtime',
+                    'payload': {
+                        'task_id': 'task_private_runtime',
+                        'owner_id': 'h_p0_owner',
+                        'agent_id': 'a_p0_default',
+                        'name': '带本地路径的任务',
+                        'prompt': 'must be rejected',
+                        'schedule_type': 'once',
+                        'schedule_config': {'run_at': '2026-05-22T09:00:00Z'},
+                        'runtime': {'workspace_path': '/Users/mac/private/project'},
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()['accepted'] == 0
+    assert response.json()['rejected'][0]['name'] == 'ERR_RUNTIME_PRIVATE_METADATA_REJECTED'
+    assert sync_gateway.task_records == {}
+
+
+def test_task_sync_delete_tombstone_reaches_next_task_pull(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, _sync_gateway = make_sync_auth_app(monkeypatch, user_id=7)
+    client = TestClient(app)
+    auth = {'Authorization': 'Bearer jwt-p0-task-sync'}
+
+    response = client.post(
+        '/api/v1/hasn/tasks/sync/push',
+        headers=auth,
+        json={
+            'owner_id': 'h_p0_owner',
+            'node_id': 'n_a',
+            'events': [
+                {
+                    'client_event_id': 'ce_task_deleted_1',
+                    'event_type': 'task.deleted',
+                    'hasn_id': 'h_p0_owner',
+                    'dedupe_key': 'task_local_deleted',
+                    'payload': {
+                        'task_id': 'task_local_deleted',
+                        'owner_id': 'h_p0_owner',
+                        'agent_id': 'a_p0_default',
+                        'updated_at': 1_779_720_100,
+                    },
+                }
+            ],
+        },
+    )
+    pull = client.post(
+        '/api/v1/hasn/tasks/sync/pull',
+        headers=auth,
+        json={'owner_id': 'h_p0_owner', 'cursor': 'owner:h_p0_owner::tasks:0'},
+    )
+
+    assert response.status_code == 200, response.text
+    assert pull.status_code == 200, pull.text
+    assert pull.json()['events'][0]['event_type'] == 'task.deleted'
+    assert pull.json()['events'][0]['payload']['state'] == 'deleted'
+
+
+def test_task_sync_push_rejects_stale_base_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, sync_gateway = make_sync_auth_app(monkeypatch, user_id=7)
+    client = TestClient(app)
+    auth = {'Authorization': 'Bearer jwt-p0-task-sync'}
+    create_event = {
+        'client_event_id': 'ce_task_conflict_create',
+        'event_type': 'task.created',
+        'hasn_id': 'h_p0_owner',
+        'dedupe_key': 'task_conflict_1',
+        'payload': {
+            'task_id': 'task_conflict_1',
+            'owner_id': 'h_p0_owner',
+            'agent_id': 'a_p0_default',
+            'name': '原始任务',
+            'prompt': 'do it',
+            'schedule_type': 'once',
+            'schedule_config': {'run_at': '2026-05-22T09:00:00Z'},
+        },
+    }
+    stale_update_event = {
+        'client_event_id': 'ce_task_conflict_update',
+        'event_type': 'task.updated',
+        'hasn_id': 'h_p0_owner',
+        'dedupe_key': 'task_conflict_1',
+        'payload': {
+            'task_id': 'task_conflict_1',
+            'owner_id': 'h_p0_owner',
+            'agent_id': 'a_p0_default',
+            'name': '过期编辑',
+            'prompt': 'stale edit',
+            'base_revision': 0,
+            'schedule_type': 'once',
+            'schedule_config': {'run_at': '2026-05-22T10:00:00Z'},
+        },
+    }
+
+    created = client.post(
+        '/api/v1/hasn/tasks/sync/push',
+        headers=auth,
+        json={'owner_id': 'h_p0_owner', 'node_id': 'n_a', 'events': [create_event]},
+    )
+    stale = client.post(
+        '/api/v1/hasn/tasks/sync/push',
+        headers=auth,
+        json={'owner_id': 'h_p0_owner', 'node_id': 'n_b', 'events': [stale_update_event]},
+    )
+    pull = client.post(
+        '/api/v1/hasn/tasks/sync/pull',
+        headers=auth,
+        json={'owner_id': 'h_p0_owner', 'cursor': 'owner:h_p0_owner::tasks:0', 'limit': 10},
+    )
+
+    assert created.status_code == 200, created.text
+    assert created.json()['accepted'] == 1
+    assert stale.status_code == 200, stale.text
+    assert stale.json()['accepted'] == 0
+    assert stale.json()['rejected'][0]['name'] == 'ERR_TASK_SYNC_CONFLICT'
+    assert sync_gateway.task_records['task_conflict_1']['name'] == '原始任务'
+    assert pull.status_code == 200, pull.text
+    assert [event['event_type'] for event in pull.json()['events']] == ['task.created']
+
+
+def test_task_sync_pull_follows_agent_runtime_host_assignment(monkeypatch: pytest.MonkeyPatch) -> None:
+    app, sync_gateway = make_sync_auth_app(monkeypatch, user_id=7)
+    client = TestClient(app)
+    auth = {'Authorization': 'Bearer jwt-p0-task-sync'}
+    task_event = {
+        'client_event_id': 'ce_task_assignment_create',
+        'event_type': 'task.created',
+        'hasn_id': 'h_p0_owner',
+        'dedupe_key': 'task_assignment_1',
+        'payload': {
+            'task_id': 'task_assignment_1',
+            'owner_id': 'h_p0_owner',
+            'agent_id': 'a_p0_default',
+            'name': '跟随 Runtime 的任务',
+            'prompt': 'run where the agent lives',
+            'schedule_type': 'once',
+            'schedule_config': {'run_at': '2026-05-22T09:00:00Z'},
+            'enabled': True,
+            'state': 'scheduled',
+            'created_at': 1_779_720_000,
+            'updated_at': 1_779_720_000,
+        },
+    }
+
+    created = client.post(
+        '/api/v1/hasn/tasks/sync/push',
+        headers={**auth, 'X-Node-Id': 'n_local'},
+        json={'owner_id': 'h_p0_owner', 'node_id': 'n_local', 'events': [task_event]},
+    )
+    local_initial_pull = client.post(
+        '/api/v1/hasn/tasks/sync/pull',
+        headers={**auth, 'X-Node-Id': 'n_local'},
+        json={'owner_id': 'h_p0_owner', 'cursor': 'owner:h_p0_owner::tasks:0', 'limit': 10},
+    )
+    moved_runtime = client.post(
+        '/api/v1/hasn/runtime/report',
+        headers=auth,
+        json={
+            'owner_id': 'h_p0_owner',
+            'node_id': 'n_cloud',
+            'runtime_summaries': [
+                {
+                    'agent_id': 'a_p0_default',
+                    'binding_id': 'bind_cloud_default',
+                    'runtime_type': 'hermes',
+                    'status': 'online',
+                    'adapter_registered': True,
+                    'handle_available': True,
+                    'runtime_revision': 2,
+                    'summary_json': {'runtime_host': 'cloud', 'cloud_runtime_host': True},
+                }
+            ],
+        },
+    )
+    old_node_incremental_pull = client.post(
+        '/api/v1/hasn/tasks/sync/pull',
+        headers={**auth, 'X-Node-Id': 'n_local'},
+        json={
+            'owner_id': 'h_p0_owner',
+            'cursor': local_initial_pull.json()['next_cursor'],
+            'limit': 10,
+        },
+    )
+    cloud_node_pull = client.post(
+        '/api/v1/hasn/tasks/sync/pull',
+        headers={**auth, 'X-Node-Id': 'n_cloud'},
+        json={'owner_id': 'h_p0_owner', 'cursor': 'owner:h_p0_owner::tasks:0', 'limit': 10},
+    )
+
+    assert created.status_code == 200, created.text
+    assert local_initial_pull.status_code == 200, local_initial_pull.text
+    assert [event['event_type'] for event in local_initial_pull.json()['events']] == ['task.created']
+    assert moved_runtime.status_code == 200, moved_runtime.text
+    assert old_node_incremental_pull.status_code == 200, old_node_incremental_pull.text
+    assert [event['event_type'] for event in old_node_incremental_pull.json()['events']] == ['task.updated']
+    assert old_node_incremental_pull.json()['events'][0]['payload']['state'] == 'waiting_for_runtime'
+    assert cloud_node_pull.status_code == 200, cloud_node_pull.text
+    cloud_events = cloud_node_pull.json()['events']
+    assert 'task.assignment_updated' in [event['event_type'] for event in cloud_events]
+    assert any(event['payload'].get('state') == 'scheduled' for event in cloud_events)
+    assignment = sync_gateway.assignments['task_assignment_1']
+    assert assignment['executor_kind'] == 'cloud_runtime_host'
+    assert assignment['executor_node_id'] == 'n_cloud'
+
+
+def test_task_run_summary_requires_agent_jwt_and_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(make_app(monkeypatch))
+    owner_auth = {'Authorization': 'Bearer jwt-p0-real-http'}
+    agent_auth = {'Authorization': 'Bearer agent.jwt.task'}
+
+    owner_response = client.post(
+        '/api/v1/hasn/tasks/runs/summary',
+        headers=owner_auth,
+        json={
+            'run_id': 456,
+            'task_id': 'task_local_1',
+            'agent_id': 'a_p0_default',
+            'session_id': 'sess_task_456',
+            'status': 'success',
+            'output': 'done',
+            'dedupe_key': 'work_session_result:sess_task_456:final',
+        },
+    )
+    first = client.post(
+        '/api/v1/hasn/tasks/runs/summary',
+        headers=agent_auth,
+        json={
+            'run_id': 456,
+            'task_id': 'task_local_1',
+            'agent_id': 'a_p0_default',
+            'session_id': 'sess_task_456',
+            'scheduled_fire_at': 1_779_721_000,
+            'status': 'success',
+            'output': 'done',
+            'deep_link': '/tasks/sessions/sess_task_456',
+            'dedupe_key': 'work_session_result:sess_task_456:final',
+            'model': 'unknown',
+            'token_usage': {'input_tokens': 1, 'output_tokens': 2, 'total_tokens': 3},
+            'duration_ms': 1200,
+        },
+    )
+    duplicate = client.post(
+        '/api/v1/hasn/tasks/runs/summary',
+        headers=agent_auth,
+        json={
+            'run_id': 456,
+            'task_id': 'task_local_1',
+            'agent_id': 'a_p0_default',
+            'session_id': 'sess_task_456',
+            'status': 'success',
+            'output': 'done again',
+            'dedupe_key': 'work_session_result:sess_task_456:final',
+        },
+    )
+    pull = client.post(
+        '/api/v1/hasn/tasks/sync/pull',
+        headers=owner_auth,
+        json={'owner_id': 'h_p0_owner', 'cursor': 'owner:h_p0_owner::tasks:0'},
+    )
+
+    assert owner_response.status_code == 401
+    assert first.status_code == 200, first.text
+    assert first.json()['data']['run_uuid'] == '456'
+    assert first.json()['data']['status'] == 'success'
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()['data']['output_summary'] == 'done'
+    assert pull.status_code == 200, pull.text
+    assert [event['event_type'] for event in pull.json()['events']] == ['task_run.summary_reported']
+
+
+def test_task_run_summary_keeps_legacy_run_id_separate_from_task_uuid(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(make_app(monkeypatch))
+    agent_auth = {'Authorization': 'Bearer agent.jwt.task'}
+
+    response = client.post(
+        '/api/v1/hasn/tasks/runs/summary',
+        headers=agent_auth,
+        json={
+            'run_id': 456,
+            'task_run_id': 456,
+            'session_id': 'sess_task_456',
+            'status': 'success',
+            'output': 'done',
+            'dedupe_key': 'work_session_result:sess_task_456:final',
+        },
+    )
+    pull = client.post(
+        '/api/v1/hasn/tasks/sync/pull',
+        headers={'Authorization': 'Bearer jwt-p0-real-http'},
+        json={'owner_id': 'h_p0_owner', 'cursor': 'owner:h_p0_owner::tasks:0'},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()['data']['run_uuid'] == '456'
+    assert response.json()['data']['task_uuid'] == ''
+    assert pull.status_code == 200, pull.text
+    event = pull.json()['events'][0]
+    assert event['event_type'] == 'task_run.summary_reported'
+    assert event['payload']['run_uuid'] == '456'
+    assert event['payload']['task_uuid'] == ''
+    assert event['payload']['task_id'] == ''
+
+
+def test_task_run_summary_rejects_other_agent_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(make_app(monkeypatch))
+    auth = {'Authorization': 'Bearer agent.jwt.task'}
+
+    task_push = client.post(
+        '/api/v1/hasn/tasks/sync/push',
+        headers={'Authorization': 'Bearer jwt-p0-real-http'},
+        json={
+            'owner_id': 'h_p0_owner',
+            'node_id': 'n_a',
+            'events': [
+                {
+                    'client_event_id': 'ce_task_created_other_agent',
+                    'event_type': 'task.created',
+                    'dedupe_key': 'task_other_agent',
+                    'payload': {
+                        'task_id': 'task_other_agent',
+                        'owner_id': 'h_p0_owner',
+                        'agent_id': 'a_other_agent',
+                        'name': '其他 Agent 任务',
+                        'prompt': 'do it',
+                    },
+                }
+            ],
+        },
+    )
+    response = client.post(
+        '/api/v1/hasn/tasks/runs/summary',
+        headers=auth,
+        json={
+            'run_id': 789,
+            'task_id': 'task_other_agent',
+            'agent_id': 'a_other_agent',
+            'session_id': 'sess_task_789',
+            'status': 'success',
+            'dedupe_key': 'work_session_result:sess_task_789:final',
+        },
+    )
+
+    assert task_push.status_code == 200, task_push.text
+    assert response.status_code == 403
 
 
 def test_p0_real_http_flow_covers_task_system_routes(monkeypatch: pytest.MonkeyPatch) -> None:

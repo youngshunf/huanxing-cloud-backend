@@ -15,9 +15,14 @@ from backend.app.hasn.schema.hasn_skill_bundle import CreateHasnSkillBundleParam
 from backend.app.hasn.schema.hasn_task import CreateHasnTaskParam
 from backend.app.hasn.service import task_scheduler as task_scheduler_module
 from backend.app.hasn.service.task_scheduler import TaskSchedulerService
+from backend.core.conf import settings
 from backend.common.exception.exception_handler import register_exception
 from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
 from backend.database.db import get_db, get_db_transaction
+
+
+def test_center_task_scheduler_is_default_disabled() -> None:
+    assert settings.HASN_TASK_CENTER_SCHEDULER_ENABLED is False
 
 
 class FakeSession:
@@ -391,7 +396,7 @@ async def test_scheduler_dispatch_result_roundtrip_is_readable_from_app_task_run
     ]
 
     task_run = dispatch_session.added[0]
-    task_run.created_time = task_run.create_time
+    task_run.created_time = getattr(task_run, 'created_time', None)
     task_run.updated_time = None
     task_record = SimpleNamespace(id=123, owner_id='h_owner', last_status=None, last_error=None)
     report_session = FakeSession(execute_results=[FakeResult(task_run), FakeResult(task_record)])

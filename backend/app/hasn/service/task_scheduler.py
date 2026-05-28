@@ -1,6 +1,9 @@
-"""HASN Task Scheduler（云端后台调度器）
+"""HASN Task Scheduler（legacy 云端后台调度器）
 
 每分钟 tick 一次，查询到期任务，通过 HASN 协议发送 TaskExec 消息到 Agent 所在的节点。
+
+v2.1 主链路不再默认启动该中心 tick。任务调度由本地/云端 Runtime Host
+基于 task sync mirror 自行执行；此服务只保留旧协议兼容和手动调试能力。
 
 关键设计：
 - at-most-once：预先推进 next_run_at，防止重复执行

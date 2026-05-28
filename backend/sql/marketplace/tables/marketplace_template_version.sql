@@ -5,6 +5,11 @@ CREATE TABLE "public"."marketplace_template_version" (
   "version" varchar(50) COLLATE "pg_catalog"."default" NOT NULL,
   "changelog" text COLLATE "pg_catalog"."default",
   "skill_dependencies_versioned" jsonb,
+  "bundle_slug" varchar(100) COLLATE "pg_catalog"."default",
+  "command_key" varchar(100) COLLATE "pg_catalog"."default",
+  "hermes_bundle_json" jsonb,
+  "hermes_yaml" text COLLATE "pg_catalog"."default",
+  "content_hash" varchar(128) COLLATE "pg_catalog"."default",
   "package_url" varchar(500) COLLATE "pg_catalog"."default",
   "file_hash" varchar(64) COLLATE "pg_catalog"."default",
   "file_size" int4,
@@ -23,6 +28,11 @@ COMMENT ON COLUMN "public"."marketplace_template_version"."template_id" IS '关�
 COMMENT ON COLUMN "public"."marketplace_template_version"."version" IS '语义化版本号';
 COMMENT ON COLUMN "public"."marketplace_template_version"."changelog" IS '版本更新日志';
 COMMENT ON COLUMN "public"."marketplace_template_version"."skill_dependencies_versioned" IS '带版本号的技能依赖';
+COMMENT ON COLUMN "public"."marketplace_template_version"."bundle_slug" IS 'skill pack slug';
+COMMENT ON COLUMN "public"."marketplace_template_version"."command_key" IS 'Hermes 命令 key';
+COMMENT ON COLUMN "public"."marketplace_template_version"."hermes_bundle_json" IS 'Hermes bundle JSON';
+COMMENT ON COLUMN "public"."marketplace_template_version"."hermes_yaml" IS 'Hermes YAML';
+COMMENT ON COLUMN "public"."marketplace_template_version"."content_hash" IS '内容哈希';
 COMMENT ON COLUMN "public"."marketplace_template_version"."package_url" IS '完整包下载URL';
 COMMENT ON COLUMN "public"."marketplace_template_version"."file_hash" IS 'SHA256校验值';
 COMMENT ON COLUMN "public"."marketplace_template_version"."file_size" IS '包大小（字节）';

@@ -10,6 +10,7 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from datetime import timezone as datetime_timezone
 from typing import Any, Protocol
 
 import sqlalchemy as sa
@@ -30,7 +31,10 @@ from backend.app.hasn.schema.hasn_sync import (
     SyncPullResponse,
     SyncPushRequest,
     SyncPushResponse,
+    TaskRunSummaryRequest,
+    TaskRunSummaryResponse,
 )
+from backend.common.dataclasses import AgentTokenPayload
 from backend.common.exception import errors
 from backend.utils.timezone import timezone
 
@@ -81,11 +85,32 @@ _MEMORY_NAMESPACE_UNKNOWN_ERROR = ErrorObject(
     message='Memory sync payload references unknown namespace.',
 )
 
+_TASK_EVENT_UNSUPPORTED_ERROR = ErrorObject(
+    code=8037,
+    name='ERR_TASK_SYNC_EVENT_UNSUPPORTED',
+    message='Task sync payload references unsupported event type.',
+)
+
+_TASK_SYNC_CONFLICT_ERROR = ErrorObject(
+    code=8038,
+    name='ERR_TASK_SYNC_CONFLICT',
+    message='Task sync payload is based on a stale task revision.',
+)
+
+TASK_SYNC_EVENT_TYPES = {'task.created', 'task.updated', 'task.deleted'}
+
+
+class TaskSyncConflictError(Exception):
+    """Raised when optimistic task revision conflict detection rejects an event."""
+
 
 class SyncGateway(Protocol):
     async def save_runtime_report(self, db: AsyncSession, report: dict[str, Any]) -> None: ...
     async def pull_events(
         self, db: AsyncSession, *, owner_id: str, after_revision: int, limit: int
+    ) -> list[SyncEventRecord]: ...
+    async def pull_task_events(
+        self, db: AsyncSession, *, owner_id: str, node_id: str | None, after_revision: int, limit: int
     ) -> list[SyncEventRecord]: ...
     async def pull_memory_events(
         self,
@@ -102,6 +127,15 @@ class SyncGateway(Protocol):
     async def existing_client_event_revision(
         self, db: AsyncSession, *, owner_id: str, node_id: str, client_event_id: str
     ) -> int | None: ...
+    async def save_task_event(self, db: AsyncSession, *, owner_id: str, node_id: str, event: ClientEvent) -> int | None: ...
+    async def save_task_run_summary(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        agent_hasn_id: str,
+        summary: dict[str, Any],
+    ) -> dict[str, Any]: ...
 
 
 class SqlAlchemySyncGateway:
@@ -184,6 +218,7 @@ class SqlAlchemySyncGateway:
                 'binding_id': report['binding_id'],
             },
         )
+        await self._refresh_task_assignments_for_runtime_report(db, report)
 
     async def pull_events(
         self, db: AsyncSession, *, owner_id: str, after_revision: int, limit: int
@@ -194,12 +229,80 @@ class SqlAlchemySyncGateway:
                 SELECT event_id, event_type, revision, occurred_at, payload
                 FROM public.hasn_sync_events
                 WHERE owner_id = :owner_id
+                  AND event_type NOT LIKE 'task.%'
+                  AND event_type <> 'task_run.summary_reported'
                   AND revision > :after_revision
                 ORDER BY revision ASC
                 LIMIT :limit
                 '''
             ),
             {'owner_id': owner_id, 'after_revision': after_revision, 'limit': limit},
+        )
+        return [
+            SyncEventRecord(
+                event_id=row['event_id'],
+                event_type=row['event_type'],
+                revision=int(row['revision']),
+                created_at=_coerce_datetime(row['occurred_at']),
+                payload=_coerce_dict(row['payload']),
+            )
+            for row in result.mappings().all()
+        ]
+
+    async def pull_task_events(
+        self, db: AsyncSession, *, owner_id: str, node_id: str | None, after_revision: int, limit: int
+    ) -> list[SyncEventRecord]:
+        result = await db.execute(
+            sa.text(
+                '''
+                SELECT event_id, event_type, revision, occurred_at, payload
+                FROM public.hasn_sync_events e
+                WHERE e.owner_id = :owner_id
+                  AND revision > :after_revision
+                  AND (
+                    event_type LIKE 'task.%'
+                    OR event_type = 'task_run.summary_reported'
+                  )
+                  AND (
+                    :node_id IS NULL
+                    OR :node_id = ''
+                    OR event_type = 'task_run.summary_reported'
+                    OR (
+                      jsonb_typeof(e.payload->'visible_node_ids') = 'array'
+                      AND jsonb_exists(e.payload->'visible_node_ids', :node_id)
+                    )
+                    OR (
+                      NOT (e.payload ? 'visible_node_ids')
+                      AND EXISTS (
+                        SELECT 1
+                        FROM public.hasn_task_assignment a
+                        WHERE a.owner_id = e.owner_id
+                          AND a.task_uuid = COALESCE(e.payload->>'task_uuid', e.payload->>'task_id', e.aggregate_id)
+                          AND a.assignment_state = 'assigned'
+                          AND a.executor_node_id = :node_id
+                      )
+                    )
+                    OR (
+                      NOT (e.payload ? 'visible_node_ids')
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM public.hasn_task_assignment a
+                        WHERE a.owner_id = e.owner_id
+                          AND a.task_uuid = COALESCE(e.payload->>'task_uuid', e.payload->>'task_id', e.aggregate_id)
+                          AND a.assignment_state = 'assigned'
+                      )
+                      AND (
+                        COALESCE(e.payload->>'node_id', '') = :node_id
+                        OR COALESCE(e.payload->>'executor_node_id', '') = :node_id
+                        OR COALESCE(e.payload->>'node_id', e.payload->>'executor_node_id') IS NULL
+                      )
+                    )
+                  )
+                ORDER BY revision ASC
+                LIMIT :limit
+                '''
+            ),
+            {'owner_id': owner_id, 'node_id': node_id, 'after_revision': after_revision, 'limit': limit},
         )
         return [
             SyncEventRecord(
@@ -362,6 +465,619 @@ class SqlAlchemySyncGateway:
             },
         )
         return server_revision
+
+    async def save_task_event(self, db: AsyncSession, *, owner_id: str, node_id: str, event: ClientEvent) -> int | None:
+        existing_revision = await self.existing_client_event_revision(
+            db,
+            owner_id=owner_id,
+            node_id=node_id,
+            client_event_id=event.client_event_id,
+        )
+        if existing_revision is not None:
+            return existing_revision
+
+        task_payload = _task_payload_for_storage(owner_id, event)
+        task_uuid = _required_string(task_payload, 'task_id', 'ERR_TASK_ID_REQUIRED')
+        current_task = await self._current_task_revision(db, owner_id=owner_id, task_uuid=task_uuid)
+        _assert_task_revision_not_stale(event, task_payload, current_task)
+        now = timezone.now()
+        stored_task = _task_storage_row(owner_id, task_uuid, task_payload, event, now)
+        revision = await self._upsert_task_and_append_event(
+            db,
+            owner_id=owner_id,
+            node_id=node_id,
+            event=event,
+            task_uuid=task_uuid,
+            stored_task=stored_task,
+            event_payload=_task_sync_payload(task_uuid, stored_task, task_payload, event),
+        )
+        return revision
+
+    async def _refresh_task_assignments_for_runtime_report(self, db: AsyncSession, report: dict[str, Any]) -> None:
+        assignment = _assignment_from_runtime_report(report)
+        task_rows = await self._task_rows_for_assignment_refresh(
+            db,
+            owner_id=report['owner_id'],
+            agent_id=report['agent_hasn_id'],
+        )
+        for task in task_rows:
+            task_uuid = str(task.get('task_uuid') or '')
+            if not task_uuid:
+                continue
+            previous = await self._current_assignment(db, owner_id=report['owner_id'], task_uuid=task_uuid)
+            old_node_id = (previous or {}).get('executor_node_id') or ''
+            changed = (
+                previous is None
+                or previous.get('executor_kind') != assignment['executor_kind']
+                or previous.get('executor_node_id') != assignment['executor_node_id']
+                or previous.get('binding_id') != assignment['binding_id']
+                or previous.get('assignment_state') != assignment['assignment_state']
+            )
+            if not changed:
+                continue
+            await self._upsert_current_assignment(
+                db,
+                task_uuid=task_uuid,
+                owner_id=report['owner_id'],
+                agent_id=report['agent_hasn_id'],
+                assignment=assignment,
+            )
+            await self._append_assignment_change_events(
+                db,
+                task=task,
+                assignment=assignment,
+                old_node_id=old_node_id,
+            )
+
+    async def _task_rows_for_assignment_refresh(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        agent_id: str,
+    ) -> list[dict[str, Any]]:
+        result = await db.execute(
+            sa.text(
+                '''
+                SELECT
+                    task_uuid,
+                    owner_id,
+                    agent_id,
+                    name,
+                    description,
+                    prompt,
+                    system_prompt,
+                    skill_bundle_ids,
+                    skill_bundle_refs,
+                    skill_ids,
+                    schedule_type,
+                    schedule_config,
+                    schedule_display,
+                    enabled,
+                    state,
+                    next_run_at,
+                    run_count,
+                    repeat_times,
+                    repeat_completed,
+                    created_time,
+                    updated_time
+                FROM public.hasn_task
+                WHERE owner_id = :owner_id
+                  AND agent_id = :agent_id
+                  AND task_uuid IS NOT NULL
+                  AND state <> 'deleted'
+                '''
+            ),
+            {'owner_id': owner_id, 'agent_id': agent_id},
+        )
+        return [dict(row) for row in result.mappings().all()]
+
+    async def _current_assignment(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        task_uuid: str,
+    ) -> dict[str, Any] | None:
+        result = await db.execute(
+            sa.text(
+                '''
+                SELECT executor_kind, executor_node_id, binding_id, assignment_state
+                FROM public.hasn_task_assignment
+                WHERE owner_id = :owner_id
+                  AND task_uuid = :task_uuid
+                ORDER BY updated_time DESC NULLS LAST, id DESC
+                LIMIT 1
+                '''
+            ),
+            {'owner_id': owner_id, 'task_uuid': task_uuid},
+        )
+        row = result.mappings().first()
+        return dict(row) if row is not None else None
+
+    async def _upsert_current_assignment(
+        self,
+        db: AsyncSession,
+        *,
+        task_uuid: str,
+        owner_id: str,
+        agent_id: str,
+        assignment: dict[str, Any],
+    ) -> None:
+        await db.execute(
+            sa.text(
+                '''
+                DELETE FROM public.hasn_task_assignment
+                WHERE owner_id = :owner_id
+                  AND task_uuid = :task_uuid
+                '''
+            ),
+            {'owner_id': owner_id, 'task_uuid': task_uuid},
+        )
+        await db.execute(
+            sa.text(
+                '''
+                INSERT INTO public.hasn_task_assignment (
+                    task_uuid,
+                    owner_id,
+                    agent_id,
+                    executor_kind,
+                    executor_node_id,
+                    binding_id,
+                    assignment_state,
+                    resolved_at,
+                    stale_after,
+                    created_time,
+                    updated_time
+                ) VALUES (
+                    :task_uuid,
+                    :owner_id,
+                    :agent_id,
+                    :executor_kind,
+                    :executor_node_id,
+                    :binding_id,
+                    :assignment_state,
+                    :resolved_at,
+                    NULL,
+                    now(),
+                    now()
+                )
+                '''
+            ),
+            {
+                'task_uuid': task_uuid,
+                'owner_id': owner_id,
+                'agent_id': agent_id,
+                **assignment,
+            },
+        )
+
+    async def _append_assignment_change_events(
+        self,
+        db: AsyncSession,
+        *,
+        task: dict[str, Any],
+        assignment: dict[str, Any],
+        old_node_id: str,
+    ) -> None:
+        new_node_id = assignment['executor_node_id']
+        assignment_payload = _task_assignment_event_payload(task, assignment, old_node_id)
+        await self._append_sync_event(
+            db,
+            owner_id=task['owner_id'],
+            hasn_id=task['agent_id'],
+            event_type='task.assignment_updated',
+            aggregate_type='task',
+            aggregate_id=task['task_uuid'],
+            payload=assignment_payload,
+        )
+        if old_node_id and old_node_id != new_node_id:
+            await self._append_sync_event(
+                db,
+                owner_id=task['owner_id'],
+                hasn_id=task['agent_id'],
+                event_type='task.updated',
+                aggregate_type='task',
+                aggregate_id=task['task_uuid'],
+                payload={
+                    **_task_sync_payload_from_row(task),
+                    'state': 'waiting_for_runtime',
+                    'executor_policy': assignment['executor_kind'],
+                    'executor_node_id': new_node_id,
+                    'assignment_state': assignment['assignment_state'],
+                    'visible_node_ids': [old_node_id],
+                },
+            )
+        if new_node_id:
+            await self._append_sync_event(
+                db,
+                owner_id=task['owner_id'],
+                hasn_id=task['agent_id'],
+                event_type='task.updated',
+                aggregate_type='task',
+                aggregate_id=task['task_uuid'],
+                payload={
+                    **_task_sync_payload_from_row(task),
+                    'executor_policy': assignment['executor_kind'],
+                    'executor_node_id': new_node_id,
+                    'assignment_state': assignment['assignment_state'],
+                    'visible_node_ids': [new_node_id],
+                },
+            )
+
+    async def _current_task_revision(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        task_uuid: str,
+    ) -> dict[str, Any] | None:
+        result = await db.execute(
+            sa.text(
+                '''
+                SELECT task_revision, state
+                FROM public.hasn_task
+                WHERE owner_id = :owner_id
+                  AND task_uuid = :task_uuid
+                LIMIT 1
+                '''
+            ),
+            {'owner_id': owner_id, 'task_uuid': task_uuid},
+        )
+        row = result.mappings().first()
+        return dict(row) if row is not None else None
+
+    async def _upsert_task_and_append_event(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        node_id: str,
+        event: ClientEvent,
+        task_uuid: str,
+        stored_task: dict[str, Any],
+        event_payload: dict[str, Any],
+    ) -> int:
+        skill_bundle_refs = json.dumps(
+            stored_task['skill_bundle_refs'],
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        skill_refs = json.dumps(stored_task['skill_refs'], ensure_ascii=False, sort_keys=True, default=str)
+        workflow = json.dumps(stored_task['workflow'], ensure_ascii=False, sort_keys=True, default=str)
+        schedule_config = json.dumps(
+            stored_task['schedule_config'],
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        await db.execute(
+            sa.text(
+                '''
+                INSERT INTO public.hasn_task (
+                    owner_id,
+                    agent_id,
+                    name,
+                    description,
+                    prompt,
+                    system_prompt,
+                    input_template,
+                    skill_bundle_ids,
+                    skill_bundle_refs,
+                    skill_ids,
+                    skill_refs,
+                    workflow_id,
+                    workflow,
+                    enabled_toolsets,
+                    context_from_task_id,
+                    schedule_type,
+                    schedule_config,
+                    schedule_display,
+                    timezone,
+                    misfire_policy,
+                    catchup_limit,
+                    enabled,
+                    state,
+                    next_run_at,
+                    run_count,
+                    repeat_times,
+                    repeat_completed,
+                    task_uuid,
+                    executor_policy,
+                    executor_node_id,
+                    task_revision,
+                    deleted_at,
+                    created_by,
+                    created_time,
+                    updated_time
+                ) VALUES (
+                    :owner_id,
+                    :agent_id,
+                    :name,
+                    :description,
+                    :prompt,
+                    :system_prompt,
+                    :input_template,
+                    CAST(:skill_bundle_ids AS jsonb),
+                    CAST(:skill_bundle_refs AS jsonb),
+                    CAST(:skill_ids AS jsonb),
+                    CAST(:skill_refs AS jsonb),
+                    :workflow_id,
+                    CAST(:workflow AS jsonb),
+                    CAST(:enabled_toolsets AS jsonb),
+                    :context_from_task_id,
+                    :schedule_type,
+                    CAST(:schedule_config AS jsonb),
+                    :schedule_display,
+                    :timezone,
+                    :misfire_policy,
+                    :catchup_limit,
+                    :enabled,
+                    :state,
+                    :next_run_at,
+                    :run_count,
+                    :repeat_times,
+                    :repeat_completed,
+                    :task_uuid,
+                    :executor_policy,
+                    :executor_node_id,
+                    1,
+                    :deleted_at,
+                    :created_by,
+                    :created_time,
+                    :updated_time
+                )
+                ON CONFLICT (task_uuid) DO UPDATE SET
+                    agent_id = EXCLUDED.agent_id,
+                    name = EXCLUDED.name,
+                    description = EXCLUDED.description,
+                    prompt = EXCLUDED.prompt,
+                    system_prompt = EXCLUDED.system_prompt,
+                    input_template = EXCLUDED.input_template,
+                    skill_bundle_ids = EXCLUDED.skill_bundle_ids,
+                    skill_bundle_refs = EXCLUDED.skill_bundle_refs,
+                    skill_ids = EXCLUDED.skill_ids,
+                    skill_refs = EXCLUDED.skill_refs,
+                    workflow_id = EXCLUDED.workflow_id,
+                    workflow = EXCLUDED.workflow,
+                    enabled_toolsets = EXCLUDED.enabled_toolsets,
+                    context_from_task_id = EXCLUDED.context_from_task_id,
+                    schedule_type = EXCLUDED.schedule_type,
+                    schedule_config = EXCLUDED.schedule_config,
+                    schedule_display = EXCLUDED.schedule_display,
+                    timezone = EXCLUDED.timezone,
+                    misfire_policy = EXCLUDED.misfire_policy,
+                    catchup_limit = EXCLUDED.catchup_limit,
+                    enabled = EXCLUDED.enabled,
+                    state = CASE
+                        WHEN public.hasn_task.state = 'deleted' AND EXCLUDED.state <> 'deleted' THEN public.hasn_task.state
+                        ELSE EXCLUDED.state
+                    END,
+                    next_run_at = EXCLUDED.next_run_at,
+                    run_count = EXCLUDED.run_count,
+                    repeat_times = EXCLUDED.repeat_times,
+                    repeat_completed = EXCLUDED.repeat_completed,
+                    executor_policy = EXCLUDED.executor_policy,
+                    executor_node_id = EXCLUDED.executor_node_id,
+                    task_revision = public.hasn_task.task_revision + 1,
+                    deleted_at = EXCLUDED.deleted_at,
+                    updated_time = EXCLUDED.updated_time
+                '''
+            ),
+            {
+                **stored_task,
+                'skill_bundle_ids': json.dumps(stored_task['skill_bundle_ids'], ensure_ascii=False),
+                'skill_bundle_refs': skill_bundle_refs,
+                'skill_ids': json.dumps(stored_task['skill_ids'], ensure_ascii=False),
+                'skill_refs': skill_refs,
+                'workflow': workflow,
+                'enabled_toolsets': json.dumps(stored_task['enabled_toolsets'], ensure_ascii=False, default=str)
+                if stored_task['enabled_toolsets'] is not None
+                else None,
+                'schedule_config': schedule_config,
+            },
+        )
+        await self._upsert_current_assignment(
+            db,
+            task_uuid=task_uuid,
+            owner_id=owner_id,
+            agent_id=stored_task['agent_id'],
+            assignment={
+                'executor_kind': stored_task['executor_policy'],
+                'executor_node_id': stored_task['executor_node_id'] or node_id,
+                'binding_id': stored_task.get('binding_id'),
+                'assignment_state': 'unresolved' if event_payload.get('state') == 'deleted' else 'assigned',
+                'resolved_at': stored_task['updated_time'],
+            },
+        )
+        revision, event_id = await self._append_sync_event_with_id(
+            db,
+            owner_id=owner_id,
+            hasn_id=stored_task['agent_id'] or owner_id,
+            event_type=event.event_type,
+            aggregate_type='task',
+            aggregate_id=task_uuid,
+            payload={
+                **event_payload,
+                'client_event_id': event.client_event_id,
+                'node_id': node_id,
+            },
+        )
+        await db.execute(
+            sa.text(
+                '''
+                INSERT INTO public.hasn_sync_inbox_events (
+                    client_event_id,
+                    owner_id,
+                    hasn_id,
+                    node_id,
+                    event_type,
+                    payload,
+                    dedupe_key,
+                    status,
+                    server_revision,
+                    received_at,
+                    created_time,
+                    updated_time
+                ) VALUES (
+                    :client_event_id,
+                    :owner_id,
+                    :hasn_id,
+                    :node_id,
+                    :event_type,
+                    CAST(:payload AS jsonb),
+                    :dedupe_key,
+                    'applied',
+                    :server_revision,
+                    now(),
+                    now(),
+                    now()
+                )
+                ON CONFLICT (owner_id, node_id, client_event_id) DO NOTHING
+                '''
+            ),
+            {
+                'client_event_id': event.client_event_id,
+                'owner_id': owner_id,
+                'hasn_id': event.hasn_id or owner_id,
+                'node_id': node_id,
+                'event_type': event.event_type,
+                'payload': json.dumps(event_payload, ensure_ascii=False, sort_keys=True, default=str),
+                'dedupe_key': event.dedupe_key,
+                'server_revision': revision,
+            },
+        )
+        return revision
+
+    async def save_task_run_summary(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        agent_hasn_id: str,
+        summary: dict[str, Any],
+    ) -> dict[str, Any]:
+        task_uuid = _required_string(summary, 'task_uuid', 'ERR_TASK_ID_REQUIRED')
+        result = await db.execute(
+            sa.text(
+                '''
+                SELECT owner_id, agent_id
+                FROM public.hasn_task
+                WHERE task_uuid = :task_uuid
+                LIMIT 1
+                '''
+            ),
+            {'task_uuid': task_uuid},
+        )
+        task_row = result.mappings().first()
+        if task_row is not None and (
+            task_row['owner_id'] != owner_id
+            or task_row['agent_id'] != agent_hasn_id
+        ):
+            raise errors.ForbiddenError(msg='agent cannot report this task run')
+
+        payload_json = {
+            'token_usage': json.dumps(summary.get('token_usage'), ensure_ascii=False, sort_keys=True, default=str)
+            if summary.get('token_usage') is not None
+            else None
+        }
+        result = await db.execute(
+            sa.text(
+                '''
+                INSERT INTO public.hasn_task_run_summary (
+                    run_uuid,
+                    task_uuid,
+                    owner_id,
+                    agent_id,
+                    executor_node_id,
+                    session_id,
+                    scheduled_fire_at,
+                    dedupe_key,
+                    status,
+                    output_summary,
+                    error,
+                    deep_link,
+                    model,
+                    token_usage,
+                    duration_ms,
+                    started_at,
+                    finished_at,
+                    created_time,
+                    updated_time
+                ) VALUES (
+                    :run_uuid,
+                    :task_uuid,
+                    :owner_id,
+                    :agent_id,
+                    :executor_node_id,
+                    :session_id,
+                    :scheduled_fire_at,
+                    :dedupe_key,
+                    :status,
+                    :output_summary,
+                    :error,
+                    :deep_link,
+                    :model,
+                    CAST(:token_usage AS jsonb),
+                    :duration_ms,
+                    :started_at,
+                    :finished_at,
+                    now(),
+                    now()
+                )
+                ON CONFLICT (dedupe_key) DO UPDATE SET
+                    updated_time = public.hasn_task_run_summary.updated_time
+                RETURNING
+                    run_uuid,
+                    task_uuid,
+                    owner_id,
+                    agent_id,
+                    executor_node_id,
+                    session_id,
+                    scheduled_fire_at,
+                    dedupe_key,
+                    status,
+                    output_summary,
+                    error,
+                    deep_link,
+                    model,
+                    token_usage,
+                    duration_ms,
+                    started_at,
+                    finished_at
+                '''
+            ),
+            {
+                **summary,
+                **payload_json,
+            },
+        )
+        stored = dict(result.mappings().one())
+        existing_event = await db.execute(
+            sa.text(
+                '''
+                SELECT event_id
+                FROM public.hasn_sync_events
+                WHERE owner_id = :owner_id
+                  AND event_type = 'task_run.summary_reported'
+                  AND payload->>'dedupe_key' = :dedupe_key
+                LIMIT 1
+                '''
+            ),
+            {'owner_id': owner_id, 'dedupe_key': stored['dedupe_key']},
+        )
+        if existing_event.mappings().first() is None:
+            await self._append_sync_event(
+                db,
+                owner_id=owner_id,
+                hasn_id=agent_hasn_id,
+                event_type='task_run.summary_reported',
+                aggregate_type='task_run',
+                aggregate_id=stored['run_uuid'],
+                payload=_task_run_summary_event_payload(stored),
+            )
+        return _task_run_summary_response_payload(stored)
 
     async def existing_client_event_revision(
         self, db: AsyncSession, *, owner_id: str, node_id: str, client_event_id: str
@@ -757,6 +1473,85 @@ class HasnSyncService:
             next_cursor=_owner_cursor(request.owner_id, max_server_revision),
         )
 
+    async def pull_tasks(
+        self, db: AsyncSession, request: SyncPullRequest, *, user_id: int | None = None
+    ) -> SyncPullResponse:
+        await self._assert_owner_access(db, owner_id=request.owner_id, user_id=user_id)
+        after_revision = _parse_task_cursor(request.cursor)
+        events = await self.gateway.pull_task_events(
+            db,
+            owner_id=request.owner_id,
+            node_id=request.node_id,
+            after_revision=after_revision,
+            limit=request.limit + 1,
+        )
+        limited = events[: request.limit]
+        has_more = len(events) > request.limit
+        next_revision = limited[-1].revision if limited else after_revision
+        return SyncPullResponse(
+            events=limited,
+            next_cursor=_task_cursor(request.owner_id, next_revision),
+            has_more=has_more,
+        )
+
+    async def push_tasks(
+        self, db: AsyncSession, request: SyncPushRequest, *, user_id: int | None = None
+    ) -> SyncPushResponse:
+        await self._assert_owner_access(db, owner_id=request.owner_id, user_id=user_id)
+        rejected: list[ErrorObject] = []
+        node_id = request.node_id or 'unknown'
+        max_server_revision = 0
+        for event in request.events:
+            if event.event_type not in TASK_SYNC_EVENT_TYPES:
+                rejected.append(_TASK_EVENT_UNSUPPORTED_ERROR)
+                continue
+            if _contains_private_runtime_key(event.payload):
+                rejected.append(_PRIVATE_METADATA_ERROR)
+                continue
+            try:
+                server_revision = await self.gateway.save_task_event(
+                    db,
+                    owner_id=request.owner_id,
+                    node_id=node_id,
+                    event=event,
+                )
+            except TaskSyncConflictError:
+                rejected.append(_TASK_SYNC_CONFLICT_ERROR)
+                continue
+            if server_revision is not None:
+                max_server_revision = max(max_server_revision, int(server_revision))
+        accepted = len(request.events) - len(rejected)
+        return SyncPushResponse(
+            accepted=accepted,
+            rejected=rejected,
+            next_cursor=_task_cursor(request.owner_id, max_server_revision),
+        )
+
+    async def report_task_run_summary(
+        self,
+        db: AsyncSession,
+        request: TaskRunSummaryRequest,
+        *,
+        agent: AgentTokenPayload,
+    ) -> TaskRunSummaryResponse:
+        owner_id = request.owner_id or agent.owner_hasn_id
+        if owner_id != agent.owner_hasn_id:
+            raise errors.ForbiddenError(msg='agent cannot report another owner task run')
+        if request.agent_id and request.agent_id != agent.agent_hasn_id:
+            raise errors.ForbiddenError(msg='agent cannot report another agent task run')
+
+        summary = _task_run_summary_for_storage(request, owner_id=owner_id, agent_hasn_id=agent.agent_hasn_id)
+        try:
+            stored = await self.gateway.save_task_run_summary(
+                db,
+                owner_id=owner_id,
+                agent_hasn_id=agent.agent_hasn_id,
+                summary=summary,
+            )
+        except PermissionError as exc:
+            raise errors.ForbiddenError(msg=str(exc)) from exc
+        return TaskRunSummaryResponse(**_task_run_summary_response_payload(stored))
+
     async def pull_memory(
         self, db: AsyncSession, request: MemorySyncPullRequest, *, user_id: int | None = None
     ) -> MemorySyncPullResponse:
@@ -828,6 +1623,342 @@ def _parse_owner_cursor(cursor: str | None) -> int:
 
 def _owner_cursor(owner_id: str, revision: int) -> str:
     return f'owner:{owner_id}:{max(int(revision), 0)}'
+
+
+def _parse_task_cursor(cursor: str | None) -> int:
+    if not cursor:
+        return 0
+    parts = str(cursor).rsplit(':', maxsplit=1)
+    try:
+        return max(int(parts[-1]), 0)
+    except (TypeError, ValueError) as exc:
+        raise errors.RequestError(msg='ERR_TASK_SYNC_CURSOR_INVALID') from exc
+
+
+def _task_cursor(owner_id: str, revision: int) -> str:
+    return f'owner:{owner_id}:task:{max(int(revision), 0)}'
+
+
+def _task_payload_for_storage(owner_id: str, event: ClientEvent) -> dict[str, Any]:
+    task_payload = event.payload.get('task')
+    payload = dict(task_payload) if isinstance(task_payload, dict) else dict(event.payload)
+    payload['owner_id'] = owner_id
+    return payload
+
+
+def _assert_task_revision_not_stale(
+    event: ClientEvent,
+    payload: dict[str, Any],
+    current_task: dict[str, Any] | None,
+) -> None:
+    if current_task is None:
+        return
+    if event.event_type != 'task.deleted' and current_task.get('state') == 'deleted':
+        raise TaskSyncConflictError
+    base_revision = _optional_int(payload.get('base_revision'))
+    if base_revision is None:
+        return
+    current_revision = _optional_int(current_task.get('task_revision')) or 0
+    if base_revision < current_revision:
+        raise TaskSyncConflictError
+
+
+def _task_storage_row(
+    owner_id: str,
+    task_uuid: str,
+    payload: dict[str, Any],
+    event: ClientEvent,
+    now: datetime,
+) -> dict[str, Any]:
+    timestamp = _coerce_datetime_or_none(payload.get('updated_at')) or now
+    created_time = _coerce_datetime_or_none(payload.get('created_at')) or timestamp
+    state = str(payload.get('state') or 'scheduled')
+    if event.event_type == 'task.deleted':
+        state = 'deleted'
+    executor_node_id = _optional_string(payload.get('executor_node_id') or payload.get('node_id'))
+    executor_policy = _optional_string(payload.get('executor_policy') or payload.get('executor_kind')) or 'local_node'
+    return {
+        'owner_id': owner_id,
+        'agent_id': str(payload.get('agent_id') or event.hasn_id or ''),
+        'name': str(payload.get('name') or ''),
+        'description': _optional_string(payload.get('description')),
+        'prompt': str(payload.get('prompt') or ''),
+        'system_prompt': _optional_string(payload.get('system_prompt')),
+        'input_template': _optional_string(payload.get('input_template')),
+        'skill_bundle_ids': _coerce_list(payload.get('skill_bundle_ids')),
+        'skill_bundle_refs': _coerce_list(payload.get('skill_bundle_refs')),
+        'skill_ids': _coerce_list(payload.get('skill_ids')),
+        'skill_refs': _coerce_list(payload.get('skill_refs')),
+        'workflow_id': _optional_int(payload.get('workflow_id')),
+        'workflow': _coerce_dict(payload.get('workflow')),
+        'enabled_toolsets': _coerce_list_or_none(payload.get('enabled_toolsets')),
+        'context_from_task_id': _optional_int(payload.get('context_from_task_id')),
+        'schedule_type': str(payload.get('schedule_type') or 'once'),
+        'schedule_config': _coerce_dict(payload.get('schedule_config')),
+        'schedule_display': _optional_string(payload.get('schedule_display')),
+        'timezone': str(payload.get('timezone') or 'Asia/Shanghai'),
+        'misfire_policy': str(payload.get('misfire_policy') or 'skip'),
+        'catchup_limit': _optional_int(payload.get('catchup_limit')),
+        'enabled': bool(payload.get('enabled', True)),
+        'state': state,
+        'next_run_at': _coerce_datetime_or_none(payload.get('next_run_at')),
+        'run_count': _optional_int(payload.get('run_count')) or 0,
+        'repeat_times': _optional_int(payload.get('repeat_times')),
+        'repeat_completed': _optional_int(payload.get('repeat_completed')) or 0,
+        'task_uuid': task_uuid,
+        'executor_policy': executor_policy,
+        'executor_node_id': executor_node_id,
+        'binding_id': _optional_string(payload.get('binding_id')),
+        'deleted_at': _coerce_datetime_or_none(payload.get('deleted_at')) if state == 'deleted' else None,
+        'created_by': _optional_string(payload.get('created_by')),
+        'created_time': created_time,
+        'updated_time': timestamp,
+    }
+
+
+def _task_sync_payload(
+    task_uuid: str,
+    stored_task: dict[str, Any],
+    payload: dict[str, Any],
+    event: ClientEvent,
+) -> dict[str, Any]:
+    return {
+        'task_id': task_uuid,
+        'server_id': payload.get('server_id'),
+        'owner_id': stored_task['owner_id'],
+        'agent_id': stored_task['agent_id'],
+        'name': stored_task['name'],
+        'description': stored_task['description'],
+        'prompt': stored_task['prompt'],
+        'system_prompt': stored_task['system_prompt'],
+        'skill_bundle_ids': stored_task['skill_bundle_ids'],
+        'skill_bundle_refs': stored_task['skill_bundle_refs'],
+        'skill_ids': stored_task['skill_ids'],
+        'schedule_type': stored_task['schedule_type'],
+        'schedule_config': stored_task['schedule_config'],
+        'schedule_display': stored_task['schedule_display'],
+        'enabled': stored_task['enabled'],
+        'state': stored_task['state'],
+        'next_run_at': payload.get('next_run_at'),
+        'run_count': stored_task['run_count'],
+        'repeat_times': stored_task['repeat_times'],
+        'repeat_completed': stored_task['repeat_completed'],
+        'sync_status': payload.get('sync_status') or 'synced',
+        'created_at': payload.get('created_at'),
+        'updated_at': payload.get('updated_at'),
+        'deleted_at': payload.get('deleted_at') if event.event_type == 'task.deleted' else None,
+    }
+
+
+def _task_sync_payload_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    task_uuid = str(row.get('task_uuid') or '')
+    return {
+        'task_id': task_uuid,
+        'task_uuid': task_uuid,
+        'server_id': row.get('server_id'),
+        'owner_id': str(row.get('owner_id') or ''),
+        'agent_id': str(row.get('agent_id') or ''),
+        'name': str(row.get('name') or ''),
+        'description': row.get('description'),
+        'prompt': str(row.get('prompt') or ''),
+        'system_prompt': row.get('system_prompt'),
+        'skill_bundle_ids': _coerce_list(row.get('skill_bundle_ids')),
+        'skill_bundle_refs': _coerce_list(row.get('skill_bundle_refs')),
+        'skill_ids': _coerce_list(row.get('skill_ids')),
+        'schedule_type': str(row.get('schedule_type') or 'once'),
+        'schedule_config': _coerce_dict(row.get('schedule_config')),
+        'schedule_display': row.get('schedule_display'),
+        'enabled': bool(row.get('enabled', True)),
+        'state': str(row.get('state') or 'scheduled'),
+        'next_run_at': _timestamp_or_original(row.get('next_run_at')),
+        'run_count': _optional_int(row.get('run_count')) or 0,
+        'repeat_times': _optional_int(row.get('repeat_times')),
+        'repeat_completed': _optional_int(row.get('repeat_completed')) or 0,
+        'sync_status': 'synced',
+        'created_at': _timestamp_or_original(row.get('created_time')),
+        'updated_at': _timestamp_or_original(row.get('updated_time')),
+    }
+
+
+def _task_assignment_event_payload(
+    task: dict[str, Any],
+    assignment: dict[str, Any],
+    old_node_id: str,
+) -> dict[str, Any]:
+    return {
+        **_task_sync_payload_from_row(task),
+        'executor_policy': assignment['executor_kind'],
+        'executor_kind': assignment['executor_kind'],
+        'executor_node_id': assignment['executor_node_id'],
+        'binding_id': assignment['binding_id'],
+        'assignment_state': assignment['assignment_state'],
+        'previous_executor_node_id': old_node_id or None,
+        'visible_node_ids': [assignment['executor_node_id']] if assignment['executor_node_id'] else [],
+    }
+
+
+def _assignment_from_runtime_report(report: dict[str, Any]) -> dict[str, Any]:
+    dispatchable = (
+        report.get('runtime_status') == 'online'
+        and bool(report.get('adapter_registered', True))
+        and bool(report.get('handle_available', True))
+        and bool(report.get('node_id'))
+    )
+    if not dispatchable:
+        return {
+            'executor_kind': 'unresolved',
+            'executor_node_id': '',
+            'binding_id': report.get('binding_id'),
+            'assignment_state': 'unresolved',
+            'resolved_at': report.get('reported_at') or timezone.now(),
+        }
+    return {
+        'executor_kind': 'cloud_runtime_host' if _runtime_report_is_cloud_host(report) else 'local_node',
+        'executor_node_id': str(report.get('node_id') or ''),
+        'binding_id': report.get('binding_id'),
+        'assignment_state': 'assigned',
+        'resolved_at': report.get('reported_at') or timezone.now(),
+    }
+
+
+def _runtime_report_is_cloud_host(report: dict[str, Any]) -> bool:
+    summary = _coerce_dict(report.get('summary_json'))
+    runtime_type = str(report.get('runtime_type') or '').lower()
+    runtime_host = str(summary.get('runtime_host') or summary.get('host_kind') or '').lower()
+    return (
+        runtime_type in {'cloud_runtime_host', 'cloud_hermes', 'cloud_sdk'}
+        or runtime_host in {'cloud', 'cloud_runtime_host'}
+        or bool(summary.get('cloud_runtime_host'))
+        or bool(summary.get('is_cloud_runtime_host'))
+    )
+
+
+def _task_run_summary_for_storage(
+    request: TaskRunSummaryRequest,
+    *,
+    owner_id: str,
+    agent_hasn_id: str,
+) -> dict[str, Any]:
+    task_uuid = str(request.task_uuid or request.task_id or '')
+    run_uuid = str(request.run_uuid or request.run_id or request.task_run_id or uuid.uuid4())
+    dedupe_key = str(request.dedupe_key or run_uuid)
+    return {
+        'run_uuid': run_uuid,
+        'task_uuid': task_uuid,
+        'owner_id': owner_id,
+        'agent_id': agent_hasn_id,
+        'executor_node_id': request.executor_node_id,
+        'session_id': request.session_id,
+        'scheduled_fire_at': _coerce_datetime_or_none(request.scheduled_fire_at),
+        'dedupe_key': dedupe_key,
+        'status': request.status,
+        'output_summary': request.output_summary if request.output_summary is not None else request.output,
+        'error': request.error,
+        'deep_link': request.deep_link,
+        'model': request.model,
+        'token_usage': request.token_usage,
+        'duration_ms': request.duration_ms,
+        'started_at': _coerce_datetime_or_none(request.started_at),
+        'finished_at': _coerce_datetime_or_none(request.finished_at),
+    }
+
+
+def _task_run_summary_event_payload(summary: dict[str, Any]) -> dict[str, Any]:
+    response = _task_run_summary_response_payload(summary)
+    return {
+        'owner_id': response['owner_id'],
+        'agent_id': response['agent_id'],
+        'task_id': response['task_uuid'],
+        'task_uuid': response['task_uuid'],
+        'run_uuid': response['run_uuid'],
+        'dedupe_key': response['dedupe_key'],
+        'status': response['status'],
+        'output_summary': response['output_summary'],
+        'error': response['error'],
+        'deep_link': response['deep_link'],
+    }
+
+
+def _task_run_summary_response_payload(summary: dict[str, Any]) -> dict[str, Any]:
+    token_usage = summary.get('token_usage')
+    if isinstance(token_usage, str):
+        try:
+            token_usage = json.loads(token_usage)
+        except json.JSONDecodeError:
+            token_usage = None
+    return {
+        'run_uuid': str(summary.get('run_uuid') or ''),
+        'task_uuid': str(summary.get('task_uuid') or summary.get('task_id') or ''),
+        'owner_id': str(summary.get('owner_id') or ''),
+        'agent_id': str(summary.get('agent_id') or ''),
+        'session_id': summary.get('session_id'),
+        'dedupe_key': str(summary.get('dedupe_key') or ''),
+        'status': str(summary.get('status') or ''),
+        'output_summary': summary.get('output_summary') if summary.get('output_summary') is not None else summary.get('output'),
+        'error': summary.get('error'),
+        'deep_link': summary.get('deep_link'),
+        'model': summary.get('model'),
+        'token_usage': token_usage if isinstance(token_usage, dict) else None,
+        'duration_ms': summary.get('duration_ms'),
+    }
+
+
+def _required_string(payload: dict[str, Any], key: str, error_name: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value:
+        raise errors.RequestError(msg=error_name)
+    return value
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == '':
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    return []
+
+
+def _coerce_list_or_none(value: Any) -> list[Any] | None:
+    if value is None:
+        return None
+    return _coerce_list(value)
+
+
+def _coerce_datetime_or_none(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, int | float):
+        return datetime.fromtimestamp(value, tz=datetime_timezone.utc)
+    if isinstance(value, str):
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except ValueError:
+            return None
+    return None
+
+
+def _timestamp_or_original(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return int(value.timestamp())
+    return value
 
 
 def _memory_aggregate_id(event: ClientEvent) -> str:

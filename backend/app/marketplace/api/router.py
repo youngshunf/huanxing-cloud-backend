@@ -6,6 +6,7 @@ from backend.app.marketplace.api.v1.marketplace_skill_version import router as m
 from backend.app.marketplace.api.v1.marketplace_download import router as marketplace_download_router
 from backend.app.marketplace.api.v1.download import router as download_router
 from backend.app.marketplace.api.v1.sync import router as sync_router
+from backend.app.marketplace.api.v1.skill_pack import router as skill_pack_router
 from backend.app.marketplace.api.v1.search import router as search_router
 from backend.app.marketplace.api.v1.client import router as client_router  # 桌面端公开 API
 from backend.app.marketplace.api.v1.publish import router as publish_router  # 发布 API
@@ -26,6 +27,7 @@ v1.include_router(marketplace_skill_version_router, prefix='/skills/versions')  
 v1.include_router(marketplace_skill_router, prefix='/skills')
 v1.include_router(download_router, prefix='/download')  # 下载 API
 v1.include_router(sync_router, prefix='/sync')  # 同步 API
+v1.include_router(skill_pack_router, prefix='/skill-packs')  # HASN v2.1 技能包 API
 v1.include_router(search_router, prefix='/search')  # 搜索 API
 v1.include_router(webhook_router, prefix='/webhook')  # GitHub Webhook（公开，内部验证签名）
 v1.include_router(marketplace_download_router, prefix='/downloads')  # 下载记录管理

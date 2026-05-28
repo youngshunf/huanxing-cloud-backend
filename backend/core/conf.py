@@ -117,6 +117,7 @@ class Settings(BaseSettings):
     HUANXING_HERMES_PLATFORM_LLM_API_KEY: str = ''
     HUANXING_HERMES_PLATFORM_LLM_MODEL: str = 'openai/gpt-5.5'
     HUANXING_HERMES_PLATFORM_LLM_PLAN_ID: str = 'pro_monthly'
+    HASN_TASK_CENTER_SCHEDULER_ENABLED: bool = False
 
     # RAGFlow 公共实例配置
     RAGFLOW_PUBLIC_URL: str = ''  # RAGFlow 服务地址，如 http://127.0.0.1:18082

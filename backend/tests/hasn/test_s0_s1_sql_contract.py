@@ -196,6 +196,58 @@ def test_no_hasn_sql_added_outside_hasn_sql_dir():
     assert leaked == []
 
 
+def test_task_system_v21_migration_task_uuid_unique_matches_upsert_conflict_target():
+    migration = HASN_SQL_DIR / "migrations" / "2026-05-28-task-system-v21.sql"
+    table_sql = HASN_SQL_DIR / "hasn_task.sql"
+    for path in (migration, table_sql):
+        assert path.exists()
+
+    migration_text = migration.read_text(encoding="utf-8")
+    table_text = table_sql.read_text(encoding="utf-8")
+
+    assert 'CONSTRAINT "uq_hasn_task_task_uuid" UNIQUE ("task_uuid")' in table_text
+    assert 'ADD CONSTRAINT "uq_hasn_task_task_uuid" UNIQUE ("task_uuid")' in migration_text
+    assert 'ON "public"."hasn_task"("task_uuid")\n  WHERE "task_uuid" IS NOT NULL' not in migration_text
+
+
+def test_task_assignment_keeps_one_current_row_per_task():
+    migration = HASN_SQL_DIR / "migrations" / "2026-05-28-task-system-v21.sql"
+    table_sql = HASN_SQL_DIR / "hasn_task_assignment.sql"
+    model_file = REPO_ROOT / "backend" / "app" / "hasn" / "model" / "hasn_task_assignment.py"
+    for path in (migration, table_sql, model_file):
+        assert path.exists()
+
+    migration_text = migration.read_text(encoding="utf-8")
+    table_text = table_sql.read_text(encoding="utf-8")
+    model_text = model_file.read_text(encoding="utf-8")
+
+    assert 'CONSTRAINT "uq_hasn_task_assignment_task_uuid"' in table_text
+    assert 'UNIQUE ("task_uuid")' in table_text
+    assert 'uq_hasn_task_assignment_task_agent_node' not in table_text
+    assert 'uq_hasn_task_assignment_task_uuid' in migration_text
+    assert 'PARTITION BY "task_uuid"' in migration_text
+    assert "name='uq_hasn_task_assignment_task_uuid'" in model_text
+    assert "name='uq_hasn_task_assignment_task_agent_node'" not in model_text
+
+
+def test_skill_pack_migration_backfills_legacy_hasn_skill_bundle():
+    migration = REPO_ROOT / "backend" / "sql" / "marketplace" / "migrations" / "2026-05-28-skill-pack-hermes-fields.sql"
+    migration_text = migration.read_text(encoding="utf-8")
+
+    assert 'FROM "public"."hasn_skill_bundle"' in migration_text
+    assert "template_type" in migration_text
+    assert "'skill_pack'" in migration_text
+    assert "jsonb_build_object" in migration_text
+    assert "'skills'" in migration_text
+    assert "hermes_yaml" in migration_text
+    assert "bundle_slug" in migration_text
+    assert "command_key" in migration_text
+    assert "content_hash" in migration_text
+    assert "'hasn-skill-bundle:' || b.\"id\"" in migration_text
+    assert "md5(" in migration_text
+    assert "ON CONFLICT" in migration_text
+
+
 def test_hasn_h2_alembic_revision_chains_to_h1_contacts_revision():
     h1 = importlib.import_module("backend.alembic.versions.20260424_h1_hasn_contacts_peer_owner")
     h2 = importlib.import_module("backend.alembic.versions.20260425_h2_agent_runtime_binding_phase1")

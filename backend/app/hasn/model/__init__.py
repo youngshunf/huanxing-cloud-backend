@@ -39,7 +39,9 @@ from backend.app.hasn.model.hasn_collections import HasnCollections as HasnColle
 from backend.app.hasn.model.hasn_collection_items import HasnCollectionItems as HasnCollectionItems
 from backend.app.hasn.model.hasn_skill_bundle import HasnSkillBundle as HasnSkillBundle
 from backend.app.hasn.model.hasn_task import HasnTask as HasnTask
+from backend.app.hasn.model.hasn_task_assignment import HasnTaskAssignment as HasnTaskAssignment
 from backend.app.hasn.model.hasn_task_run import HasnTaskRun as HasnTaskRun
+from backend.app.hasn.model.hasn_task_run_summary import HasnTaskRunSummary as HasnTaskRunSummary
 from backend.app.hasn.model.hasn_sessions import HasnSessions as HasnSessions
 from backend.app.hasn.model.hasn_session_events import HasnSessionEvents as HasnSessionEvents
 from backend.app.hasn.model.hasn_session_artifacts import HasnSessionArtifacts as HasnSessionArtifacts
