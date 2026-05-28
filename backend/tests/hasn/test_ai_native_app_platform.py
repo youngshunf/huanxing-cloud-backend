@@ -765,8 +765,10 @@ def test_runtime_tool_call_invalid_input_writes_15020_audit(monkeypatch: pytest.
     assert audit_row.context == {'reason': 'input_schema_invalid'}
 
 
-def test_runtime_tool_call_revoked_agent_session_writes_15011_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_runtime_gateway_revoked_agent_session_writes_15011_audit(monkeypatch: pytest.MonkeyPatch) -> None:
     from backend.app.hasn.model import HasnWorkspaceApp
+    from backend.app.hasn.schema.ai_native_runtime import AiNativeToolCallRequest
     from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
     from backend.common.security import agent_jwt as agent_jwt_module
     from backend.common.security.agent_jwt import jwt_encode_agent
@@ -783,7 +785,6 @@ def test_runtime_tool_call_revoked_agent_session_writes_15011_audit(monkeypatch:
             enabled_by=12345,
         ),
     )
-    app = _make_runtime_test_app(fake_db, monkeypatch, patch_agent=False)
     token = jwt_encode_agent(
         {
             'sub': 'a_001',
@@ -811,15 +812,25 @@ def test_runtime_tool_call_revoked_agent_session_writes_15011_audit(monkeypatch:
     monkeypatch.setattr(gateway_module, 'redis_client', missing_session_store, raising=False)
     monkeypatch.setattr(gateway_module.workbench_domain_service, 'get_active_workspace', fake_active_workspace)
 
-    with TestClient(app) as client:
-        resp = client.post(
-            '/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call',
-            json={'workspace': None, 'input': {'query': '唤星工作台'}, 'trace_id': 'trace-revoked-session'},
-            headers={'Authorization': f'Bearer {token}'},
-        )
+    class RequestWithRevokedToken:
+        headers = {'Authorization': f'Bearer {token}'}
 
-    assert resp.status_code == 200, resp.text
-    data = resp.json()['data']
+        class State:
+            pass
+
+        state = State()
+
+    data = await gateway_module.ai_native_runtime_gateway.call_tool(
+        fake_db,
+        request=RequestWithRevokedToken(),
+        app_id='knowledge',
+        tool_id='knowledge.search',
+        body=AiNativeToolCallRequest(
+            workspace=None,
+            input={'query': '唤星工作台'},
+            trace_id='trace-revoked-session',
+        ),
+    )
     assert data['decision'] == 'deny'
     assert data['error'] == {'code': '15011', 'message': 'agent_token_session_revoked'}
     audit_row = fake_db.added[-1]
@@ -831,7 +842,7 @@ def test_runtime_tool_call_revoked_agent_session_writes_15011_audit(monkeypatch:
     assert audit_row.context == {'reason': 'agent_token_session_revoked'}
 
 
-def test_runtime_tool_call_missing_agent_jwt_writes_15010_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_tool_call_requires_agent_jwt_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
     from backend.app.hasn.model import HasnWorkspaceApp
 
     fake_db = _FakeDb(
@@ -854,17 +865,8 @@ def test_runtime_tool_call_missing_agent_jwt_writes_15010_audit(monkeypatch: pyt
             json={'workspace': None, 'input': {'query': '唤星工作台'}, 'trace_id': 'trace-missing-agent-jwt'},
         )
 
-    assert resp.status_code == 200, resp.text
-    data = resp.json()['data']
-    assert data['decision'] == 'deny'
-    assert data['error'] == {'code': '15010', 'message': 'agent_jwt_missing'}
-    audit_row = fake_db.added[-1]
-    assert audit_row.trace_id == 'trace-missing-agent-jwt'
-    assert audit_row.decision == 'deny'
-    assert audit_row.error_code == '15010'
-    assert audit_row.agent_hasn_id is None
-    assert audit_row.session_uuid is None
-    assert audit_row.context == {'reason': 'agent_jwt_missing'}
+    assert resp.status_code == 401, resp.text
+    assert fake_db.added == []
 
 
 def test_runtime_tool_call_inaccessible_workspace_writes_15003_audit(monkeypatch: pytest.MonkeyPatch) -> None:

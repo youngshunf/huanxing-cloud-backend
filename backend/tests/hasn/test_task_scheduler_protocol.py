@@ -396,7 +396,6 @@ async def test_scheduler_dispatch_result_roundtrip_is_readable_from_app_task_run
     ]
 
     task_run = dispatch_session.added[0]
-    task_run.created_time = getattr(task_run, 'created_time', None)
     task_run.updated_time = None
     task_record = SimpleNamespace(id=123, owner_id='h_owner', last_status=None, last_error=None)
     report_session = FakeSession(execute_results=[FakeResult(task_run), FakeResult(task_record)])
