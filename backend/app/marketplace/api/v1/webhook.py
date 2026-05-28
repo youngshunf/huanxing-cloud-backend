@@ -1,17 +1,18 @@
 """
 GitHub Webhook API for Marketplace
 
-Receives GitHub push events and triggers sync for skills and apps.
+Receives GitHub push events and triggers sync for skills and templates.
 """
 import hashlib
 import hmac
-from typing import Any
 
-from fastapi import APIRouter, Request, Header, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Header, Request
 from pydantic import BaseModel
 
-from backend.app.marketplace.service.github_sync_service import github_sync_service
 from backend.app.marketplace.service.github_app_sync_service import github_app_sync_service
+from backend.app.marketplace.service.github_sync_service import github_sync_service
 from backend.common.log import log
 from backend.common.response.response_schema import ResponseSchemaModel, response_base
 from backend.core.conf import settings
@@ -69,8 +70,8 @@ def verify_github_signature(payload: bytes, signature: str) -> bool:
 async def github_webhook_skills(
     request: Request,
     db: CurrentSessionTransaction,
-    x_hub_signature_256: str | None = Header(None, alias='X-Hub-Signature-256'),
-    x_github_event: str | None = Header(None, alias='X-GitHub-Event'),
+    x_hub_signature_256: Annotated[str | None, Header(alias='X-Hub-Signature-256')] = None,
+    x_github_event: Annotated[str | None, Header(alias='X-GitHub-Event')] = None,
 ) -> ResponseSchemaModel[WebhookResponse]:
     """
     GitHub webhook endpoint for skills
@@ -96,13 +97,17 @@ async def github_webhook_skills(
                 message=f"Ignored event: {x_github_event}"
             ))
 
-        # Check if skills directory was modified
+        # Check if marketplace skill directories were modified.
         commits = payload.get('commits', [])
         has_skill_changes = False
 
         for commit in commits:
             modified = commit.get('modified', []) + commit.get('added', []) + commit.get('removed', [])
-            if any(f.startswith('skills/') for f in modified):
+            if any(
+                f.startswith(('huanxing-skills/', 'clawhub/', 'github/'))
+                and f.endswith(('SKILL.md', 'icon.svg', 'icon.png', 'icon.jpg', 'icon.jpeg'))
+                for f in modified
+            ):
                 has_skill_changes = True
                 break
 
@@ -122,12 +127,11 @@ async def github_webhook_skills(
                 synced=result.get('synced', 0),
                 failed=result.get('failed', 0)
             ))
-        else:
-            from backend.common.response.response_code import CustomResponse
-            return response_base.fail(
-                res=CustomResponse(code=500, msg=f"Skill sync failed: {result.get('error')}"),
-                data=WebhookResponse(message="Sync failed", synced=0, failed=0)
-            )
+        from backend.common.response.response_code import CustomResponse
+        return response_base.fail(
+            res=CustomResponse(code=500, msg=f"Skill sync failed: {result.get('error')}"),
+            data=WebhookResponse(message="Sync failed", synced=0, failed=0)
+        )
 
     except Exception as e:
         log.error(f"GitHub webhook error: {e}")
@@ -139,18 +143,18 @@ async def github_webhook_skills(
 
 
 @router.post(
-    '/github/apps',
-    summary='GitHub Webhook for Apps',
-    description='Receives GitHub push events and triggers app template sync',
+    '/github/templates',
+    summary='GitHub Webhook for Templates',
+    description='Receives GitHub push events and triggers template sync',
 )
-async def github_webhook_apps(
+async def github_webhook_templates(
     request: Request,
     db: CurrentSessionTransaction,
-    x_hub_signature_256: str | None = Header(None, alias='X-Hub-Signature-256'),
-    x_github_event: str | None = Header(None, alias='X-GitHub-Event'),
+    x_hub_signature_256: Annotated[str | None, Header(alias='X-Hub-Signature-256')] = None,
+    x_github_event: Annotated[str | None, Header(alias='X-GitHub-Event')] = None,
 ) -> ResponseSchemaModel[WebhookResponse]:
     """
-    GitHub webhook endpoint for app templates
+    GitHub webhook endpoint for templates
 
     Triggered when huanxing-hub repository receives a push event
     """
@@ -190,21 +194,20 @@ async def github_webhook_apps(
             ))
 
         # Trigger sync
-        log.info("Triggering app template sync from GitHub webhook")
+        log.info("Triggering template sync from GitHub webhook")
         result = await github_app_sync_service.sync_from_github(db, force=True)
 
         if result.get('success'):
             return response_base.success(data=WebhookResponse(
-                message="App template sync completed",
+                message="Template sync completed",
                 synced=result.get('synced', 0),
                 failed=result.get('failed', 0)
             ))
-        else:
-            from backend.common.response.response_code import CustomResponse
-            return response_base.fail(
-                res=CustomResponse(code=500, msg=f"App template sync failed: {result.get('error')}"),
-                data=WebhookResponse(message="Sync failed", synced=0, failed=0)
-            )
+        from backend.common.response.response_code import CustomResponse
+        return response_base.fail(
+            res=CustomResponse(code=500, msg=f"Template sync failed: {result.get('error')}"),
+            data=WebhookResponse(message="Sync failed", synced=0, failed=0)
+        )
 
     except Exception as e:
         log.error(f"GitHub webhook error: {e}")

@@ -1,11 +1,15 @@
-from typing import Sequence, Optional
+from collections.abc import Sequence
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy_crud_plus import CRUDPlus
 
 from backend.app.marketplace.model import MarketplaceTemplate
-from backend.app.marketplace.schema.marketplace_template import CreateMarketplaceTemplateParam, UpdateMarketplaceTemplateParam
+from backend.app.marketplace.schema.marketplace_template import (
+    CreateMarketplaceTemplateParam,
+    UpdateMarketplaceTemplateParam,
+)
+from backend.app.marketplace.service.resource_id import PUBLIC_VISIBILITY, PUBLISHED_STATUS
 
 
 class CRUDMarketplaceTemplate(CRUDPlus[MarketplaceTemplate]):
@@ -73,12 +77,64 @@ class CRUDMarketplaceTemplate(CRUDPlus[MarketplaceTemplate]):
         """
         return await self.select_model_by_column(db, template_id=template_id)
 
+    async def get_by_namespace_slug(
+        self,
+        db: AsyncSession,
+        namespace: str,
+        slug: str,
+    ) -> MarketplaceTemplate | None:
+        stmt = select(MarketplaceTemplate).where(
+            MarketplaceTemplate.namespace == namespace,
+            MarketplaceTemplate.slug == slug,
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_namespace_slug_public(
+        self,
+        db: AsyncSession,
+        namespace: str,
+        slug: str,
+    ) -> MarketplaceTemplate | None:
+        stmt = select(MarketplaceTemplate).where(
+            MarketplaceTemplate.namespace == namespace,
+            MarketplaceTemplate.slug == slug,
+            MarketplaceTemplate.status == PUBLISHED_STATUS,
+            MarketplaceTemplate.visibility == PUBLIC_VISIBILITY,
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_namespace_slug_for_user(
+        self,
+        db: AsyncSession,
+        namespace: str,
+        slug: str,
+        user_id: int,
+    ) -> MarketplaceTemplate | None:
+        stmt = select(MarketplaceTemplate).where(
+            MarketplaceTemplate.namespace == namespace,
+            MarketplaceTemplate.slug == slug,
+            MarketplaceTemplate.user_id == user_id,
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_user(self, db: AsyncSession, user_id: int) -> list[MarketplaceTemplate]:
+        stmt = (
+            select(MarketplaceTemplate)
+            .where(MarketplaceTemplate.user_id == user_id)
+            .order_by(MarketplaceTemplate.id.desc())
+        )
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_select_public(
         self,
-        category: Optional[str] = None,
-        tags: Optional[str] = None,
-        pricing_type: Optional[str] = None,
-        is_official: Optional[bool] = None,
+        category: str | None = None,
+        tags: str | None = None,
+        pricing_type: str | None = None,
+        is_official: bool | None = None,  # noqa: FBT001
     ) -> Select:
         """
         获取公开模板列表的查询表达式
@@ -90,7 +146,10 @@ class CRUDMarketplaceTemplate(CRUDPlus[MarketplaceTemplate]):
         :return: 查询表达式
         """
         # 构建基础查询 - 只返回公开的模板
-        stmt = select(MarketplaceTemplate).where(MarketplaceTemplate.is_private == False)
+        stmt = select(MarketplaceTemplate).where(
+            MarketplaceTemplate.status == PUBLISHED_STATUS,
+            MarketplaceTemplate.visibility == PUBLIC_VISIBILITY,
+        )
 
         # 添加筛选条件
         if category:
@@ -118,7 +177,6 @@ class CRUDMarketplaceTemplate(CRUDPlus[MarketplaceTemplate]):
         :param db: 数据库会话
         :param template_id: 模板ID
         """
-        from sqlalchemy import update
         stmt = (
             update(MarketplaceTemplate)
             .where(MarketplaceTemplate.template_id == template_id)

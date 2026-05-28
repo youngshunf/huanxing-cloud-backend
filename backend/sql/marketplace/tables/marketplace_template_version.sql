@@ -1,7 +1,7 @@
 -- 模板版本表
 CREATE TABLE "public"."marketplace_template_version" (
   "id" bigserial PRIMARY KEY,
-  "template_id" varchar(100) COLLATE "pg_catalog"."default" NOT NULL,
+  "template_id" varchar(255) COLLATE "pg_catalog"."default" NOT NULL,
   "version" varchar(50) COLLATE "pg_catalog"."default" NOT NULL,
   "changelog" text COLLATE "pg_catalog"."default",
   "skill_dependencies_versioned" jsonb,

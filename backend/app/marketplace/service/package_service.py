@@ -7,7 +7,7 @@ import hashlib
 import os
 import shutil
 import zipfile
-from datetime import datetime
+
 from pathlib import Path
 from typing import BinaryIO
 
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skill_dao
 from backend.app.marketplace.crud.crud_marketplace_skill_version import marketplace_skill_version_dao
+from backend.app.marketplace.model import MarketplaceSkill
 from backend.common.log import log
 from backend.core.conf import settings
 
@@ -22,7 +23,7 @@ from backend.core.conf import settings
 class PackageService:
     """Package service for marketplace skills"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.cache_dir = Path(getattr(settings, 'SKILL_PACKAGE_CACHE_DIR', '/tmp/skill-packages'))
         self.hub_repo_path = Path(getattr(settings, 'HUANXING_HUB_LOCAL_PATH', '/tmp/huanxing-hub'))
 
@@ -33,7 +34,7 @@ class PackageService:
         self,
         db: AsyncSession,
         skill_id: str,
-        version: str | None = None
+        version: str | None = None,
     ) -> tuple[Path, str]:
         """
         Get skill package (zip file)
@@ -53,7 +54,10 @@ class PackageService:
 
         # Get version
         if version is None:
-            version = skill.latest_version or '1.0.0'
+            latest = await marketplace_skill_version_dao.get_latest_by_skill(db, skill_id)
+            if not latest:
+                raise ValueError(f"Skill version not found: {skill_id}")
+            version = latest.version
 
         # Check cache
         cache_key = f"{skill_id.replace('/', '_')}_{version}"
@@ -81,7 +85,7 @@ class PackageService:
 
         return package_path, package_hash
 
-    async def _create_package(self, skill, version: str) -> tuple[Path, str]:
+    async def _create_package(self, skill: MarketplaceSkill, version: str) -> tuple[Path, str]:
         """
         Create a zip package for a skill
 
@@ -133,12 +137,12 @@ class PackageService:
             Hex digest of hash
         """
         sha256 = hashlib.sha256()
-        with open(file_path, 'rb') as f:
+        with file_path.open('rb') as f:
             while chunk := f.read(8192):
                 sha256.update(chunk)
         return sha256.hexdigest()
 
-    async def clear_cache(self, skill_id: str | None = None):
+    async def clear_cache(self, skill_id: str | None = None) -> None:
         """
         Clear package cache
 

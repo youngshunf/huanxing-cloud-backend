@@ -1,10 +1,9 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path
 
 from backend.app.marketplace.schema.marketplace_template import (
     CreateMarketplaceTemplateParam,
-    DeleteMarketplaceTemplateParam,
     GetMarketplaceTemplateDetail,
     UpdateMarketplaceTemplateParam,
 )
@@ -19,14 +18,6 @@ from backend.database.db import CurrentSession, CurrentSessionTransaction
 router = APIRouter()
 
 
-@router.get('/{pk}', summary='获取技能市场模板表（Agent模板/技能包/SOP包）详情', dependencies=[DependsJwtAuth], name='admin_get_marketplace_template')
-async def get_marketplace_template(
-    db: CurrentSession, pk: Annotated[int, Path(description='技能市场模板表（Agent模板/技能包/SOP包） ID')]
-) -> ResponseSchemaModel[GetMarketplaceTemplateDetail]:
-    marketplace_template = await marketplace_template_service.get(db=db, pk=pk)
-    return response_base.success(data=marketplace_template)
-
-
 @router.get(
     '',
     summary='分页获取所有技能市场模板表（Agent模板/技能包/SOP包）',
@@ -36,9 +27,28 @@ async def get_marketplace_template(
     ],
     name='admin_get_marketplace_template_paginated',
 )
-async def get_marketplace_template_paginated(db: CurrentSession) -> ResponseSchemaModel[PageData[GetMarketplaceTemplateDetail]]:
+async def get_marketplace_template_paginated(
+    db: CurrentSession,
+) -> ResponseSchemaModel[PageData[GetMarketplaceTemplateDetail]]:
     page_data = await marketplace_template_service.get_list(db=db)
     return response_base.success(data=page_data)
+
+
+@router.get(
+    '/{resource_id:path}',
+    summary='获取技能市场模板详情',
+    dependencies=[DependsJwtAuth],
+    name='admin_get_marketplace_template',
+)
+async def get_marketplace_template(
+    db: CurrentSession,
+    resource_id: Annotated[str, Path(description='模板资源 ID')],
+) -> ResponseSchemaModel[GetMarketplaceTemplateDetail]:
+    marketplace_template = await marketplace_template_service.get_by_resource_id_admin(
+        db=db,
+        resource_id=resource_id,
+    )
+    return response_base.success(data=marketplace_template)
 
 
 @router.post(
@@ -50,13 +60,16 @@ async def get_marketplace_template_paginated(db: CurrentSession) -> ResponseSche
     ],
     name='admin_create_marketplace_template',
 )
-async def create_marketplace_template(db: CurrentSessionTransaction, obj: CreateMarketplaceTemplateParam) -> ResponseModel:
-    await marketplace_template_service.create(db=db, obj=obj)
-    return response_base.success()
+async def create_marketplace_template(
+    db: CurrentSessionTransaction,
+    obj: CreateMarketplaceTemplateParam,
+) -> ResponseSchemaModel[GetMarketplaceTemplateDetail]:
+    template = await marketplace_template_service.admin_create(db=db, obj=obj)
+    return response_base.success(data=template)
 
 
 @router.put(
-    '/{pk}',
+    '/{resource_id:path}',
     summary='更新技能市场模板表（Agent模板/技能包/SOP包）',
     dependencies=[
         Depends(RequestPermission('marketplace:template:edit')),
@@ -65,16 +78,16 @@ async def create_marketplace_template(db: CurrentSessionTransaction, obj: Create
     name='admin_update_marketplace_template',
 )
 async def update_marketplace_template(
-    db: CurrentSessionTransaction, pk: Annotated[int, Path(description='技能市场模板表（Agent模板/技能包/SOP包） ID')], obj: UpdateMarketplaceTemplateParam
-) -> ResponseModel:
-    count = await marketplace_template_service.update(db=db, pk=pk, obj=obj)
-    if count > 0:
-        return response_base.success()
-    return response_base.fail()
+    db: CurrentSessionTransaction,
+    resource_id: Annotated[str, Path(description='模板资源 ID')],
+    obj: UpdateMarketplaceTemplateParam,
+) -> ResponseSchemaModel[GetMarketplaceTemplateDetail]:
+    template = await marketplace_template_service.admin_update(db=db, resource_id=resource_id, obj=obj)
+    return response_base.success(data=template)
 
 
 @router.delete(
-    '',
+    '/{resource_id:path}',
     summary='批量删除技能市场模板表（Agent模板/技能包/SOP包）',
     dependencies=[
         Depends(RequestPermission('marketplace:template:del')),
@@ -82,8 +95,9 @@ async def update_marketplace_template(
     ],
     name='admin_delete_marketplace_template',
 )
-async def delete_marketplace_template(db: CurrentSessionTransaction, obj: DeleteMarketplaceTemplateParam) -> ResponseModel:
-    count = await marketplace_template_service.delete(db=db, obj=obj)
-    if count > 0:
-        return response_base.success()
-    return response_base.fail()
+async def delete_marketplace_template(
+    db: CurrentSessionTransaction,
+    resource_id: Annotated[str, Path(description='模板资源 ID')],
+) -> ResponseModel:
+    await marketplace_template_service.admin_delete(db=db, resource_id=resource_id)
+    return response_base.success()

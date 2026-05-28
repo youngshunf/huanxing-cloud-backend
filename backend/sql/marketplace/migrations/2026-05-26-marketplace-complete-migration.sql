@@ -11,9 +11,19 @@ BEGIN;
 -- ============================================
 CREATE TABLE IF NOT EXISTS "public"."marketplace_skill" (
   "id" bigserial PRIMARY KEY,
-  "skill_id" varchar(100) COLLATE "pg_catalog"."default" NOT NULL,
-  "namespace" varchar(50) COLLATE "pg_catalog"."default",
+  "skill_id" varchar(255) COLLATE "pg_catalog"."default" NOT NULL,
+  "namespace" varchar(160) COLLATE "pg_catalog"."default",
   "slug" varchar(100) COLLATE "pg_catalog"."default",
+  "user_id" int8,
+  "hasn_id" varchar(40) COLLATE "pg_catalog"."default",
+  "status" varchar(20) COLLATE "pg_catalog"."default" NOT NULL DEFAULT 'published',
+  "visibility" varchar(20) COLLATE "pg_catalog"."default" NOT NULL DEFAULT 'public',
+  "reviewed_by" int8,
+  "reviewed_at" timestamptz(6),
+  "review_note" text COLLATE "pg_catalog"."default",
+  "published_at" timestamptz(6),
+  "suspended_at" timestamptz(6),
+  "suspend_reason" text COLLATE "pg_catalog"."default",
   "name" varchar(200) COLLATE "pg_catalog"."default" NOT NULL,
   "name_en" varchar(200) COLLATE "pg_catalog"."default",
   "name_zh" varchar(200) COLLATE "pg_catalog"."default",
@@ -35,6 +45,11 @@ CREATE TABLE IF NOT EXISTS "public"."marketplace_skill" (
   "is_private" bool NOT NULL DEFAULT false,
   "is_official" bool NOT NULL DEFAULT false,
   "download_count" int4 NOT NULL DEFAULT 0,
+  "star_count" int4 NOT NULL DEFAULT 0,
+  "repo_path" varchar(500) COLLATE "pg_catalog"."default",
+  "git_commit_hash" varchar(64) COLLATE "pg_catalog"."default",
+  "synced_at" timestamptz(6),
+  "translated_at" timestamptz(6),
   "created_time" timestamptz(6) NOT NULL DEFAULT NOW(),
   "updated_time" timestamptz(6)
 );
@@ -52,6 +67,9 @@ END $$;
 -- 创建索引（如果不存在）
 CREATE INDEX IF NOT EXISTS "idx_marketplace_skill_category" ON "public"."marketplace_skill" ("category");
 CREATE INDEX IF NOT EXISTS "idx_marketplace_skill_author_id" ON "public"."marketplace_skill" ("author_id");
+CREATE INDEX IF NOT EXISTS "idx_marketplace_skill_user_id" ON "public"."marketplace_skill" ("user_id");
+CREATE INDEX IF NOT EXISTS "idx_marketplace_skill_hasn_id" ON "public"."marketplace_skill" ("hasn_id");
+CREATE INDEX IF NOT EXISTS "idx_marketplace_skill_status_visibility" ON "public"."marketplace_skill" ("status", "visibility");
 CREATE INDEX IF NOT EXISTS "idx_marketplace_skill_pricing_type" ON "public"."marketplace_skill" ("pricing_type");
 CREATE INDEX IF NOT EXISTS "idx_marketplace_skill_download_count" ON "public"."marketplace_skill" ("download_count" DESC);
 CREATE INDEX IF NOT EXISTS "idx_marketplace_skill_source_type" ON "public"."marketplace_skill" ("source_type");
@@ -63,6 +81,16 @@ COMMENT ON COLUMN "public"."marketplace_skill"."id" IS '主键 ID';
 COMMENT ON COLUMN "public"."marketplace_skill"."skill_id" IS '技能唯一标识';
 COMMENT ON COLUMN "public"."marketplace_skill"."namespace" IS '命名空间（如 huanxing/clawhub）';
 COMMENT ON COLUMN "public"."marketplace_skill"."slug" IS '技能标识符（如 translator-pro）';
+COMMENT ON COLUMN "public"."marketplace_skill"."user_id" IS '资源所有者用户ID';
+COMMENT ON COLUMN "public"."marketplace_skill"."hasn_id" IS '资源所有者 HASN ID';
+COMMENT ON COLUMN "public"."marketplace_skill"."status" IS '发布状态';
+COMMENT ON COLUMN "public"."marketplace_skill"."visibility" IS '可见性';
+COMMENT ON COLUMN "public"."marketplace_skill"."reviewed_by" IS '审核人用户ID';
+COMMENT ON COLUMN "public"."marketplace_skill"."reviewed_at" IS '审核时间';
+COMMENT ON COLUMN "public"."marketplace_skill"."review_note" IS '审核备注';
+COMMENT ON COLUMN "public"."marketplace_skill"."published_at" IS '发布时间';
+COMMENT ON COLUMN "public"."marketplace_skill"."suspended_at" IS '封禁时间';
+COMMENT ON COLUMN "public"."marketplace_skill"."suspend_reason" IS '封禁原因';
 COMMENT ON COLUMN "public"."marketplace_skill"."name" IS '技能名称';
 COMMENT ON COLUMN "public"."marketplace_skill"."name_en" IS '英文名称';
 COMMENT ON COLUMN "public"."marketplace_skill"."name_zh" IS '中文名称';
@@ -78,19 +106,24 @@ COMMENT ON COLUMN "public"."marketplace_skill"."category" IS '分类';
 COMMENT ON COLUMN "public"."marketplace_skill"."tags" IS '标签，逗号分隔';
 COMMENT ON COLUMN "public"."marketplace_skill"."source_type" IS '来源类型 (github:GitHub:blue/clawhub:ClawHub:green/local:本地:gray)';
 COMMENT ON COLUMN "public"."marketplace_skill"."source_repo_url" IS '源仓库 URL';
-COMMENT ON COLUMN "public"."marketplace_skill"."source_repo_path" IS '仓库内路径（如 skills/translator-pro）';
+COMMENT ON COLUMN "public"."marketplace_skill"."source_repo_path" IS '仓库内路径（如 huanxing-skills/productivity/translator-pro）';
 COMMENT ON COLUMN "public"."marketplace_skill"."pricing_type" IS '定价类型 (free:免费:green/paid:付费:orange)';
 COMMENT ON COLUMN "public"."marketplace_skill"."price" IS '价格';
 COMMENT ON COLUMN "public"."marketplace_skill"."is_private" IS '是否私有';
 COMMENT ON COLUMN "public"."marketplace_skill"."is_official" IS '是否官方技能';
 COMMENT ON COLUMN "public"."marketplace_skill"."download_count" IS '下载次数';
+COMMENT ON COLUMN "public"."marketplace_skill"."star_count" IS '星标数';
+COMMENT ON COLUMN "public"."marketplace_skill"."repo_path" IS '在 huanxing-hub 中的路径';
+COMMENT ON COLUMN "public"."marketplace_skill"."git_commit_hash" IS '最新同步的 commit hash';
+COMMENT ON COLUMN "public"."marketplace_skill"."synced_at" IS '最后同步时间';
+COMMENT ON COLUMN "public"."marketplace_skill"."translated_at" IS '最后翻译时间';
 
 -- ============================================
 -- 2. 创建 marketplace_skill_version 表（如果不存在）
 -- ============================================
 CREATE TABLE IF NOT EXISTS "public"."marketplace_skill_version" (
   "id" bigserial PRIMARY KEY,
-  "skill_id" varchar(100) COLLATE "pg_catalog"."default" NOT NULL,
+  "skill_id" varchar(255) COLLATE "pg_catalog"."default" NOT NULL,
   "version" varchar(50) COLLATE "pg_catalog"."default" NOT NULL,
   "changelog" text COLLATE "pg_catalog"."default",
   "package_url" varchar(500) COLLATE "pg_catalog"."default",
@@ -133,9 +166,19 @@ COMMENT ON COLUMN "public"."marketplace_skill_version"."published_at" IS '发布
 -- ============================================
 CREATE TABLE IF NOT EXISTS "public"."marketplace_template" (
   "id" bigserial PRIMARY KEY,
-  "template_id" varchar(100) COLLATE "pg_catalog"."default" NOT NULL,
-  "namespace" varchar(50) COLLATE "pg_catalog"."default",
+  "template_id" varchar(255) COLLATE "pg_catalog"."default" NOT NULL,
+  "namespace" varchar(160) COLLATE "pg_catalog"."default",
   "slug" varchar(100) COLLATE "pg_catalog"."default",
+  "user_id" int8,
+  "hasn_id" varchar(40) COLLATE "pg_catalog"."default",
+  "status" varchar(20) COLLATE "pg_catalog"."default" NOT NULL DEFAULT 'published',
+  "visibility" varchar(20) COLLATE "pg_catalog"."default" NOT NULL DEFAULT 'public',
+  "reviewed_by" int8,
+  "reviewed_at" timestamptz(6),
+  "review_note" text COLLATE "pg_catalog"."default",
+  "published_at" timestamptz(6),
+  "suspended_at" timestamptz(6),
+  "suspend_reason" text COLLATE "pg_catalog"."default",
   "template_type" varchar(20) COLLATE "pg_catalog"."default" NOT NULL DEFAULT 'agent_template',
   "name" varchar(200) COLLATE "pg_catalog"."default" NOT NULL,
   "name_en" varchar(200) COLLATE "pg_catalog"."default",
@@ -160,6 +203,10 @@ CREATE TABLE IF NOT EXISTS "public"."marketplace_template" (
   "source_repo_path" varchar(500) COLLATE "pg_catalog"."default",
   "skill_dependencies" text COLLATE "pg_catalog"."default",
   "sop_dependencies" text COLLATE "pg_catalog"."default",
+  "repo_path" varchar(500) COLLATE "pg_catalog"."default",
+  "git_commit_hash" varchar(64) COLLATE "pg_catalog"."default",
+  "synced_at" timestamptz(6),
+  "translated_at" timestamptz(6),
   "created_time" timestamptz(6) NOT NULL DEFAULT NOW(),
   "updated_time" timestamptz(6)
 );
@@ -176,6 +223,9 @@ END $$;
 
 -- 创建索引（如果不存在）
 CREATE INDEX IF NOT EXISTS "idx_marketplace_template_author_id" ON "public"."marketplace_template" ("author_id");
+CREATE INDEX IF NOT EXISTS "idx_marketplace_template_user_id" ON "public"."marketplace_template" ("user_id");
+CREATE INDEX IF NOT EXISTS "idx_marketplace_template_hasn_id" ON "public"."marketplace_template" ("hasn_id");
+CREATE INDEX IF NOT EXISTS "idx_marketplace_template_status_visibility" ON "public"."marketplace_template" ("status", "visibility");
 CREATE INDEX IF NOT EXISTS "idx_marketplace_template_pricing_type" ON "public"."marketplace_template" ("pricing_type");
 CREATE INDEX IF NOT EXISTS "idx_marketplace_template_download_count" ON "public"."marketplace_template" ("download_count" DESC);
 CREATE INDEX IF NOT EXISTS "idx_marketplace_template_template_type" ON "public"."marketplace_template" ("template_type");
@@ -187,6 +237,16 @@ COMMENT ON COLUMN "public"."marketplace_template"."id" IS '主键 ID';
 COMMENT ON COLUMN "public"."marketplace_template"."template_id" IS '模板唯一标识';
 COMMENT ON COLUMN "public"."marketplace_template"."namespace" IS '命名空间（如 huanxing/clawhub）';
 COMMENT ON COLUMN "public"."marketplace_template"."slug" IS '模板标识符';
+COMMENT ON COLUMN "public"."marketplace_template"."user_id" IS '资源所有者用户ID';
+COMMENT ON COLUMN "public"."marketplace_template"."hasn_id" IS '资源所有者 HASN ID';
+COMMENT ON COLUMN "public"."marketplace_template"."status" IS '发布状态';
+COMMENT ON COLUMN "public"."marketplace_template"."visibility" IS '可见性';
+COMMENT ON COLUMN "public"."marketplace_template"."reviewed_by" IS '审核人用户ID';
+COMMENT ON COLUMN "public"."marketplace_template"."reviewed_at" IS '审核时间';
+COMMENT ON COLUMN "public"."marketplace_template"."review_note" IS '审核备注';
+COMMENT ON COLUMN "public"."marketplace_template"."published_at" IS '发布时间';
+COMMENT ON COLUMN "public"."marketplace_template"."suspended_at" IS '封禁时间';
+COMMENT ON COLUMN "public"."marketplace_template"."suspend_reason" IS '封禁原因';
 COMMENT ON COLUMN "public"."marketplace_template"."template_type" IS '模板类型 (agent_template:Agent模板:blue/skill_pack:技能包:cyan/sop_pack:SOP包:purple)';
 COMMENT ON COLUMN "public"."marketplace_template"."name" IS '模板名称';
 COMMENT ON COLUMN "public"."marketplace_template"."name_en" IS '英文名称';
@@ -211,13 +271,17 @@ COMMENT ON COLUMN "public"."marketplace_template"."source_repo_url" IS '源仓�
 COMMENT ON COLUMN "public"."marketplace_template"."source_repo_path" IS '仓库内路径';
 COMMENT ON COLUMN "public"."marketplace_template"."skill_dependencies" IS '依赖的技能ID列表，逗号分隔';
 COMMENT ON COLUMN "public"."marketplace_template"."sop_dependencies" IS '依赖的SOP ID列表，逗号分隔';
+COMMENT ON COLUMN "public"."marketplace_template"."repo_path" IS '在 huanxing-hub 中的路径';
+COMMENT ON COLUMN "public"."marketplace_template"."git_commit_hash" IS '最新同步的 commit hash';
+COMMENT ON COLUMN "public"."marketplace_template"."synced_at" IS '最后同步时间';
+COMMENT ON COLUMN "public"."marketplace_template"."translated_at" IS '最后翻译时间';
 
 -- ============================================
 -- 4. 创建 marketplace_template_version 表（如果不存在）
 -- ============================================
 CREATE TABLE IF NOT EXISTS "public"."marketplace_template_version" (
   "id" bigserial PRIMARY KEY,
-  "template_id" varchar(100) COLLATE "pg_catalog"."default" NOT NULL,
+  "template_id" varchar(255) COLLATE "pg_catalog"."default" NOT NULL,
   "version" varchar(50) COLLATE "pg_catalog"."default" NOT NULL,
   "changelog" text COLLATE "pg_catalog"."default",
   "skill_dependencies_versioned" jsonb,
@@ -295,38 +359,40 @@ COMMENT ON COLUMN "public"."marketplace_sync_log"."started_at" IS '开始时间'
 COMMENT ON COLUMN "public"."marketplace_sync_log"."completed_at" IS '完成时间';
 
 -- ============================================
--- 6. 创建 marketplace_download_history 表（如果不存在）
+-- 6. 创建 marketplace_download 表（如果不存在）
 -- ============================================
-CREATE TABLE IF NOT EXISTS "public"."marketplace_download_history" (
+CREATE TABLE IF NOT EXISTS "public"."marketplace_download" (
   "id" bigserial PRIMARY KEY,
   "user_id" int8 NOT NULL,
   "resource_type" varchar(20) COLLATE "pg_catalog"."default" NOT NULL,
-  "resource_id" varchar(100) COLLATE "pg_catalog"."default" NOT NULL,
+  "resource_id" varchar(255) COLLATE "pg_catalog"."default" NOT NULL,
   "resource_name" varchar(200) COLLATE "pg_catalog"."default",
-  "version" varchar(50) COLLATE "pg_catalog"."default",
+  "version" varchar(50) COLLATE "pg_catalog"."default" NOT NULL,
   "download_source" varchar(50) COLLATE "pg_catalog"."default",
   "ip_address" varchar(50) COLLATE "pg_catalog"."default",
   "user_agent" text COLLATE "pg_catalog"."default",
-  "created_time" timestamptz(6) NOT NULL DEFAULT NOW()
+  "downloaded_at" timestamptz(6) NOT NULL DEFAULT NOW(),
+  "created_time" timestamptz(6) NOT NULL DEFAULT NOW(),
+  "updated_time" timestamptz(6)
 );
 
 -- 创建索引（如果不存在）
-CREATE INDEX IF NOT EXISTS "idx_marketplace_download_history_user_id" ON "public"."marketplace_download_history" ("user_id");
-CREATE INDEX IF NOT EXISTS "idx_marketplace_download_history_resource_type" ON "public"."marketplace_download_history" ("resource_type");
-CREATE INDEX IF NOT EXISTS "idx_marketplace_download_history_resource_id" ON "public"."marketplace_download_history" ("resource_id");
-CREATE INDEX IF NOT EXISTS "idx_marketplace_download_history_created_time" ON "public"."marketplace_download_history" ("created_time" DESC);
+CREATE INDEX IF NOT EXISTS "idx_marketplace_download_user_id" ON "public"."marketplace_download" ("user_id");
+CREATE INDEX IF NOT EXISTS "idx_marketplace_download_resource" ON "public"."marketplace_download" ("resource_type", "resource_id");
+CREATE INDEX IF NOT EXISTS "idx_marketplace_download_downloaded_at" ON "public"."marketplace_download" ("downloaded_at" DESC);
 
 -- 添加注释
-COMMENT ON TABLE "public"."marketplace_download_history" IS '技能市场下载历史表';
-COMMENT ON COLUMN "public"."marketplace_download_history"."id" IS '主键 ID';
-COMMENT ON COLUMN "public"."marketplace_download_history"."user_id" IS '用户 ID';
-COMMENT ON COLUMN "public"."marketplace_download_history"."resource_type" IS '资源类型 (skill:技能:blue/template:模板:cyan)';
-COMMENT ON COLUMN "public"."marketplace_download_history"."resource_id" IS '资源 ID';
-COMMENT ON COLUMN "public"."marketplace_download_history"."resource_name" IS '资源名称';
-COMMENT ON COLUMN "public"."marketplace_download_history"."version" IS '版本号';
-COMMENT ON COLUMN "public"."marketplace_download_history"."download_source" IS '下载来源（web/api/cli）';
-COMMENT ON COLUMN "public"."marketplace_download_history"."ip_address" IS 'IP 地址';
-COMMENT ON COLUMN "public"."marketplace_download_history"."user_agent" IS 'User Agent';
+COMMENT ON TABLE "public"."marketplace_download" IS '用户下载记录表';
+COMMENT ON COLUMN "public"."marketplace_download"."id" IS '主键 ID';
+COMMENT ON COLUMN "public"."marketplace_download"."user_id" IS '用户ID';
+COMMENT ON COLUMN "public"."marketplace_download"."resource_type" IS '资源类型 (skill:技能:blue/template:模板:cyan)';
+COMMENT ON COLUMN "public"."marketplace_download"."resource_id" IS '资源 ID';
+COMMENT ON COLUMN "public"."marketplace_download"."resource_name" IS '资源名称';
+COMMENT ON COLUMN "public"."marketplace_download"."version" IS '下载的版本';
+COMMENT ON COLUMN "public"."marketplace_download"."download_source" IS '下载来源（web/api/cli）';
+COMMENT ON COLUMN "public"."marketplace_download"."ip_address" IS 'IP 地址';
+COMMENT ON COLUMN "public"."marketplace_download"."user_agent" IS 'User Agent';
+COMMENT ON COLUMN "public"."marketplace_download"."downloaded_at" IS '下载时间';
 
 COMMIT;
 

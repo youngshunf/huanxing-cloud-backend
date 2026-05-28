@@ -1,218 +1,156 @@
-"""
-Marketplace Skills Open API
+"""Marketplace skills public API."""
+from __future__ import annotations
 
-Public API for browsing and downloading skills.
-"""
-from fastapi import APIRouter, HTTPException, Query, Response
-from fastapi.responses import StreamingResponse
+from typing import Annotated, Any
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import RedirectResponse, StreamingResponse
 
 from backend.app.marketplace.crud.crud_marketplace_download import marketplace_download_dao
+from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skill_dao
+from backend.app.marketplace.crud.crud_marketplace_skill_version import marketplace_skill_version_dao
+from backend.app.marketplace.schema.marketplace_download import CreateMarketplaceDownloadParam
+from backend.app.marketplace.service.marketplace_skill_service import marketplace_skill_service
 from backend.app.marketplace.service.package_service import package_service
 from backend.app.marketplace.service.search_service import search_service
-from backend.database.db import CurrentSession
+from backend.database.db import CurrentSession  # noqa: TC001
 
 router = APIRouter()
 
 
-@router.get('/search', summary='Search skills')
-async def search_skills(
+@router.get('', summary='List public skills')
+async def list_skills(
     db: CurrentSession,
-    keyword: str | None = Query(None, description='Search keyword'),
-    category: str | None = Query(None, description='Category filter'),
-    tags: str | None = Query(None, description='Comma-separated tags'),
-    lang: str = Query('zh', description='Language (zh/en)'),
-    page: int = Query(1, ge=1, description='Page number'),
-    page_size: int = Query(20, ge=1, le=100, description='Items per page'),
-    sort_by: str = Query('popular', description='Sort by (popular/latest/downloads/stars)')
-):
-    """Search skills with filters"""
-    tag_list = tags.split(',') if tags else None
-
-    result = await search_service.search_skills(
+    category: Annotated[str | None, Query()] = None,
+    tags: Annotated[str | None, Query()] = None,
+    source_type: Annotated[str | None, Query()] = None,
+    namespace: Annotated[str | None, Query()] = None,
+    lang: Annotated[str, Query()] = 'zh',
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    sort: Annotated[str | None, Query()] = None,
+    sort_by: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    tag_list = [tag.strip() for tag in tags.split(',')] if tags else None
+    return await search_service.search_skills(
         db=db,
-        keyword=keyword,
         category=category,
         tags=tag_list,
+        source_type=source_type,
+        namespace=namespace,
         lang=lang,
         page=page,
         page_size=page_size,
-        sort_by=sort_by
+        sort_by=sort or sort_by or 'popular',
     )
 
-    return result
 
-
-@router.get('/skills/{namespace}/{slug}', summary='Get skill detail by namespace and slug')
-async def get_skill_by_namespace_slug(
+@router.get('/search', summary='Search public skills')
+async def search_skills(
     db: CurrentSession,
-    namespace: str,
-    slug: str,
-    lang: str = Query('zh', description='Language (zh/en)')
-):
-    """Get skill detail using namespace/slug format"""
-    skill_id = f"{namespace}/{slug}"
-    skill = await search_service.get_skill_detail(db, skill_id, lang)
-
-    if not skill:
-        raise HTTPException(status_code=404, detail=f'Skill not found: {namespace}/{slug}')
-
-    return skill
-
-
-@router.get('/skills/{skill_id}', summary='Get skill detail')
-async def get_skill_detail(
-    db: CurrentSession,
-    skill_id: str,
-    lang: str = Query('zh', description='Language (zh/en)')
-):
-    """Get skill detail by ID (supports both 'slug' and 'namespace/slug' formats)"""
-    # If skill_id doesn't contain '/', assume it's huanxing namespace
-    if '/' not in skill_id:
-        skill_id = f"huanxing/{skill_id}"
-
-    skill = await search_service.get_skill_detail(db, skill_id, lang)
-
-    if not skill:
-        raise HTTPException(status_code=404, detail='Skill not found')
-
-    return skill
+    keyword: Annotated[str | None, Query(description='Search keyword')] = None,
+    q: Annotated[str | None, Query(description='Search keyword alias')] = None,
+    category: Annotated[str | None, Query(description='Category filter')] = None,
+    tags: Annotated[str | None, Query(description='Comma-separated tags')] = None,
+    source_type: Annotated[str | None, Query(description='Source type filter')] = None,
+    namespace: Annotated[str | None, Query(description='Namespace filter')] = None,
+    lang: Annotated[str, Query(description='Language (zh/en)')] = 'zh',
+    page: Annotated[int, Query(ge=1, description='Page number')] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100, description='Items per page')] = 20,
+    sort: Annotated[str | None, Query(description='Sort by (popular/latest/downloads/stars)')] = None,
+    sort_by: Annotated[str | None, Query(description='Sort by alias (popular/latest/downloads/stars)')] = None,
+) -> dict[str, Any]:
+    tag_list = [tag.strip() for tag in tags.split(',')] if tags else None
+    return await search_service.search_skills(
+        db=db,
+        keyword=keyword or q,
+        category=category,
+        tags=tag_list,
+        source_type=source_type,
+        namespace=namespace,
+        lang=lang,
+        page=page,
+        page_size=page_size,
+        sort_by=sort or sort_by or 'popular',
+    )
 
 
-@router.get('/skills/{namespace}/{slug}/download', summary='Download skill package by namespace/slug')
-async def download_skill_by_namespace_slug(
-    db: CurrentSession,
-    namespace: str,
-    slug: str,
-    version: str | None = Query(None, description='Version (use latest if not specified)')
-):
-    """Download skill package using namespace/slug format"""
-    skill_id = f"{namespace}/{slug}"
-    return await _download_skill_package(db, skill_id, version)
-
-
-@router.get('/skills/{skill_id}/download', summary='Download skill package')
+@router.get(
+    '/{resource_id:path}/download',
+    summary='Download public skill package',
+    response_model=None,
+)
 async def download_skill_open(
     db: CurrentSession,
-    skill_id: str,
-    version: str | None = Query(None, description='Version (use latest if not specified)')
-):
-    """Download skill package as zip file (supports both 'slug' and 'namespace/slug' formats)"""
-    # If skill_id doesn't contain '/', assume it's huanxing namespace
-    if '/' not in skill_id:
-        skill_id = f"huanxing/{skill_id}"
+    resource_id: str,
+    version: Annotated[str | None, Query(description='Version (use latest if not specified)')] = None,
+) -> RedirectResponse | StreamingResponse:
+    skill = await marketplace_skill_service.get_by_resource_id_public(db=db, resource_id=resource_id)
+    skill_id = skill.skill_id
+    if version:
+        skill_version = await marketplace_skill_version_dao.get_by_skill_and_version(db, skill_id, version)
+    else:
+        skill_version = await marketplace_skill_version_dao.get_latest_by_skill(db, skill_id)
+        version = skill_version.version if skill_version else None
 
-    return await _download_skill_package(db, skill_id, version)
+    if not skill_version:
+        raise HTTPException(status_code=404, detail='Skill version not found')
 
-
-async def _download_skill_package(db: CurrentSession, skill_id: str, version: str | None):
-    """Internal helper to download skill package"""
-    try:
-        # Get skill and version info
-        from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skill_dao
-        from backend.app.marketplace.crud.crud_marketplace_skill_version import marketplace_skill_version_dao
-        from backend.app.marketplace.schema.marketplace_download import CreateMarketplaceDownloadParam
-        from fastapi.responses import RedirectResponse
-
-        skill = await marketplace_skill_dao.get_by_id(db, skill_id)
-        if not skill:
-            raise HTTPException(status_code=404, detail=f'Skill not found: {skill_id}')
-
-        # Get version info
-        if version:
-            skill_version = await marketplace_skill_version_dao.get_by_skill_and_version(
-                db, skill_id, version
-            )
-        else:
-            # Get latest version
-            skill_version = await marketplace_skill_version_dao.get_latest_by_skill(db, skill_id)
-            version = skill_version.version if skill_version else 'latest'
-
-        # If package_url exists, redirect to it
-        if skill_version and skill_version.package_url:
-            # Record download
-            download_record = CreateMarketplaceDownloadParam(
+    if skill_version.package_url:
+        await marketplace_download_dao.create(
+            db,
+            CreateMarketplaceDownloadParam(
                 resource_type='skill',
                 resource_id=skill_id,
                 resource_name=skill.name_zh or skill.name_en,
-                version=version,
+                version=skill_version.version,
                 download_source='web',
                 user_id=0,
                 ip_address=None,
-                user_agent=None
-            )
-            await marketplace_download_dao.create(db, download_record)
-
-            # Commit transaction before redirect to ensure record is saved
-            await db.commit()
-
-            return RedirectResponse(url=skill_version.package_url, status_code=302)
-
-        # Otherwise, try to create package from local repo
-        package_path, package_hash = await package_service.get_skill_package(
-            db, skill_id, version
+                user_agent=None,
+            ),
         )
+        await marketplace_skill_dao.increment_download_count(db, skill_id)
+        await db.commit()
+        return RedirectResponse(url=skill_version.package_url, status_code=302)
 
-        # Record download
-        download_record = CreateMarketplaceDownloadParam(
+    try:
+        package_path, package_hash = await package_service.get_skill_package(db, skill_id, version)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    await marketplace_download_dao.create(
+        db,
+        CreateMarketplaceDownloadParam(
             resource_type='skill',
             resource_id=skill_id,
             resource_name=skill.name_zh or skill.name_en,
-            version=version,
+            version=version or '',
             download_source='web',
             user_id=0,
             ip_address=None,
-            user_agent=None
-        )
-        await marketplace_download_dao.create(db, download_record)
+            user_agent=None,
+        ),
+    )
+    await marketplace_skill_dao.increment_download_count(db, skill_id)
+    await db.commit()
 
-        # Return file stream
-        file_stream = package_service.get_package_stream(package_path)
-        filename = f"{skill_id.replace('/', '_')}_{version}.zip"
-
-        return StreamingResponse(
-            file_stream,
-            media_type='application/zip',
-            headers={
-                'Content-Disposition': f'attachment; filename="{filename}"',
-                'X-Package-Hash': package_hash
-            }
-        )
-
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f'Failed to download skill: {str(e)}')
+    file_stream = package_service.get_package_stream(package_path)
+    filename = f"{skill_id.replace('/', '_')}_{version}.zip"
+    return StreamingResponse(
+        file_stream,
+        media_type='application/zip',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"', 'X-Package-Hash': package_hash},
+    )
 
 
-@router.get('/popular', summary='Get popular skills')
-async def get_popular_skills(
+@router.get('/{resource_id:path}', summary='Get public skill detail')
+async def get_skill_detail(
     db: CurrentSession,
-    lang: str = Query('zh', description='Language (zh/en)'),
-    limit: int = Query(10, ge=1, le=50, description='Number of skills')
-):
-    """Get popular skills"""
-    skills = await search_service.get_popular_skills(db, lang, limit)
-    return {'items': skills}
-
-
-@router.get('/official', summary='Get official skills')
-async def get_official_skills(
-    db: CurrentSession,
-    lang: str = Query('zh', description='Language (zh/en)'),
-    limit: int = Query(10, ge=1, le=50, description='Number of skills')
-):
-    """Get official skills"""
-    skills = await search_service.get_official_skills(db, lang, limit)
-    return {'items': skills}
-
-
-@router.get('/categories', summary='Get all categories')
-async def get_categories(
-    db: CurrentSession,
-    lang: str = Query('zh', description='Language (zh/en)')
-):
-    """Get all categories with skill counts"""
-    categories = await search_service.get_categories(db, lang)
-    return {'items': categories}
+    resource_id: str,
+    lang: Annotated[str, Query(description='Language (zh/en)')] = 'zh',
+) -> dict[str, Any]:
+    detail = await search_service.get_skill_detail(db, resource_id, lang)
+    if not detail:
+        raise HTTPException(status_code=404, detail='Skill not found')
+    return detail

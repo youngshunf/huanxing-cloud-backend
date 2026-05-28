@@ -1,111 +1,107 @@
-"""技能市场模板表（Agent模板/技能包/SOP包） - 用户端 API
+"""Marketplace templates app API."""
+from __future__ import annotations
 
-认证方式: DependsJwtAuth（仅当前登录用户）
-数据隔离: 通过 request.user.id 限制为用户自己的数据
-"""
 from typing import Annotated
 
-from fastapi import APIRouter, Path, Request
+from fastapi import APIRouter, File, Form, Request, UploadFile
+from pydantic import BaseModel
 
-from backend.app.marketplace.schema.marketplace_template import (
-    CreateMarketplaceTemplateParam,
-    GetMarketplaceTemplateDetail,
-    UpdateMarketplaceTemplateParam,
-)
 from backend.app.marketplace.service.marketplace_template_service import marketplace_template_service
-from backend.common.exception import errors
-from backend.common.pagination import DependsPagination, PageData
-from backend.common.response.response_schema import ResponseModel, ResponseSchemaModel, response_base
+from backend.common.response.response_schema import ResponseModel, response_base
 from backend.common.security.jwt import DependsJwtAuth
-from backend.database.db import CurrentSession, CurrentSessionTransaction
+from backend.database.db import CurrentSession, CurrentSessionTransaction  # noqa: TC001
 
 router = APIRouter()
 
 
-@router.get(
-    '',
-    summary='获取我的技能市场模板表（Agent模板/技能包/SOP包）列表',
-    dependencies=[DependsJwtAuth, DependsPagination],
-    name='app_get_my_marketplace_template',
-)
-async def get_my_marketplace_template(
+class TemplateUpdateBody(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    category: str | None = None
+    tags: list[str] | str | None = None
+    emoji: str | None = None
+    icon_url: str | None = None
+    skill_dependencies: list[str] | str | None = None
+    sop_dependencies: list[str] | str | None = None
+
+
+@router.get('', summary='List my templates', dependencies=[DependsJwtAuth])
+async def list_my_templates(request: Request, db: CurrentSession) -> ResponseModel:
+    return response_base.success(
+        data={'items': await marketplace_template_service.list_user_templates(db=db, user_id=request.user.id)},
+    )
+
+
+@router.post('/upload', summary='Upload my template', dependencies=[DependsJwtAuth])
+async def upload_my_template(
     request: Request,
-    db: CurrentSession,
-) -> ResponseSchemaModel[PageData[GetMarketplaceTemplateDetail]]:
-    page_data = await marketplace_template_service.get_list(db=db)
-    return response_base.success(data=page_data)
+    db: CurrentSessionTransaction,
+    file: Annotated[UploadFile, File(description='Template ZIP package')],
+    slug: Annotated[str | None, Form(description='Public slug')] = None,
+    changelog: Annotated[str | None, Form(description='Changelog')] = None,
+) -> ResponseModel:
+    content = await file.read()
+    template = await marketplace_template_service.upload_user_template(
+        db=db,
+        user_id=request.user.id,
+        hasn_id=request.user.hasn_id,
+        content=content,
+        filename=file.filename,
+        slug=slug,
+        changelog=changelog,
+    )
+    return response_base.success(data=marketplace_template_service.format_template(template))
+
+
+@router.get('/{resource_id:path}', summary='Get my template', dependencies=[DependsJwtAuth])
+async def get_my_template(request: Request, db: CurrentSession, resource_id: str) -> ResponseModel:
+    template = await marketplace_template_service.get_by_resource_id_for_user(
+        db=db,
+        resource_id=resource_id,
+        user_id=request.user.id,
+    )
+    return response_base.success(data=marketplace_template_service.format_template(template))
 
 
 @router.post(
-    '',
-    summary='创建技能市场模板表（Agent模板/技能包/SOP包）',
+    '/{resource_id:path}/submit-review',
+    summary='Submit my template for review',
     dependencies=[DependsJwtAuth],
-    name='app_create_my_marketplace_template',
 )
-async def create_my_marketplace_template(
+async def submit_my_template_review(request: Request, db: CurrentSessionTransaction, resource_id: str) -> ResponseModel:
+    template = await marketplace_template_service.submit_review(db=db, resource_id=resource_id, user_id=request.user.id)
+    return response_base.success(data=marketplace_template_service.format_template(template))
+
+
+@router.post('/{resource_id:path}/publish', summary='Publish my template', dependencies=[DependsJwtAuth])
+async def publish_my_template(request: Request, db: CurrentSessionTransaction, resource_id: str) -> ResponseModel:
+    template = await marketplace_template_service.publish(db=db, resource_id=resource_id, user_id=request.user.id)
+    return response_base.success(data=marketplace_template_service.format_template(template))
+
+
+@router.post('/{resource_id:path}/unpublish', summary='Unpublish my template', dependencies=[DependsJwtAuth])
+async def unpublish_my_template(request: Request, db: CurrentSessionTransaction, resource_id: str) -> ResponseModel:
+    template = await marketplace_template_service.unpublish(db=db, resource_id=resource_id, user_id=request.user.id)
+    return response_base.success(data=marketplace_template_service.format_template(template))
+
+
+@router.patch('/{resource_id:path}', summary='Update my template metadata', dependencies=[DependsJwtAuth])
+async def update_my_template(
     request: Request,
     db: CurrentSessionTransaction,
-    obj: CreateMarketplaceTemplateParam,
+    resource_id: str,
+    body: TemplateUpdateBody,
 ) -> ResponseModel:
-    result = await marketplace_template_service.create(db=db, obj=obj)
-    return response_base.success(data=result)
+    template = await marketplace_template_service.update_user_template(
+        db=db,
+        resource_id=resource_id,
+        user_id=request.user.id,
+        payload=body.model_dump(exclude_none=True),
+    )
+    return response_base.success(data=marketplace_template_service.format_template(template))
 
 
-@router.get(
-    '/{pk}',
-    summary='获取技能市场模板表（Agent模板/技能包/SOP包）详情',
-    dependencies=[DependsJwtAuth],
-    name='app_get_my_marketplace_template_detail',
-)
-async def get_my_marketplace_template_detail(
-    request: Request,
-    db: CurrentSession,
-    pk: Annotated[int, Path(description='技能市场模板表（Agent模板/技能包/SOP包） ID')],
-) -> ResponseSchemaModel[GetMarketplaceTemplateDetail]:
-    marketplace_template = await marketplace_template_service.get(db=db, pk=pk)
-    if marketplace_template.user_id != request.user.id:
-        raise errors.ForbiddenError(msg='无权访问该技能市场模板表（Agent模板/技能包/SOP包）')
-    return response_base.success(data=marketplace_template)
-
-
-@router.put(
-    '/{pk}',
-    summary='更新技能市场模板表（Agent模板/技能包/SOP包）',
-    dependencies=[DependsJwtAuth],
-    name='app_update_my_marketplace_template',
-)
-async def update_my_marketplace_template(
-    request: Request,
-    db: CurrentSessionTransaction,
-    pk: Annotated[int, Path(description='技能市场模板表（Agent模板/技能包/SOP包） ID')],
-    obj: UpdateMarketplaceTemplateParam,
-) -> ResponseModel:
-    marketplace_template = await marketplace_template_service.get(db=db, pk=pk)
-    if getattr(marketplace_template, 'user_id', request.user.id) != request.user.id:
-        raise errors.ForbiddenError(msg='无权修改该技能市场模板表（Agent模板/技能包/SOP包）')
-    count = await marketplace_template_service.update(db=db, pk=pk, obj=obj)
-    if count > 0:
-        return response_base.success()
-    return response_base.fail()
-
-
-@router.delete(
-    '/{pk}',
-    summary='删除技能市场模板表（Agent模板/技能包/SOP包）',
-    dependencies=[DependsJwtAuth],
-    name='app_delete_my_marketplace_template',
-)
-async def delete_my_marketplace_template(
-    request: Request,
-    db: CurrentSessionTransaction,
-    pk: Annotated[int, Path(description='技能市场模板表（Agent模板/技能包/SOP包） ID')],
-) -> ResponseModel:
-    user_id = request.user.id
-    marketplace_template = await marketplace_template_service.get(db=db, pk=pk)
-    if marketplace_template.user_id != user_id:
-        raise errors.ForbiddenError(msg='无权删除该技能市场模板表（Agent模板/技能包/SOP包）')
-    from backend.app.marketplace.schema.marketplace_template import DeleteMarketplaceTemplateParam
-    count = await marketplace_template_service.delete(db=db, obj=DeleteMarketplaceTemplateParam(pks=[pk]))
-    if count > 0:
-        return response_base.success()
-    return response_base.fail()
+@router.delete('/{resource_id:path}', summary='Delete my template', dependencies=[DependsJwtAuth])
+async def delete_my_template(request: Request, db: CurrentSessionTransaction, resource_id: str) -> ResponseModel:
+    await marketplace_template_service.delete_user_template(db=db, resource_id=resource_id, user_id=request.user.id)
+    return response_base.success()

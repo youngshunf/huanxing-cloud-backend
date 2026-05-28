@@ -1,11 +1,12 @@
-from typing import Sequence, Optional
+from collections.abc import Sequence
 
-from sqlalchemy import Select, update, select, func, or_
+from sqlalchemy import Select, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy_crud_plus import CRUDPlus
 
 from backend.app.marketplace.model import MarketplaceSkill
 from backend.app.marketplace.schema.marketplace_skill import CreateMarketplaceSkillParam, UpdateMarketplaceSkillParam
+from backend.app.marketplace.service.resource_id import PUBLIC_VISIBILITY, PUBLISHED_STATUS
 
 
 class CRUDMarketplaceSkill(CRUDPlus[MarketplaceSkill]):
@@ -77,7 +78,7 @@ class CRUDMarketplaceSkill(CRUDPlus[MarketplaceSkill]):
         self,
         db: AsyncSession,
         namespace: str,
-        slug: str
+        slug: str,
     ) -> MarketplaceSkill | None:
         """
         通过命名空间和 slug 获取技能
@@ -89,10 +90,49 @@ class CRUDMarketplaceSkill(CRUDPlus[MarketplaceSkill]):
         """
         stmt = select(MarketplaceSkill).where(
             MarketplaceSkill.namespace == namespace,
-            MarketplaceSkill.slug == slug
+            MarketplaceSkill.slug == slug,
         )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_namespace_slug_public(
+        self,
+        db: AsyncSession,
+        namespace: str,
+        slug: str,
+    ) -> MarketplaceSkill | None:
+        stmt = select(MarketplaceSkill).where(
+            MarketplaceSkill.namespace == namespace,
+            MarketplaceSkill.slug == slug,
+            MarketplaceSkill.status == PUBLISHED_STATUS,
+            MarketplaceSkill.visibility == PUBLIC_VISIBILITY,
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_namespace_slug_for_user(
+        self,
+        db: AsyncSession,
+        namespace: str,
+        slug: str,
+        user_id: int,
+    ) -> MarketplaceSkill | None:
+        stmt = select(MarketplaceSkill).where(
+            MarketplaceSkill.namespace == namespace,
+            MarketplaceSkill.slug == slug,
+            MarketplaceSkill.user_id == user_id,
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_user(self, db: AsyncSession, user_id: int) -> list[MarketplaceSkill]:
+        stmt = (
+            select(MarketplaceSkill)
+            .where(MarketplaceSkill.user_id == user_id)
+            .order_by(MarketplaceSkill.id.desc())
+        )
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
 
     async def increment_download_count(self, db: AsyncSession, skill_id: str) -> None:
         """
@@ -110,10 +150,10 @@ class CRUDMarketplaceSkill(CRUDPlus[MarketplaceSkill]):
 
     async def get_select_public(
         self,
-        category: Optional[str] = None,
-        tags: Optional[str] = None,
-        pricing_type: Optional[str] = None,
-        is_official: Optional[bool] = None,
+        category: str | None = None,
+        tags: str | None = None,
+        pricing_type: str | None = None,
+        is_official: bool | None = None,  # noqa: FBT001
     ) -> Select:
         """
         获取公开技能列表的查询表达式
@@ -125,8 +165,11 @@ class CRUDMarketplaceSkill(CRUDPlus[MarketplaceSkill]):
         :return: 查询表达式
         """
         # 构建基础查询 - 只返回公开的技能
-        stmt = select(MarketplaceSkill).where(MarketplaceSkill.is_private == False)
-        
+        stmt = select(MarketplaceSkill).where(
+            MarketplaceSkill.status == PUBLISHED_STATUS,
+            MarketplaceSkill.visibility == PUBLIC_VISIBILITY,
+        )
+
         # 添加筛选条件
         if category:
             stmt = stmt.where(MarketplaceSkill.category == category)
@@ -136,21 +179,21 @@ class CRUDMarketplaceSkill(CRUDPlus[MarketplaceSkill]):
             stmt = stmt.where(MarketplaceSkill.pricing_type == pricing_type)
         if is_official is not None:
             stmt = stmt.where(MarketplaceSkill.is_official == is_official)
-        
+
         # 排序：官方优先，然后按下载量降序
         stmt = stmt.order_by(
             MarketplaceSkill.is_official.desc(),
             MarketplaceSkill.download_count.desc(),
             MarketplaceSkill.id.desc(),
         )
-        
+
         return stmt
 
     async def search(
         self,
         db: AsyncSession,
         keyword: str,
-        category: Optional[str] = None,
+        category: str | None = None,
         limit: int = 20,
     ) -> list[MarketplaceSkill]:
         """
@@ -163,23 +206,28 @@ class CRUDMarketplaceSkill(CRUDPlus[MarketplaceSkill]):
         :return: 技能列表
         """
         stmt = select(MarketplaceSkill).where(
-            MarketplaceSkill.is_private == False,
+            MarketplaceSkill.status == PUBLISHED_STATUS,
+            MarketplaceSkill.visibility == PUBLIC_VISIBILITY,
             or_(
+                MarketplaceSkill.name_zh.ilike(f'%{keyword}%'),
+                MarketplaceSkill.name_en.ilike(f'%{keyword}%'),
                 MarketplaceSkill.name.ilike(f'%{keyword}%'),
-                MarketplaceSkill.description.ilike(f'%{keyword}%'),
+                MarketplaceSkill.description_zh.ilike(f'%{keyword}%'),
+                MarketplaceSkill.description_en.ilike(f'%{keyword}%'),
+                MarketplaceSkill.skill_id.ilike(f'%{keyword}%'),
                 MarketplaceSkill.tags.ilike(f'%{keyword}%'),
                 MarketplaceSkill.category.ilike(f'%{keyword}%'),
-            )
+            ),
         )
-        
+
         if category:
             stmt = stmt.where(MarketplaceSkill.category == category)
-        
+
         stmt = stmt.order_by(
             MarketplaceSkill.is_official.desc(),
             MarketplaceSkill.download_count.desc(),
         ).limit(limit)
-        
+
         result = await db.execute(stmt)
         return list(result.scalars().all())
 

@@ -3,17 +3,19 @@ Marketplace Admin Sync API
 
 Admin endpoints for managing marketplace syncs.
 """
-from fastapi import APIRouter, HTTPException, Query
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from backend.app.marketplace.service.clawhub_sync_service import clawhub_sync_service
-from backend.app.marketplace.service.github_sync_service import github_sync_service
 from backend.app.marketplace.service.github_app_sync_service import github_app_sync_service
+from backend.app.marketplace.service.github_sync_service import github_sync_service
 from backend.app.marketplace.service.package_service import package_service
-from backend.common.security.jwt import DependsJwtAuth
+from backend.common.security.rbac import DependsRBAC
 from backend.database.db import CurrentSession
 
-router = APIRouter(dependencies=[DependsJwtAuth])
+router = APIRouter(dependencies=[DependsRBAC])
 
 
 class SyncRequest(BaseModel):
@@ -26,7 +28,7 @@ class SyncRequest(BaseModel):
 async def trigger_github_sync(
     db: CurrentSession,
     request: SyncRequest
-):
+) -> dict[str, Any]:
     """Trigger sync from GitHub repository"""
     result = await github_sync_service.sync_from_github(
         db=db,
@@ -35,12 +37,12 @@ async def trigger_github_sync(
     return result
 
 
-@router.post('/github/apps', summary='Trigger GitHub app template sync')
-async def trigger_github_app_sync(
+@router.post('/github/templates', summary='Trigger GitHub template sync')
+async def trigger_github_template_sync(
     db: CurrentSession,
     request: SyncRequest
-):
-    """Trigger app template sync from GitHub repository"""
+) -> dict[str, Any]:
+    """Trigger template sync from GitHub repository"""
     result = await github_app_sync_service.sync_from_github(
         db=db,
         force=request.force
@@ -52,7 +54,7 @@ async def trigger_github_app_sync(
 async def trigger_clawhub_sync(
     db: CurrentSession,
     request: SyncRequest
-):
+) -> dict[str, Any]:
     """Trigger sync from ClawHub marketplace"""
     result = await clawhub_sync_service.sync_from_clawhub(
         db=db,
@@ -63,7 +65,7 @@ async def trigger_clawhub_sync(
 
 
 @router.get('/status', summary='Get sync status')
-async def get_sync_status(db: CurrentSession):
+async def get_sync_status(db: CurrentSession) -> dict[str, Any]:
     """Get current sync status and statistics"""
     # This would query the sync_log table for recent syncs
     # For now, return a simple status
@@ -81,15 +83,15 @@ async def get_sync_status(db: CurrentSession):
 
 @router.delete('/cache', summary='Clear package cache')
 async def clear_package_cache(
-    skill_id: str | None = Query(None, description='Skill ID (clear all if not specified)')
-):
+    skill_id: Annotated[str | None, Query(description='Skill ID (clear all if not specified)')] = None
+) -> dict[str, Any]:
     """Clear package cache"""
     await package_service.clear_cache(skill_id)
     return {'success': True, 'message': 'Cache cleared'}
 
 
 @router.get('/cache/stats', summary='Get cache statistics')
-async def get_cache_stats():
+async def get_cache_stats() -> dict[str, Any]:
     """Get package cache statistics"""
     stats = await package_service.get_cache_stats()
     return stats

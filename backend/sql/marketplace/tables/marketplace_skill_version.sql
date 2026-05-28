@@ -1,7 +1,7 @@
 -- 技能版本表
 CREATE TABLE "public"."marketplace_skill_version" (
   "id" bigserial PRIMARY KEY,
-  "skill_id" varchar(100) COLLATE "pg_catalog"."default" NOT NULL,
+  "skill_id" varchar(255) COLLATE "pg_catalog"."default" NOT NULL,
   "version" varchar(50) COLLATE "pg_catalog"."default" NOT NULL,
   "changelog" text COLLATE "pg_catalog"."default",
   "package_url" varchar(500) COLLATE "pg_catalog"."default",

@@ -20,20 +20,20 @@ BEGIN
         RETURNING id INTO v_parent_id;
     END IF;
 
-    -- 查找或创建主菜单 (path = /marketplace/marketplace_category)
+    -- 查找或创建主菜单 (path = /marketplace/categories)
     SELECT id INTO v_menu_id FROM sys_menu 
-    WHERE path = '/marketplace/marketplace_category' AND type = 1
+    WHERE path = '/marketplace/categories' AND type = 1
     ORDER BY id LIMIT 1;
     
     IF v_menu_id IS NULL THEN
         INSERT INTO sys_menu (title, name, path, sort, icon, type, component, perms, status, display, cache, link, remark, parent_id, created_time, updated_time)
-        VALUES ('', 'MarketplaceCategory', '/marketplace/marketplace_category', 1, 'lucide:list', 1, '/marketplace/marketplace_category/index', NULL, 1, 1, 1, '', '技能市场分类', v_parent_id, NOW(), NULL)
+        VALUES ('', 'MarketplaceCategory', '/marketplace/categories', 1, 'lucide:list', 1, '/marketplace/categories/index', NULL, 1, 1, 1, '', '技能市场分类', v_parent_id, NOW(), NULL)
         RETURNING id INTO v_menu_id;
     ELSE
         UPDATE sys_menu SET
             title = '',
             name = 'MarketplaceCategory',
-            component = '/marketplace/marketplace_category/index',
+            component = '/marketplace/categories/index',
             remark = '技能市场分类',
             parent_id = v_parent_id,
             updated_time = NOW()

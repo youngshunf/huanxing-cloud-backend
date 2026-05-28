@@ -15,19 +15,19 @@ FROM DUAL WHERE @parent_id IS NULL;
 -- 重新获取父级目录 ID
 SET @parent_id = COALESCE(@parent_id, LAST_INSERT_ID());
 
--- 查找主菜单 (path = /marketplace/marketplace_category)
-SET @menu_id = (SELECT id FROM sys_menu WHERE path = '/marketplace/marketplace_category' AND type = 1 ORDER BY id LIMIT 1);
+-- 查找主菜单 (path = /marketplace/categories)
+SET @menu_id = (SELECT id FROM sys_menu WHERE path = '/marketplace/categories' AND type = 1 ORDER BY id LIMIT 1);
 
 -- 如果主菜单不存在，创建它
 INSERT INTO sys_menu (title, name, path, sort, icon, type, component, perms, status, display, cache, link, remark, parent_id, created_time, updated_time)
-SELECT '', 'MarketplaceCategory', '/marketplace/marketplace_category', 1, 'lucide:list', 1, '/marketplace/marketplace_category/index', NULL, 1, 1, 1, '', '技能市场分类', @parent_id, NOW(), NULL
+SELECT '', 'MarketplaceCategory', '/marketplace/categories', 1, 'lucide:list', 1, '/marketplace/categories/index', NULL, 1, 1, 1, '', '技能市场分类', @parent_id, NOW(), NULL
 FROM DUAL WHERE @menu_id IS NULL;
 
 -- 如果已存在，更新它
 UPDATE sys_menu SET
     title = '',
     name = 'MarketplaceCategory',
-    component = '/marketplace/marketplace_category/index',
+    component = '/marketplace/categories/index',
     remark = '技能市场分类',
     parent_id = @parent_id,
     updated_time = NOW()

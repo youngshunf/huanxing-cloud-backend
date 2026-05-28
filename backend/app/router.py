@@ -1,31 +1,68 @@
-from backend.app.integration.api.router import v1 as integration_v1, app as integration_app, agent as integration_agent, open_api as integration_open
-from backend.app.hermes.api.router import v1 as hermes_v1, app as hermes_app, internal as hermes_internal
-from backend.app.hasn.api.router import (
-    ai_native as hasn_ai_native,
-    agent as hasn_agent,
-    app as hasn_app,
-    open_api as hasn_open,
-    v1 as hasn_v1,
-    ws as hasn_ws,
-)
-from backend.app.lead_automation.api.router import (
-    agent as lead_automation_agent,
-    app as lead_automation_app,
-    open_api as lead_automation_open,
-    v1 as lead_automation_v1,
-)
 from fastapi import APIRouter
-from backend.app.admin.api.router import v1 as admin_v1, client as admin_client
-from backend.app.llm.api.router import v1 as llm_v1, app as llm_app
-from backend.app.task.api.router import v1 as task_v1
-from backend.app.openclaw.api.router import v1 as openclaw_v1
-from backend.app.projects.api.router import v1 as projects_v1
-from backend.app.user_tier.api.router import v1 as user_tier_v1, app as user_tier_app, open_api as user_tier_open, agent as user_tier_agent
-from backend.app.marketplace.api.router import v1 as marketplace_v1, client as marketplace_client, publish as marketplace_publish, app as marketplace_app, agent as marketplace_agent, open_api as marketplace_open
-from backend.app.pay.api.router import v1 as pay_v1, app as pay_app, open_api as pay_open
-from backend.app.huanxing.api.router import v1 as huanxing_v1, app as huanxing_app, open_api as huanxing_open, agent as huanxing_agent, user_api as huanxing_user
+
+from backend.app.admin.api.router import client as admin_client
+from backend.app.admin.api.router import v1 as admin_v1
 from backend.app.api.v1.app import app_router as mobile_app_v1_router
 from backend.app.api.v1.auth import auth_router as mobile_auth_v1_router
+from backend.app.hasn.api.router import (
+    agent as hasn_agent,
+)
+from backend.app.hasn.api.router import (
+    ai_native as hasn_ai_native,
+)
+from backend.app.hasn.api.router import (
+    app as hasn_app,
+)
+from backend.app.hasn.api.router import (
+    open_api as hasn_open,
+)
+from backend.app.hasn.api.router import (
+    v1 as hasn_v1,
+)
+from backend.app.hasn.api.router import (
+    ws as hasn_ws,
+)
+from backend.app.hermes.api.router import app as hermes_app
+from backend.app.hermes.api.router import internal as hermes_internal
+from backend.app.hermes.api.router import v1 as hermes_v1
+from backend.app.huanxing.api.router import agent as huanxing_agent
+from backend.app.huanxing.api.router import app as huanxing_app
+from backend.app.huanxing.api.router import open_api as huanxing_open
+from backend.app.huanxing.api.router import user_api as huanxing_user
+from backend.app.huanxing.api.router import v1 as huanxing_v1
+from backend.app.integration.api.router import agent as integration_agent
+from backend.app.integration.api.router import app as integration_app
+from backend.app.integration.api.router import open_api as integration_open
+from backend.app.integration.api.router import v1 as integration_v1
+from backend.app.lead_automation.api.router import (
+    agent as lead_automation_agent,
+)
+from backend.app.lead_automation.api.router import (
+    app as lead_automation_app,
+)
+from backend.app.lead_automation.api.router import (
+    open_api as lead_automation_open,
+)
+from backend.app.lead_automation.api.router import (
+    v1 as lead_automation_v1,
+)
+from backend.app.llm.api.router import app as llm_app
+from backend.app.llm.api.router import v1 as llm_v1
+from backend.app.marketplace.api.router import admin as marketplace_admin
+from backend.app.marketplace.api.router import app as marketplace_app
+from backend.app.marketplace.api.router import open_api as marketplace_open
+from backend.app.marketplace.api.router import publish as marketplace_publish
+from backend.app.marketplace.api.router import webhook as marketplace_webhook
+from backend.app.openclaw.api.router import v1 as openclaw_v1
+from backend.app.pay.api.router import app as pay_app
+from backend.app.pay.api.router import open_api as pay_open
+from backend.app.pay.api.router import v1 as pay_v1
+from backend.app.projects.api.router import v1 as projects_v1
+from backend.app.task.api.router import v1 as task_v1
+from backend.app.user_tier.api.router import agent as user_tier_agent
+from backend.app.user_tier.api.router import app as user_tier_app
+from backend.app.user_tier.api.router import open_api as user_tier_open
+from backend.app.user_tier.api.router import v1 as user_tier_v1
 
 router = APIRouter()
 
@@ -44,8 +81,6 @@ router.include_router(user_tier_v1)
 router.include_router(user_tier_app)      # 订阅积分-用户端 API
 router.include_router(user_tier_open)     # 订阅积分-公开 API
 router.include_router(user_tier_agent)    # 订阅积分-Agent API
-router.include_router(marketplace_v1)
-router.include_router(marketplace_client)  # 桌面端市场公开 API
 router.include_router(marketplace_publish)  # 发布 API
 router.include_router(admin_client)       # 桌面端版本检测公开 API
 
@@ -85,5 +120,6 @@ router.include_router(integration_open)   # 集成公开 API
 router.include_router(mobile_app_v1_router)  # 移动端用户端 API (owner_api_keys/current 等)
 router.include_router(mobile_auth_v1_router)  # 移动端认证 API (/api/v1/auth/logout 等)
 router.include_router(marketplace_app)
-router.include_router(marketplace_agent)
+router.include_router(marketplace_admin)
 router.include_router(marketplace_open)
+router.include_router(marketplace_webhook)

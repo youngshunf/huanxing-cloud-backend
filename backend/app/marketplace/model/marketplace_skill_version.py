@@ -1,9 +1,10 @@
 from datetime import datetime
+
 import sqlalchemy as sa
 
 from sqlalchemy.orm import Mapped, mapped_column
 
-from backend.common.model import Base, id_key, UniversalText, TimeZone
+from backend.common.model import Base, TimeZone, UniversalText, id_key
 from backend.utils.timezone import timezone
 
 
@@ -13,7 +14,7 @@ class MarketplaceSkillVersion(Base):
     __tablename__ = 'marketplace_skill_version'
 
     id: Mapped[id_key] = mapped_column(init=False)
-    skill_id: Mapped[str] = mapped_column(sa.String(100), default='', comment='关联的技能ID')
+    skill_id: Mapped[str] = mapped_column(sa.String(255), default='', comment='关联的技能ID')
     version: Mapped[str] = mapped_column(sa.String(50), default='', comment='语义化版本号')
     changelog: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='版本更新日志')
     package_url: Mapped[str | None] = mapped_column(sa.String(500), default=None, comment='完整包下载URL')

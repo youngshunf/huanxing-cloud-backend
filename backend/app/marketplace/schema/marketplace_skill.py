@@ -11,6 +11,17 @@ class MarketplaceSkillSchemaBase(SchemaBase):
     skill_id: str = Field(description='技能唯一标识')
     namespace: str | None = Field(None, description='命名空间（如 huanxing/clawhub）')
     slug: str | None = Field(None, description='技能标识符（如 translator-pro）')
+    user_id: int | None = Field(None, description='资源所有者用户ID')
+    hasn_id: str | None = Field(None, description='资源所有者 HASN ID')
+    status: str = Field('published', description='发布状态')
+    visibility: str = Field('public', description='可见性')
+    reviewed_by: int | None = Field(None, description='审核人用户ID')
+    reviewed_at: datetime | None = Field(None, description='审核时间')
+    review_note: str | None = Field(None, description='审核备注')
+    published_at: datetime | None = Field(None, description='发布时间')
+    suspended_at: datetime | None = Field(None, description='封禁时间')
+    suspend_reason: str | None = Field(None, description='封禁原因')
+    name: str = Field('', description='技能名称')
     name_en: str | None = Field(None, description='英文名称')
     name_zh: str | None = Field(None, description='中文名称')
     description_en: str | None = Field(None, description='英文描述')
@@ -22,9 +33,15 @@ class MarketplaceSkillSchemaBase(SchemaBase):
     author_name: str | None = Field(None, description='作者名称')
     category: str | None = Field(None, description='分类')
     tags: str | None = Field(None, description='标签，逗号分隔')
-    source_type: str | None = Field('github', description='来源类型 (github:GitHub:blue/clawhub:ClawHub:green/local:本地:gray)')
+    source_type: str | None = Field(
+        'github',
+        description='来源类型 (github:GitHub:blue/clawhub:ClawHub:green/local:本地:gray)',
+    )
     source_repo_url: str | None = Field(None, description='源仓库 URL')
-    source_repo_path: str | None = Field(None, description='源仓库内路径（如 skills/translator-pro，用于 GitHub）')
+    source_repo_path: str | None = Field(
+        None,
+        description='源仓库内路径（如 huanxing-skills/productivity/translator-pro）',
+    )
     repo_path: str | None = Field(None, description='在 huanxing-hub 中的路径')
     pricing_type: str = Field(description='定价类型 (free:免费:green/paid:付费:orange)')
     price: Decimal = Field(description='价格')

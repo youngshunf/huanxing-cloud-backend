@@ -11,7 +11,19 @@ class MarketplaceTemplateSchemaBase(SchemaBase):
     template_id: str = Field(description='模板唯一标识')
     namespace: str | None = Field(None, description='命名空间（如 huanxing/clawhub）')
     slug: str | None = Field(None, description='模板标识符')
-    template_type: str = Field(description='模板类型 (agent_template:Agent模板:blue/skill_pack:技能包:cyan/sop_pack:SOP包:purple)')
+    user_id: int | None = Field(None, description='资源所有者用户ID')
+    hasn_id: str | None = Field(None, description='资源所有者 HASN ID')
+    status: str = Field('published', description='发布状态')
+    visibility: str = Field('public', description='可见性')
+    reviewed_by: int | None = Field(None, description='审核人用户ID')
+    reviewed_at: datetime | None = Field(None, description='审核时间')
+    review_note: str | None = Field(None, description='审核备注')
+    published_at: datetime | None = Field(None, description='发布时间')
+    suspended_at: datetime | None = Field(None, description='封禁时间')
+    suspend_reason: str | None = Field(None, description='封禁原因')
+    template_type: str = Field(
+        description='模板类型 (agent_template:Agent模板:blue/skill_pack:技能包:cyan/sop_pack:SOP包:purple)',
+    )
     name: str = Field(description='模板名称')
     name_en: str | None = Field(None, description='英文名称')
     name_zh: str | None = Field(None, description='中文名称')
@@ -30,7 +42,10 @@ class MarketplaceTemplateSchemaBase(SchemaBase):
     download_count: int = Field(description='下载次数')
     category: str | None = Field(None, description='分类')
     tags: str | None = Field(None, description='标签，逗号分隔')
-    source_type: str | None = Field(None, description='来源类型 (github:GitHub:blue/clawhub:ClawHub:green/local:本地:gray)')
+    source_type: str | None = Field(
+        None,
+        description='来源类型 (github:GitHub:blue/clawhub:ClawHub:green/local:本地:gray)',
+    )
     source_repo_url: str | None = Field(None, description='源仓库 URL')
     source_repo_path: str | None = Field(None, description='仓库内路径')
     skill_dependencies: str | None = Field(None, description='依赖的技能ID列表，逗号分隔')

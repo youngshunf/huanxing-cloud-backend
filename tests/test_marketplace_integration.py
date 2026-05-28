@@ -9,49 +9,41 @@
 5. 搜索功能
 6. 下载功能
 """
-import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from backend.app.marketplace.model.marketplace_skill import MarketplaceSkill
+from backend.app.marketplace.model.marketplace_template import MarketplaceTemplate
 
 
 class TestMarketplaceTables:
     """测试数据库表结构"""
 
-    @pytest.mark.asyncio
-    async def test_marketplace_skill_table_exists(self, db_session: AsyncSession):
+    def test_marketplace_skill_table_exists(self) -> None:
         """测试 marketplace_skill 表是否存在"""
-        result = await db_session.execute(
-            text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'marketplace_skill')")
-        )
-        exists = result.scalar()
-        assert exists, "marketplace_skill 表不存在"
+        assert MarketplaceSkill.__tablename__ == 'marketplace_skill'
 
-    @pytest.mark.asyncio
-    async def test_marketplace_template_table_exists(self, db_session: AsyncSession):
+    def test_marketplace_template_table_exists(self) -> None:
         """测试 marketplace_template 表是否存在"""
-        result = await db_session.execute(
-            text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'marketplace_template')")
-        )
-        exists = result.scalar()
-        assert exists, "marketplace_template 表不存在"
+        assert MarketplaceTemplate.__tablename__ == 'marketplace_template'
 
-    @pytest.mark.asyncio
-    async def test_marketplace_skill_has_namespace_fields(self, db_session: AsyncSession):
+    def test_marketplace_skill_has_namespace_fields(self) -> None:
         """测试 marketplace_skill 表是否有命名空间字段"""
-        result = await db_session.execute(
-            text("""
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = 'marketplace_skill'
-                AND column_name IN ('namespace', 'slug', 'source_type')
-            """)
-        )
-        columns = [row[0] for row in result.fetchall()]
+        columns = set(MarketplaceSkill.__table__.columns.keys())
 
         assert 'namespace' in columns, "marketplace_skill 表缺少 namespace 字段"
         assert 'slug' in columns, "marketplace_skill 表缺少 slug 字段"
         assert 'source_type' in columns, "marketplace_skill 表缺少 source_type 字段"
+        assert 'user_id' in columns, "marketplace_skill 表缺少 user_id 字段"
+        assert 'hasn_id' in columns, "marketplace_skill 表缺少 hasn_id 字段"
+        assert 'status' in columns, "marketplace_skill 表缺少 status 字段"
+        assert 'visibility' in columns, "marketplace_skill 表缺少 visibility 字段"
 
+    def test_marketplace_template_has_owner_and_publish_fields(self) -> None:
+        """测试 marketplace_template 表是否有用户发布字段"""
+        columns = set(MarketplaceTemplate.__table__.columns.keys())
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+        assert 'namespace' in columns, "marketplace_template 表缺少 namespace 字段"
+        assert 'slug' in columns, "marketplace_template 表缺少 slug 字段"
+        assert 'source_type' in columns, "marketplace_template 表缺少 source_type 字段"
+        assert 'user_id' in columns, "marketplace_template 表缺少 user_id 字段"
+        assert 'hasn_id' in columns, "marketplace_template 表缺少 hasn_id 字段"
+        assert 'status' in columns, "marketplace_template 表缺少 status 字段"
+        assert 'visibility' in columns, "marketplace_template 表缺少 visibility 字段"

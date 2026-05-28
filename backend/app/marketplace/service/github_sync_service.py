@@ -5,11 +5,12 @@ Syncs skills from huanxing-hub GitHub repository to database.
 """
 import json
 import os
-from datetime import datetime
+
 from pathlib import Path
 from typing import Any
 
 import yaml
+
 from git import Repo
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,25 +18,31 @@ from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skil
 from backend.app.marketplace.crud.crud_marketplace_skill_version import marketplace_skill_version_dao
 from backend.app.marketplace.crud.crud_marketplace_sync_log import marketplace_sync_log_dao
 from backend.app.marketplace.schema.marketplace_skill import CreateMarketplaceSkillParam, UpdateMarketplaceSkillParam
-from backend.app.marketplace.schema.marketplace_skill_version import CreateMarketplaceSkillVersionParam, UpdateMarketplaceSkillVersionParam
-from backend.app.marketplace.schema.marketplace_sync_log import CreateMarketplaceSyncLogParam, UpdateMarketplaceSyncLogParam
+from backend.app.marketplace.schema.marketplace_skill_version import (
+    CreateMarketplaceSkillVersionParam,
+    UpdateMarketplaceSkillVersionParam,
+)
+from backend.app.marketplace.schema.marketplace_sync_log import (
+    CreateMarketplaceSyncLogParam,
+    UpdateMarketplaceSyncLogParam,
+)
+from backend.app.marketplace.service.package_validation import normalize_tags
 from backend.app.marketplace.service.translation_service import translation_service
+from backend.app.marketplace.storage.s3_storage import marketplace_storage_service
 from backend.common.log import log
 from backend.core.conf import settings
-from backend.plugin.s3.crud.storage import s3_storage_dao
-from backend.plugin.s3.utils.file_ops import build_object_url, write_bytes
-from backend.database.db import async_db_session
+from backend.utils.timezone import timezone
 
 
 class GitHubSyncService:
     """GitHub sync service for marketplace skills"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.repo_url = getattr(settings, 'HUANXING_HUB_REPO_URL', 'https://github.com/youngshunf/huanxing-hub.git')
         self.local_path = getattr(settings, 'HUANXING_HUB_LOCAL_PATH', '/tmp/huanxing-hub')
         self.repo: Repo | None = None
 
-    async def sync_from_github(self, db: AsyncSession, force: bool = False) -> dict[str, Any]:
+    async def sync_from_github(self, db: AsyncSession, force: bool = False) -> dict[str, Any]:  # noqa: FBT001, FBT002
         """
         Sync skills from GitHub repository
 
@@ -49,11 +56,14 @@ class GitHubSyncService:
         sync_log_id = None
         try:
             # Create sync log
-            sync_log = await marketplace_sync_log_dao.create(db, CreateMarketplaceSyncLogParam(
-                sync_type='github',
-                status='in_progress',
-                started_at=datetime.now()
-            ))
+            sync_log = await marketplace_sync_log_dao.create(
+                db,
+                CreateMarketplaceSyncLogParam(
+                    sync_type='github',
+                    status='in_progress',
+                    started_at=timezone.now(),
+                ),
+            )
             await db.flush()
             sync_log_id = sync_log.id if sync_log else None
 
@@ -72,27 +82,31 @@ class GitHubSyncService:
                 try:
                     await self._sync_skill(db, skill_data)
                     synced_count += 1
-                except Exception as e:
+                except Exception as e:  # noqa: PERF203
                     failed_count += 1
-                    errors.append(f"{skill_data.get('skill_id', 'unknown')}: {str(e)}")
+                    errors.append(f"{skill_data.get('skill_id', 'unknown')}: {e!s}")
                     log.error(f"Failed to sync skill {skill_data.get('skill_id')}: {e}")
 
             # Update sync log
             if sync_log_id:
-                await marketplace_sync_log_dao.update(db, sync_log_id, UpdateMarketplaceSyncLogParam(
-                    status='success' if failed_count == 0 else 'partial',
-                    items_synced=synced_count,
-                    items_failed=failed_count,
-                    error_message='\n'.join(errors) if errors else None,
-                    completed_at=datetime.now()
-                ))
+                await marketplace_sync_log_dao.update(
+                    db,
+                    sync_log_id,
+                    UpdateMarketplaceSyncLogParam(
+                        status='success' if failed_count == 0 else 'partial',
+                        items_synced=synced_count,
+                        items_failed=failed_count,
+                        error_message='\n'.join(errors) if errors else None,
+                        completed_at=timezone.now(),
+                    ),
+                )
                 await db.commit()
 
-            return {
+            return {  # noqa: TRY300
                 'success': True,
                 'synced': synced_count,
                 'failed': failed_count,
-                'errors': errors
+                'errors': errors,
             }
 
         except Exception as e:
@@ -100,21 +114,25 @@ class GitHubSyncService:
 
             # Update sync log
             if sync_log_id:
-                await marketplace_sync_log_dao.update(db, sync_log_id, UpdateMarketplaceSyncLogParam(
-                    status='failed',
-                    error_message=str(e),
-                    completed_at=datetime.now()
-                ))
+                await marketplace_sync_log_dao.update(
+                    db,
+                    sync_log_id,
+                    UpdateMarketplaceSyncLogParam(
+                        status='failed',
+                        error_message=str(e),
+                        completed_at=timezone.now(),
+                    ),
+                )
                 await db.commit()
 
             return {
                 'success': False,
-                'error': str(e)
+                'error': str(e),
             }
 
-    async def _update_repository(self):
+    async def _update_repository(self) -> None:
         """Clone or pull the GitHub repository"""
-        if os.path.exists(self.local_path):
+        if os.path.exists(self.local_path):  # noqa: ASYNC240
             # Pull latest changes
             log.info(f"Pulling latest changes from {self.repo_url}")
             self.repo = Repo(self.local_path)
@@ -133,199 +151,115 @@ class GitHubSyncService:
             List of skill metadata
         """
         skills = []
-        skills_dir = Path(self.local_path) / 'skills'
+        repo_root = Path(self.local_path)
+        scan_roots = (
+            ('huanxing-skills', 'official'),
+            ('clawhub', 'clawhub'),
+            ('github', 'github'),
+        )
 
-        if not skills_dir.exists():
-            log.warning(f"Skills directory not found: {skills_dir}")
-            return skills
-
-        # Scan all subdirectories for manifest.yaml or skill.json
-        for category_dir in skills_dir.iterdir():
-            if not category_dir.is_dir():
+        for root_name, source_type in scan_roots:
+            root = repo_root / root_name
+            if not root.exists():
                 continue
+            for skill_md in root.glob('*/*/SKILL.md'):
+                try:
+                    skills.append(await self._parse_skill_markdown(skill_md, root_name, source_type))
+                except Exception as exc:  # noqa: PERF203
+                    log.error(f"Failed to parse {skill_md}: {exc}")
 
-            for skill_dir in category_dir.iterdir():
-                if not skill_dir.is_dir():
-                    continue
-
-                # Try manifest.yaml first (new format), then skill.json (legacy)
-                manifest_yaml = skill_dir / 'manifest.yaml'
-                skill_json = skill_dir / 'skill.json'
-
-                if manifest_yaml.exists():
-                    try:
-                        skill_data = await self._parse_manifest_yaml(manifest_yaml, category_dir.name, skill_dir.name)
-                        skills.append(skill_data)
-                    except Exception as e:
-                        log.error(f"Failed to parse {manifest_yaml}: {e}")
-                elif skill_json.exists():
-                    try:
-                        skill_data = await self._parse_skill_json(skill_json, category_dir.name, skill_dir.name)
-                        skills.append(skill_data)
-                    except Exception as e:
-                        log.error(f"Failed to parse {skill_json}: {e}")
+        if not skills:
+            log.warning(f"No SKILL.md skills found under {repo_root}")
 
         return skills
 
-    async def _parse_manifest_yaml(self, manifest_path: Path, category: str, skill_slug: str) -> dict[str, Any]:
-        """
-        Parse manifest.yaml file (new format)
+    async def _parse_skill_markdown(self, skill_md_path: Path, root_name: str, source_type: str) -> dict[str, Any]:
+        relative = skill_md_path.parent.relative_to(Path(self.local_path))
+        parts = relative.parts
+        if len(parts) != 3:
+            raise ValueError(f"Unexpected skill path: {relative}")
 
-        Args:
-            manifest_path: Path to manifest.yaml
-            category: Category name
-            skill_slug: Skill slug
-
-        Returns:
-            Skill metadata
-        """
-        with open(manifest_path, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f)
-
-        # Get git commit hash
-        commit_hash = self.repo.head.commit.hexsha if self.repo else None
-
-        # Extract fields from manifest
-        skill_id = data.get('id', skill_slug)
-        name = data.get('name', skill_slug)
-        description = data.get('description', '')
-        version = data.get('version', '1.0.0')
-        author = data.get('author', 'unknown')
-
-        # Handle security fields
-        security = data.get('security', {})
-        risk_level = security.get('risk_level', data.get('risk_level', 'low'))
-        review_status = security.get('review_status', data.get('review_status', 'pending'))
-
-        # Handle pricing
-        pricing = data.get('pricing', {})
-        pricing_tier = pricing.get('tier', data.get('pricing_type', 'free'))
-
-        # Detect if official skill
-        is_official = review_status == 'official' or author == 'huanxing'
-
-        # Handle icon - upload to S3 if local file exists
-        icon_url = data.get('icon_s3_url') or data.get('icon_cdn_url') or data.get('icon')
-
-        # Check if we need to upload local icon to S3
-        if not icon_url or icon_url.startswith('https://cdn.huanxing.ai/'):
-            skill_dir = manifest_path.parent
-            uploaded_url = await self._upload_icon_to_s3(skill_dir, f"{category}/{skill_id}")
-            if uploaded_url:
-                icon_url = uploaded_url
-                # Update manifest.yaml with S3 URL
-                data['icon_s3_url'] = uploaded_url
-                await self._update_manifest_yaml(manifest_path, data)
-
-        # Build skill data
-        skill_data = {
-            'skill_id': f"{category}/{skill_id}",
-            'namespace': category,  # 使用 category 作为 namespace
-            'slug': skill_slug,     # 使用目录名作为 slug
-            'category': category,
-            'repo_path': f"skills/{category}/{skill_slug}",
-            'git_commit_hash': commit_hash,
-            'icon_url': icon_url,
-            'emoji': data.get('emoji'),
-            'author_name': author,
-            'tags': json.dumps(data.get('tags', [])),
-            'pricing_type': pricing_tier,
-            'price': pricing.get('price', 0),
-            'is_official': is_official,
-            'source': data.get('source', 'huanxing'),
-            'source_language': 'zh' if any(ord(c) > 127 for c in name) else 'en',
-            'name': name,
-            'description': description,
-            'version': version,
-            'changelog': data.get('changelog', f'Version {version}'),
-        }
-
-        return skill_data
-
-    async def _parse_skill_json(self, skill_json_path: Path, category: str, skill_slug: str) -> dict[str, Any]:
-        """
-        Parse skill.json file
-
-        Args:
-            skill_json_path: Path to skill.json
-            category: Category name
-            skill_slug: Skill slug
-
-        Returns:
-            Skill metadata
-        """
-        with open(skill_json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-
-        # Get git commit hash
-        commit_hash = self.repo.head.commit.hexsha if self.repo else None
-
-        # Handle icon - upload to S3 if local file exists
-        icon_url = data.get('icon_s3_url') or data.get('icon')
-
-        # Check if we need to upload local icon to S3
-        if not icon_url or (isinstance(icon_url, str) and icon_url.startswith('https://cdn.huanxing.ai/')):
-            skill_dir = skill_json_path.parent
-            uploaded_url = await self._upload_icon_to_s3(skill_dir, f"{category}/{skill_slug}")
-            if uploaded_url:
-                icon_url = uploaded_url
-                # Update skill.json with S3 URL
-                data['icon_s3_url'] = uploaded_url
-                await self._update_skill_json(skill_json_path, data)
-
-        # Build skill data
-        skill_data = {
-            'skill_id': f"{category}/{skill_slug}",
-            'namespace': category,  # 使用 category 作为 namespace
-            'slug': skill_slug,     # 使用目录名作为 slug
-            'category': category,
-            'repo_path': f"skills/{category}/{skill_slug}",
-            'git_commit_hash': commit_hash,
-            'icon_url': icon_url,
-            'emoji': data.get('emoji'),
-            'author_name': data.get('author'),
-            'tags': json.dumps(data.get('tags', [])),
-            'pricing_type': data.get('pricing_type', 'free'),
-            'price': data.get('price', 0),
-            'is_official': data.get('is_official', False),
-            'is_private': data.get('is_private', False),
-        }
-
-        # Handle i18n fields
-        if 'i18n' in data:
-            i18n = data['i18n']
-            skill_data['name_en'] = i18n.get('en', {}).get('name')
-            skill_data['name_zh'] = i18n.get('zh', {}).get('name')
-            skill_data['description_en'] = i18n.get('en', {}).get('description')
-            skill_data['description_zh'] = i18n.get('zh', {}).get('description')
-
-            # Detect source language
-            if skill_data['name_en'] and not skill_data['name_zh']:
-                skill_data['source_language'] = 'en'
-            elif skill_data['name_zh'] and not skill_data['name_en']:
-                skill_data['source_language'] = 'zh'
+        _, owner_or_category, slug = parts
+        if root_name == 'huanxing-skills':
+            namespace = f'huanxing/{owner_or_category}'
+            repo_path = f'huanxing-skills/{owner_or_category}/{slug}'
+            category = owner_or_category
+            is_official = True
+        elif root_name == 'clawhub':
+            namespace = f'clawhub/{owner_or_category}'
+            repo_path = f'clawhub/{owner_or_category}/{slug}'
+            category = None
+            is_official = False
+        elif root_name == 'github':
+            namespace = f'github/{owner_or_category}'
+            repo_path = f'github/{owner_or_category}/{slug}'
+            category = None
+            is_official = False
         else:
-            # Legacy format: single name/description
-            name = data.get('name')
-            description = data.get('description')
+            raise ValueError(f"Unsupported skill root: {root_name}")
 
-            if name or description:
-                # Auto-translate
-                translated = await translation_service.translate_skill_metadata(
-                    name=name,
-                    description=description
-                )
-                skill_data.update(translated)
+        text = skill_md_path.read_text(encoding='utf-8')  # noqa: ASYNC240
+        metadata = self._extract_skill_frontmatter(text)
+        for field in ('name', 'description'):
+            if not metadata.get(field):
+                raise ValueError(f"SKILL.md frontmatter missing {field}: {skill_md_path}")
 
-        # Parse versions
-        versions = data.get('versions', [])
-        skill_data['versions'] = versions
-        if versions:
-            skill_data['latest_version'] = versions[0].get('version', '1.0.0')
+        tags = normalize_tags(metadata.get('tags'))
+        icon_path = self._find_local_icon(skill_md_path.parent)
+        skill_id = f'{namespace}/{slug}'
+        return {
+            'skill_id': skill_id,
+            'namespace': namespace,
+            'slug': slug,
+            'category': metadata.get('category') or category,
+            'repo_path': repo_path,
+            'git_commit_hash': self.repo.head.commit.hexsha if self.repo else None,
+            'icon_url': metadata.get('icon_url') or metadata.get('icon_s3_url') or metadata.get('icon_cdn_url'),
+            'icon_path': icon_path,
+            'emoji': metadata.get('emoji'),
+            'author_name': metadata.get('author') or metadata.get('author_name'),
+            'tags': json.dumps(tags, ensure_ascii=False),
+            'pricing_type': metadata.get('pricing_type', 'free'),
+            'price': metadata.get('price', 0),
+            'is_official': is_official,
+            'is_private': False,
+            'source_type': source_type,
+            'source_language': 'zh' if any(ord(c) > 127 for c in str(metadata.get('name'))) else 'en',
+            'name': metadata.get('name'),
+            'description': metadata.get('description'),
+            'version': str(metadata.get('version') or '1.0.0'),
+            'changelog': metadata.get('changelog') or f"Version {metadata.get('version') or '1.0.0'}",
+            'versions': [{
+                'version': str(metadata.get('version') or '1.0.0'),
+                'changelog': metadata.get('changelog') or f"Version {metadata.get('version') or '1.0.0'}",
+                'package_url': metadata.get('package_url'),
+                'file_hash': metadata.get('file_hash'),
+                'file_size': metadata.get('file_size'),
+                'is_latest': True,
+            }],
+        }
 
-        return skill_data
+    @staticmethod
+    def _extract_skill_frontmatter(markdown: str) -> dict[str, Any]:
+        import re
 
-    async def _sync_skill(self, db: AsyncSession, skill_data: dict[str, Any]):
+        match = re.match(r'\A---\s*\n(.*?)\n---\s*(?:\n|\Z)', markdown, re.DOTALL)
+        if not match:
+            raise ValueError('SKILL.md missing YAML frontmatter')
+        data = yaml.safe_load(match.group(1)) or {}
+        if not isinstance(data, dict):
+            raise TypeError('SKILL.md frontmatter must be a mapping')
+        return data
+
+    @staticmethod
+    def _find_local_icon(skill_dir: Path) -> Path | None:
+        for icon_name in ('icon.svg', 'icon.png', 'icon.jpg', 'icon.jpeg'):
+            icon_path = skill_dir / icon_name
+            if icon_path.exists():
+                return icon_path
+        return None
+
+    async def _sync_skill(self, db: AsyncSession, skill_data: dict[str, Any]) -> None:
         """
         Sync a single skill to database
 
@@ -350,12 +284,15 @@ class GitHubSyncService:
         # Prepare skill record
         skill_record = {
             'skill_id': skill_id,
+            'namespace': skill_data.get('namespace'),
+            'slug': skill_data.get('slug'),
+            'name': name,
             'name_en': translated.get('name_en'),
             'name_zh': translated.get('name_zh'),
             'description_en': translated.get('description_en'),
             'description_zh': translated.get('description_zh'),
             'source_language': translated.get('source_language', skill_data.get('source_language')),
-            'icon_url': skill_data.get('icon_url'),
+            'icon_url': await self._resolve_icon_url(db, skill_data),
             'emoji': skill_data.get('emoji'),
             'author_name': skill_data.get('author_name'),
             'category': skill_data.get('category'),
@@ -364,11 +301,14 @@ class GitHubSyncService:
             'price': skill_data.get('price'),
             'is_official': skill_data.get('is_official'),
             'is_private': skill_data.get('is_private', False),
+            'status': 'published',
+            'visibility': 'public',
+            'source_type': skill_data.get('source_type'),
             'download_count': skill_data.get('download_count', 0),
             'repo_path': skill_data.get('repo_path'),
             'git_commit_hash': skill_data.get('git_commit_hash'),
-            'synced_at': datetime.now(),
-            'translated_at': datetime.now()
+            'synced_at': timezone.now(),
+            'translated_at': timezone.now(),
         }
 
         if existing_skill:
@@ -388,13 +328,30 @@ class GitHubSyncService:
         for version_data in versions:
             await self._sync_skill_version(db, db_skill_id, skill_id, version_data)
 
+    async def _resolve_icon_url(self, db: AsyncSession, skill_data: dict[str, Any]) -> str | None:
+        icon_url = skill_data.get('icon_url')
+        icon_path = skill_data.get('icon_path')
+        if icon_url or not icon_path:
+            return icon_url
+        try:
+            return await marketplace_storage_service.upload_icon(
+                db=db,
+                item_type='skill',
+                item_id=skill_data['skill_id'],
+                content=Path(icon_path).read_bytes(),  # noqa: ASYNC240
+                filename=Path(icon_path).name,
+            )
+        except Exception as exc:
+            log.error(f"Failed to upload skill icon {icon_path}: {exc}")
+            return None
+
     async def _sync_skill_version(
         self,
         db: AsyncSession,
         db_skill_id: int,
         skill_id: str,
-        version_data: dict[str, Any]
-    ):
+        version_data: dict[str, Any],
+    ) -> None:
         """
         Sync a skill version
 
@@ -408,7 +365,7 @@ class GitHubSyncService:
 
         # Check if version exists
         existing_version = await marketplace_skill_version_dao.get_by_skill_and_version(
-            db, db_skill_id, version
+            db, skill_id, version
         )
 
         # Prepare version record
@@ -419,107 +376,19 @@ class GitHubSyncService:
             'package_url': version_data.get('package_url'),
             'file_hash': version_data.get('file_hash'),
             'file_size': version_data.get('file_size'),
-            'is_latest': version_data.get('is_latest', True)
+            'is_latest': version_data.get('is_latest', True),
         }
 
         if existing_version:
             # Update existing version
-            await marketplace_skill_version_dao.update(db, existing_version.id, UpdateMarketplaceSkillVersionParam(**version_record))
+            await marketplace_skill_version_dao.update(
+                db,
+                existing_version.id,
+                UpdateMarketplaceSkillVersionParam(**version_record),
+            )
         else:
             # Create new version
             await marketplace_skill_version_dao.create(db, CreateMarketplaceSkillVersionParam(**version_record))
-
-    async def _upload_icon_to_s3(self, skill_dir: Path, skill_id: str) -> str | None:
-        """
-        Upload local icon to S3 storage
-
-        Args:
-            skill_dir: Skill directory path
-            skill_id: Skill ID (e.g., "health/fitness")
-
-        Returns:
-            S3 URL or None if no icon found
-        """
-        # Check for icon files
-        for icon_name in ['icon.png', 'icon.svg', 'icon.jpg', 'icon.jpeg']:
-            icon_path = skill_dir / icon_name
-            if icon_path.exists():
-                try:
-                    log.info(f"Uploading icon to S3: {icon_path}")
-
-                    # Read icon file
-                    with open(icon_path, 'rb') as f:
-                        icon_content = f.read()
-
-                    # Get default S3 storage
-                    async with async_db_session() as db:
-                        s3_storages = await s3_storage_dao.get_all(db)
-                        if not s3_storages:
-                            log.error("No S3 storage configured")
-                            return None
-
-                        s3_storage = s3_storages[0]
-
-                        # Generate S3 path: marketplace/skills/{skill_id}/icon.{ext}
-                        ext = icon_path.suffix
-                        s3_path = f"marketplace/skills/{skill_id.replace('/', '-')}/icon{ext}"
-
-                        # Determine content type
-                        content_type = None
-                        if ext == '.svg':
-                            content_type = 'image/svg+xml'
-                        elif ext in ['.png', '.jpg', '.jpeg']:
-                            content_type = f'image/{ext[1:]}'
-
-                        # Upload to S3
-                        await write_bytes(s3_storage, s3_path, icon_content, content_type)
-
-                        # Build public URL
-                        s3_url = build_object_url(s3_storage, s3_path)
-
-                    log.info(f"Icon uploaded to S3: {s3_url}")
-                    return s3_url
-
-                except Exception as e:
-                    log.error(f"Failed to upload icon to S3: {e}")
-                    return None
-
-        log.warning(f"No icon found for skill {skill_id}")
-        return None
-
-    async def _update_manifest_yaml(self, manifest_path: Path, data: dict):
-        """
-        Update manifest.yaml with new data (e.g., icon_s3_url)
-
-        Args:
-            manifest_path: Path to manifest.yaml
-            data: Updated data
-        """
-        try:
-            with open(manifest_path, 'w', encoding='utf-8') as f:
-                yaml.dump(data, f, allow_unicode=True, sort_keys=False)
-
-            log.info(f"Updated manifest.yaml: {manifest_path}")
-
-        except Exception as e:
-            log.error(f"Failed to update manifest.yaml: {e}")
-
-    async def _update_skill_json(self, skill_json_path: Path, data: dict):
-        """
-        Update skill.json with new data (e.g., icon_s3_url)
-
-        Args:
-            skill_json_path: Path to skill.json
-            data: Updated data
-        """
-        try:
-            with open(skill_json_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
-            log.info(f"Updated skill.json: {skill_json_path}")
-
-        except Exception as e:
-            log.error(f"Failed to update skill.json: {e}")
 
 
 # Singleton instance
