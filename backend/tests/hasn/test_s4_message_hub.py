@@ -211,6 +211,48 @@ async def test_owner_inbox_fanout_targets_owner_multi_node_route_without_runtime
     assert fanout.delivered_nodes['h_owner'] == ['desktop', 'web']
 
 
+async def test_message_hub_rejects_invalid_card_before_persistence() -> None:
+    gateway = InMemoryS4Gateway(
+        recipients={'h_owner': Recipient('h_owner', 'human', 'h_owner', 'owner')},
+    )
+    fanout = MultiNodeFanout(online_nodes={'h_owner': ['desktop']})
+    service = _service(gateway, fanout)
+
+    with pytest.raises(Exception, match='Card message invalid'):
+        await service.send(
+            None,
+            MessageHubSendRequest(
+                owner_id='h_sender',
+                envelope={
+                    'conversation_id': CONVERSATION_ID,
+                    'from_id': 'h_sender',
+                    'to_id': 'h_owner',
+                    'content_type': 'card',
+                    'content': {
+                        'schema_version': 'hasn.card/0.1',
+                        'title': '非法卡片',
+                        'source': {'kind': 'app', 'id': 'community', 'display_name': '社区'},
+                        'resource': {
+                            'type': 'community.post',
+                            'id': 'post_01J',
+                            'app_id': 'community',
+                            'uri': 'javascript:alert(1)',
+                        },
+                        'primary_action': {
+                            'label': '打开',
+                            'action_id': 'open',
+                            'kind': 'open_uri',
+                            'uri': 'javascript:alert(1)',
+                        },
+                    },
+                },
+            ),
+        )
+
+    assert gateway.messages == []
+    assert fanout.pushes == []
+
+
 async def test_suppressed_inbox_pull_is_owner_multi_device_consistent_and_same_conversation() -> None:
     runtime = RuntimeSummary(
         agent_hasn_id='a_agent',

@@ -261,6 +261,25 @@ def _knowledge_manifest_payload(
     }
 
 
+def _community_manifest_payload() -> dict[str, Any]:
+    from backend.app.hasn.service.ai_native_app_registry import _manifest_hash
+    from backend.app.hasn.service.ai_native_builtin_manifests import COMMUNITY_AI_NATIVE_MANIFEST
+    from backend.utils.timezone import timezone
+
+    manifest = deepcopy(COMMUNITY_AI_NATIVE_MANIFEST)
+    return {
+        'id': None,
+        'app_id': manifest['app_id'],
+        'version': manifest['version'],
+        'status': 'published',
+        'workspace_scope': list(manifest.get('workspace_scope') or []),
+        'collaboration_mode': manifest['collaboration_mode'],
+        'manifest_json': manifest,
+        'manifest_hash': _manifest_hash(manifest),
+        'published_at': timezone.now(),
+    }
+
+
 def _make_runtime_test_app(
     fake_db: _FakeDb,
     monkeypatch: pytest.MonkeyPatch,
@@ -571,6 +590,127 @@ def test_runtime_tool_call_scope_denial_writes_audit(monkeypatch: pytest.MonkeyP
     assert data['error'] == {'code': '15012', 'message': 'agent_scope_missing'}
     audit_row = fake_db.added[-1]
     assert audit_row.decision == 'deny'
+    assert audit_row.error_code == '15012'
+
+
+def test_runtime_tool_call_community_get_post_returns_full_resource(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.hasn.model import HasnWorkspaceApp
+    from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
+
+    class CommunityAgent(_FakeAgent):
+        scopes = ['community.read']
+
+    fake_db = _FakeDb(
+        workspace={'kind': 'personal', 'enterprise_id': None},
+        app_row=HasnWorkspaceApp(
+            workspace_kind='personal',
+            user_id=12345,
+            enterprise_id=None,
+            app_id='community',
+            status='active',
+            config={},
+            enabled_by=12345,
+        ),
+    )
+    app = _make_runtime_test_app(fake_db, monkeypatch)
+
+    async def fake_runtime_agent(_request):
+        return {'decision': 'allow', 'agent': CommunityAgent()}
+
+    async def fake_active_workspace(_db: Any, *, user_id: int) -> dict[str, Any]:
+        assert user_id == 12345
+        return {'kind': 'personal', 'enterprise_id': None}
+
+    async def fake_manifest(_db: Any, app_id: str) -> dict[str, Any]:
+        assert app_id == 'community'
+        return _community_manifest_payload()
+
+    async def fake_get_agent_post(_db: Any, *, agent: Any, post_id: str) -> dict[str, Any]:
+        assert agent.agent_hasn_id == 'a_001'
+        assert post_id == 'post_01J'
+        return {
+            'resource': {
+                'type': 'community.post',
+                'id': 'post_01J',
+                'app_id': 'community',
+                'uri': 'hasn://app/community/posts/post_01J',
+            },
+            'summary': '卡片摘要',
+            'content': '完整正文',
+        }
+
+    monkeypatch.setattr(gateway_module.ai_native_app_registry, 'ensure_builtin_published', fake_manifest)
+    monkeypatch.setattr(gateway_module.workbench_domain_service, 'get_active_workspace', fake_active_workspace)
+    monkeypatch.setattr(gateway_module.ai_native_runtime_gateway, '_authenticate_runtime_agent', fake_runtime_agent)
+    monkeypatch.setattr(gateway_module.community_service, 'get_agent_post_resource', fake_get_agent_post)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            '/api/v1/ai-native/runtime/tools/community/community.get_post/call',
+            json={'workspace': None, 'input': {'post_id': 'post_01J'}, 'trace_id': 'trace-community-post'},
+            headers={'Authorization': 'Bearer test-agent'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['decision'] == 'allow'
+    assert data['result']['content'] == '完整正文'
+    assert data['result']['resource']['uri'] == 'hasn://app/community/posts/post_01J'
+    audit_row = fake_db.added[-1]
+    assert audit_row.app_id == 'community'
+    assert audit_row.tool_id == 'community.get_post'
+    assert audit_row.required_scopes == ['community.read']
+
+
+def test_runtime_tool_call_community_missing_scope_is_denied(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.hasn.model import HasnWorkspaceApp
+    from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
+
+    class NoCommunityScopeAgent(_FakeAgent):
+        scopes = ['message.read']
+
+    fake_db = _FakeDb(
+        workspace={'kind': 'personal', 'enterprise_id': None},
+        app_row=HasnWorkspaceApp(
+            workspace_kind='personal',
+            user_id=12345,
+            enterprise_id=None,
+            app_id='community',
+            status='active',
+            config={},
+            enabled_by=12345,
+        ),
+    )
+    app = _make_runtime_test_app(fake_db, monkeypatch)
+
+    async def fake_runtime_agent(_request):
+        return {'decision': 'allow', 'agent': NoCommunityScopeAgent()}
+
+    async def fake_active_workspace(_db: Any, *, user_id: int) -> dict[str, Any]:
+        return {'kind': 'personal', 'enterprise_id': None}
+
+    async def fake_manifest(_db: Any, app_id: str) -> dict[str, Any]:
+        assert app_id == 'community'
+        return _community_manifest_payload()
+
+    monkeypatch.setattr(gateway_module.ai_native_app_registry, 'ensure_builtin_published', fake_manifest)
+    monkeypatch.setattr(gateway_module.workbench_domain_service, 'get_active_workspace', fake_active_workspace)
+    monkeypatch.setattr(gateway_module.ai_native_runtime_gateway, '_authenticate_runtime_agent', fake_runtime_agent)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            '/api/v1/ai-native/runtime/tools/community/community.get_article/call',
+            json={'workspace': None, 'input': {'article_id': 'art_01J'}, 'trace_id': 'trace-community-deny'},
+            headers={'Authorization': 'Bearer test-agent'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['decision'] == 'deny'
+    assert data['error'] == {'code': '15012', 'message': 'agent_scope_missing'}
+    audit_row = fake_db.added[-1]
+    assert audit_row.app_id == 'community'
+    assert audit_row.tool_id == 'community.get_article'
     assert audit_row.error_code == '15012'
 
 

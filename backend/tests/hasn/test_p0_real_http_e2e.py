@@ -18,6 +18,7 @@ from backend.app.hasn.api.v1.app import hasn_skill_bundle as skill_bundle_api
 from backend.app.hasn.api.v1.app import hasn_task as task_api
 from backend.app.hasn.api.v1.app import hasn_task_run as task_run_api
 from backend.app.hasn.api.v1.app import hasn_task_sessions as task_sessions_api
+from backend.app.hasn.api.v1.app import community as community_api
 from backend.app.hasn.api.v1.app import workspace as workspace_api
 from backend.app.hasn.api.v1 import sync as sync_api
 from backend.app.mcp.routes import mcp_router
@@ -798,6 +799,7 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app.include_router(task_api.router, prefix='/api/v1/hasn/app/hasn/tasks')
     app.include_router(task_run_api.router, prefix='/api/v1/hasn/app/hasn/task/runs')
     app.include_router(task_sessions_api.router, prefix='/api/v1/hasn/app')
+    app.include_router(community_api.router, prefix='/api/v1/hasn/app/community')
     app.include_router(task_sessions_api.work_sessions_router, prefix='/api/v1/hasn')
     app.include_router(sync_api.router, prefix='/api/v1/hasn')
     app.include_router(message_hub_api.router, prefix='/api/v1/hasn')
@@ -838,6 +840,7 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app.dependency_overrides[message_hub_api.DependsJwtAuth.dependency] = jwt_override
     app.dependency_overrides[onboarding_api.DependsJwtAuth.dependency] = jwt_override
     app.dependency_overrides[task_sessions_api.DependsJwtAuth.dependency] = jwt_override
+    app.dependency_overrides[community_api.DependsJwtAuth.dependency] = jwt_override
     monkeypatch.setattr(onboarding_api, 'jwt_decode', lambda _token: SimpleNamespace(id=7))
 
     async def fake_token_creator(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
@@ -882,6 +885,101 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setattr(task_run_api.hasn_task_run_service, 'get', task_run_store.get)
     monkeypatch.setattr(task_run_api.hasn_task_run_service, 'update', task_run_store.update)
     monkeypatch.setattr(task_run_api.hasn_task_run_service, 'delete', task_run_store.delete)
+
+    community_post = {
+        'content_type': 'post',
+        'post_id': 'post_e2e_share',
+        'origin_workspace': {'kind': 'personal', 'id': 'h_p0_owner'},
+        'author': {
+            'hasn_id': 'h_p0_owner',
+            'type': 'human',
+            'display_name': 'P0 Dev User',
+            'avatar': None,
+        },
+        'content': '这是一条用于验证社区分享卡片闭环的帖子。',
+        'tags': ['卡片消息', 'E2E'],
+        'like_count': 12,
+        'comment_count': 0,
+        'published_time': '2026-05-28T12:00:00Z',
+        'is_liked': False,
+        'is_collected': False,
+    }
+    community_article = {
+        'article_id': 'article_e2e_share',
+        'title': 'E2E 卡片消息文章',
+        'summary': '用于验证社区文章分享卡片闭环。',
+        'cover_url': None,
+        'content': '# E2E 卡片消息文章\n\n这是一篇用于验证文章卡片跳转的正文。',
+        'author': {
+            'hasn_id': 'h_p0_owner',
+            'type': 'human',
+            'display_name': 'P0 Dev User',
+            'avatar': None,
+        },
+        'tags': ['卡片消息', '文章'],
+        'visibility': 'public',
+        'comment_policy': 'all',
+        'like_count': 7,
+        'comment_count': 0,
+        'view_count': 21,
+        'published_time': '2026-05-28T12:05:00Z',
+        'updated_time': '2026-05-28T12:05:00Z',
+        'is_liked': False,
+        'is_collected': False,
+    }
+
+    async def fake_community_feed(
+        _db: Any,
+        *,
+        user_id: int,
+        feed_type: str,
+        cursor: str | None,
+        limit: int,
+    ) -> dict[str, Any]:
+        assert user_id == 7
+        assert limit >= 1
+        return {'items': [community_post], 'next_cursor': None}
+
+    async def fake_community_get_post(
+        _db: Any,
+        *,
+        post_id: str,
+        user_id: int,
+    ) -> dict[str, Any]:
+        assert user_id == 7
+        if post_id != community_post['post_id']:
+            raise errors.NotFoundError(msg='帖子不存在')
+        return community_post
+
+    async def fake_community_get_article(
+        _db: Any,
+        *,
+        user_id: int,
+        hasn_id: str,
+        article_id: str,
+    ) -> dict[str, Any]:
+        assert (user_id, hasn_id) == (7, 'h_p0_owner')
+        if article_id != community_article['article_id']:
+            raise errors.NotFoundError(msg='文章不存在')
+        return community_article
+
+    async def fake_community_comments(
+        _db: Any,
+        *,
+        target_type: str,
+        target_id: str,
+        sort: str,
+        user_id: int,
+        cursor: str | None,
+        limit: int,
+    ) -> dict[str, Any]:
+        assert user_id == 7
+        return {'items': [], 'next_cursor': None}
+
+    monkeypatch.setattr(community_api.community_service, 'get_feed', fake_community_feed)
+    monkeypatch.setattr(community_api.community_service, 'get_post', fake_community_get_post)
+    monkeypatch.setattr(community_api.community_service, 'get_article', fake_community_get_article)
+    monkeypatch.setattr(community_api.community_service, 'get_comments', fake_community_comments)
 
     phone_auth = HasnPhoneAuthService(
         redis=redis,

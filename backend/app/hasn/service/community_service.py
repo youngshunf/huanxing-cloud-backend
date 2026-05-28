@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from backend.app.hasn.model import HasnAgents, HasnArticles, HasnCollectionItems, HasnCollections, HasnComments, HasnFollows, HasnHumans, HasnLikes, HasnPosts
+from backend.common.dataclasses import AgentTokenPayload
+from backend.common.exception import errors
 from backend.database.db import uuid4_str
 from backend.utils.timezone import timezone
 
@@ -377,6 +379,44 @@ class CommunityService:
             'published_time': post.published_time.isoformat() if post.published_time else None,
             'is_liked': False,  # TODO: 查询当前用户是否点赞
             'is_collected': False,  # TODO: 查询当前用户是否收藏
+        }
+
+    @staticmethod
+    async def get_agent_post_resource(
+        db: AsyncSession,
+        *,
+        agent: AgentTokenPayload,
+        post_id: str,
+    ) -> dict[str, Any]:
+        stmt = select(HasnPosts).where(
+            HasnPosts.post_id == post_id,
+            HasnPosts.status == 'published',
+        )
+        result = await db.execute(stmt)
+        post = result.scalar_one_or_none()
+        if not post:
+            raise errors.NotFoundError(msg='帖子不存在')
+        CommunityService._assert_agent_can_read_community_resource(agent=agent, resource=post)
+        summary = _safe_summary(post.content)
+        return {
+            'resource': {
+                'type': 'community.post',
+                'id': post.post_id,
+                'app_id': 'community',
+                'uri': f'hasn://app/community/posts/{post.post_id}',
+            },
+            'summary': summary,
+            'content': post.content,
+            'author': {
+                'hasn_id': post.author_hasn_id,
+                'type': post.author_type,
+                'owner_hasn_id': post.owner_hasn_id,
+            },
+            'origin_workspace': {
+                'kind': post.origin_workspace_kind,
+                'id': post.origin_workspace_id,
+            },
+            'published_time': post.published_time.isoformat() if post.published_time else None,
         }
 
     # ==================== 评论功能 ====================
@@ -1357,6 +1397,55 @@ class CommunityService:
         }
 
     @staticmethod
+    async def get_agent_article_resource(
+        db: AsyncSession,
+        *,
+        agent: AgentTokenPayload,
+        article_id: str,
+    ) -> dict[str, Any]:
+        stmt = select(HasnArticles).where(
+            HasnArticles.article_id == article_id,
+            HasnArticles.status == 'published',
+        )
+        result = await db.execute(stmt)
+        article = result.scalar_one_or_none()
+        if not article:
+            raise errors.NotFoundError(msg='文章不存在')
+        CommunityService._assert_agent_can_read_community_resource(agent=agent, resource=article)
+        return {
+            'resource': {
+                'type': 'community.article',
+                'id': article.article_id,
+                'app_id': 'community',
+                'uri': f'hasn://app/community/articles/{article.article_id}',
+            },
+            'summary': article.summary or _safe_summary(article.content),
+            'content': article.content,
+            'title': article.title,
+            'author': {
+                'hasn_id': article.author_hasn_id,
+                'type': article.author_type,
+                'owner_hasn_id': article.owner_hasn_id,
+            },
+            'origin_workspace': {
+                'kind': article.origin_workspace_kind,
+                'id': article.origin_workspace_id,
+            },
+            'published_time': article.published_time.isoformat() if article.published_time else None,
+        }
+
+    @staticmethod
+    def _assert_agent_can_read_community_resource(*, agent: AgentTokenPayload, resource: Any) -> None:
+        visibility = getattr(resource, 'visibility', 'public')
+        if visibility == 'public':
+            return
+        owner_hasn_id = getattr(resource, 'owner_hasn_id', None)
+        author_hasn_id = getattr(resource, 'author_hasn_id', None)
+        if agent.owner_hasn_id in {owner_hasn_id, author_hasn_id}:
+            return
+        raise errors.ForbiddenError(msg='社区资源不可见')
+
+    @staticmethod
     async def update_article(
         db: AsyncSession,
         *,
@@ -1479,3 +1568,10 @@ class CommunityService:
 
 
 community_service = CommunityService()
+
+
+def _safe_summary(content: str | None, *, limit: int = 160) -> str:
+    text = ' '.join((content or '').split())
+    if len(text) <= limit:
+        return text
+    return f'{text[:limit].rstrip()}...'

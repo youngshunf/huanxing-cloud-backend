@@ -26,6 +26,7 @@ from backend.app.hasn.schema.hasn_message_hub import (
     MessageHubSendRequest,
     MessageHubSendResponse,
 )
+from backend.app.hasn.schema.hasn_card_message import validate_card_message_body
 from backend.common.exception import errors
 from backend.utils.timezone import timezone
 
@@ -583,6 +584,7 @@ class HasnMessageHubService:
 
     async def send(self, db: AsyncSession, request: MessageHubSendRequest) -> MessageHubSendResponse:
         envelope = _normalize_envelope(request.envelope, request.owner_id)
+        _validate_message_content(envelope)
         sender_id = _sender_id(envelope, request.owner_id)
         target_id = _target_id(envelope)
         if not target_id:
@@ -789,6 +791,11 @@ def _content_type(envelope: dict[str, Any]) -> int:
         return raw
     mapping = {'text': 1, 'image': 2, 'file': 3, 'voice': 4, 'card': 5}
     return mapping.get(str(raw), 1)
+
+
+def _validate_message_content(envelope: dict[str, Any]) -> None:
+    if _content_type(envelope) == 5:
+        validate_card_message_body(_content(envelope))
 
 
 def _priority(envelope: dict[str, Any]) -> str:
