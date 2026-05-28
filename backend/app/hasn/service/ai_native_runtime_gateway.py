@@ -12,6 +12,7 @@ from backend.app.hasn.schema.ai_native_runtime import (
     AiNativeToolCallRequest,
 )
 from backend.app.hasn.service.ai_native_app_registry import ai_native_app_registry
+from backend.app.hasn.service.community_service import community_service
 from backend.app.hasn.service.workbench_domain_service import workbench_domain_service
 from backend.common.dataclasses import AgentTokenPayload
 from backend.common.exception import errors
@@ -193,7 +194,7 @@ class AiNativeRuntimeGateway:
             return self._deny_payload(body.trace_id, '15004', role_denial, audit_id=audit['id'])
 
         input_payload = dict(body.input or {})
-        if not self._valid_search_input(input_payload):
+        if not self._valid_tool_input(tool_id, input_payload):
             audit = await self._write_audit(
                 db,
                 trace_id=body.trace_id,
@@ -217,12 +218,27 @@ class AiNativeRuntimeGateway:
                 limit=int(input_payload.get('limit') or 50),
                 dataset_id=input_payload.get('dataset_id'),
             )
+        elif app_id == 'community' and tool_id == 'community.get_post':
+            result = await community_service.get_agent_post_resource(
+                db,
+                agent=agent,
+                post_id=str(input_payload['post_id']),
+            )
+        elif app_id == 'community' and tool_id == 'community.get_article':
+            result = await community_service.get_agent_article_resource(
+                db,
+                agent=agent,
+                article_id=str(input_payload['article_id']),
+            )
         elif app_id == 'community' and tool_id == 'community.get_feed':
             from backend.app.hasn.service.community_tool_handlers import handle_community_get_feed
-            result = await handle_community_get_feed(db, workspace, agent, input_payload)
+            result = await handle_community_get_feed(db, agent, input_payload)
         elif app_id == 'community' and tool_id == 'community.create_post':
             from backend.app.hasn.service.community_tool_handlers import handle_community_create_post
-            result = await handle_community_create_post(db, workspace, agent, input_payload)
+            result = await handle_community_create_post(db, agent, input_payload)
+        elif app_id == 'community' and tool_id == 'community.create_article':
+            from backend.app.hasn.service.community_tool_handlers import handle_community_create_article
+            result = await handle_community_create_article(db, agent, input_payload)
         else:
             raise errors.NotFoundError(msg='AI-Native 工具不存在')
         audit = await self._write_audit(
@@ -451,6 +467,45 @@ class AiNativeRuntimeGateway:
                 return False
         dataset_id = data.get('dataset_id')
         return dataset_id is None or isinstance(dataset_id, str)
+
+    def _valid_tool_input(self, tool_id: str, data: dict[str, Any]) -> bool:
+        if tool_id == 'knowledge.search':
+            return self._valid_search_input(data)
+        if tool_id == 'community.get_feed':
+            feed_type = data.get('type')
+            if not isinstance(feed_type, str) or feed_type not in {'following', 'recommend', 'hot', 'articles'}:
+                return False
+            return self._valid_limit(data, default_max=50)
+        if tool_id == 'community.get_post':
+            post_id = data.get('post_id')
+            return isinstance(post_id, str) and bool(post_id.strip())
+        if tool_id == 'community.get_article':
+            article_id = data.get('article_id')
+            return isinstance(article_id, str) and bool(article_id.strip())
+        if tool_id == 'community.create_post':
+            content = data.get('content')
+            return isinstance(content, str) and bool(content.strip()) and len(content) <= 10000
+        if tool_id == 'community.create_article':
+            title = data.get('title')
+            content = data.get('content')
+            return (
+                isinstance(title, str)
+                and bool(title.strip())
+                and len(title) <= 200
+                and isinstance(content, str)
+                and bool(content.strip())
+                and len(content) <= 100000
+            )
+        return True
+
+    def _valid_limit(self, data: dict[str, Any], *, default_max: int) -> bool:
+        if 'limit' not in data or data['limit'] is None:
+            return True
+        try:
+            limit = int(data['limit'])
+        except (TypeError, ValueError):
+            return False
+        return 1 <= limit <= default_max
 
     def _deny_payload(self, trace_id: str, code: str, message: str, *, audit_id: int) -> dict[str, Any]:
         return {

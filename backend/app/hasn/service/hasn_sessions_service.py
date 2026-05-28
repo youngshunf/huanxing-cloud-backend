@@ -15,6 +15,7 @@ from backend.app.hasn.schema.hasn_sessions import (
     DeleteHasnSessionsParam,
     UpdateHasnSessionsParam,
 )
+from backend.app.hasn.schema.hasn_card_message import validate_card_message_body
 from backend.app.hasn.service.hasn_conversations_service import hasn_conversations_service
 from backend.common.exception import errors
 from backend.common.pagination import paging_data
@@ -292,7 +293,8 @@ class HasnSessionsService:
             }
 
         content_json = _projection_content_json(session=session, agent_id=agent_id, projection_data=projection_data)
-        content_text = _projection_content_text(session=session, content_json=content_json)
+        content_card = _projection_card_body(session=session, content_json=content_json)
+        validate_card_message_body(content_card)
         result = await db.execute(
             sa.text(
                 """
@@ -360,16 +362,7 @@ class HasnSessionsService:
                 'sender_hasn_id': agent_id,
                 'to_id': owner_id,
                 'recipient_hasn_id': owner_id,
-                'content': json.dumps(
-                    {
-                        'text': content_text,
-                        'content_text': content_text,
-                        'content_json': content_json,
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    default=str,
-                ),
+                'content': json.dumps(content_card, ensure_ascii=False, sort_keys=True, default=str),
                 'process_blocks': '[]',
                 'local_id': dedupe_key,
                 'client_message_id': dedupe_key,
@@ -509,7 +502,7 @@ def _projection_dedupe_key(session_id: str, projection_data: dict[str, Any]) -> 
 def _projection_content_json(
     *, session: HasnSessions, agent_id: str, projection_data: dict[str, Any]
 ) -> dict[str, Any]:
-    deep_link = projection_data.get('deep_link') or f'/tasks/sessions/{session.session_id}'
+    deep_link = projection_data.get('deep_link') or f'hasn://webui/tasks/sessions/{session.session_id}'
     return {
         'projection_kind': 'work_session_result_summary',
         'session_id': session.session_id,
@@ -534,6 +527,73 @@ def _projection_content_text(*, session: HasnSessions, content_json: dict[str, A
     return f'工作会话「{title}」已完成：{summary}'
 
 
+def _projection_card_body(*, session: HasnSessions, content_json: dict[str, Any]) -> dict[str, Any]:
+    title = session.title or session.session_id
+    task_id = content_json.get('task_id')
+    task_run_id = content_json.get('task_run_id')
+    event_payload = {
+        'session_id': session.session_id,
+    }
+    if task_id is not None:
+        event_payload['task_id'] = task_id
+    if task_run_id is not None:
+        event_payload['task_run_id'] = task_run_id
+
+    fields = [
+        {'label': '状态', 'value': str(content_json.get('status') or 'success')},
+        {'label': '完成原因', 'value': str(content_json.get('completion_reason') or 'manual')},
+    ]
+    if task_id is not None:
+        fields.append({'label': '任务 ID', 'value': str(task_id)})
+    if task_run_id is not None:
+        fields.append({'label': '任务执行 ID', 'value': str(task_run_id)})
+
+    return {
+        'schema_version': 'hasn.card/0.1',
+        'title': f'工作会话「{title}」已完成',
+        'description': content_json.get('summary') or '工作会话已完成。',
+        'source': {
+            'kind': 'task',
+            'id': str(task_id or content_json.get('workflow_run_id') or session.session_id),
+            'display_name': '任务系统',
+            'verified': True,
+        },
+        'resource': {
+            'type': 'task_session',
+            'id': session.session_id,
+            'app_id': 'tasks',
+            'uri': content_json.get('deep_link') or f'hasn://webui/tasks/sessions/{session.session_id}',
+            'access': {
+                'visibility': 'recipient',
+                'readable_by': ['human'],
+                'required_scopes': [],
+            },
+            'metadata': {
+                'agent_id': content_json.get('agent_id'),
+                'origin_type': content_json.get('origin_type'),
+                'origin_ref': content_json.get('origin_ref'),
+                'dedupe_key': content_json.get('dedupe_key'),
+            },
+        },
+        'fields': fields,
+        'primary_action': {
+            'label': '查看任务',
+            'action_id': 'open_task_session',
+            'kind': 'open_uri',
+            'uri': content_json.get('deep_link') or f'hasn://webui/tasks/sessions/{session.session_id}',
+            'event': {
+                'event_type': 'task.summary.opened',
+                'payload': event_payload,
+            },
+            'style': 'primary',
+        },
+        'metadata': {
+            'projection_kind': 'work_session_result_summary',
+            'legacy_content_json': content_json,
+        },
+    }
+
+
 def _record_projection_on_session(
     *,
     session: HasnSessions,
@@ -549,6 +609,7 @@ def _record_projection_on_session(
         'projection_conversation_id': conversation_id,
         'deep_link': content_json.get('deep_link'),
         'completion_reason': content_json.get('completion_reason'),
+        'dedupe_key': content_json.get('dedupe_key'),
     })
     session.summary_checkpoint_json = checkpoint
     session.last_message_id = result_message_id
