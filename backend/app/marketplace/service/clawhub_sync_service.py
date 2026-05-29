@@ -219,11 +219,29 @@ class ClawHubSyncService:
                 response = await client.get(f"{self.clawhub_api_url}/skills/{slug}")
                 response.raise_for_status()
                 data = response.json()
-                owner = data.get('owner', {})
-                return owner.get('handle', 'community')
+                return self._extract_owner_handle(data) or 'community'
         except Exception as e:
             log.warning(f"Failed to get owner for skill {slug}: {e}")
             return 'community'
+
+    @staticmethod
+    def _extract_owner_handle(data: dict[str, Any]) -> str | None:
+        owner = data.get('owner')
+        if isinstance(owner, dict) and owner.get('handle'):
+            return str(owner['handle'])
+
+        skill = data.get('skill')
+        if isinstance(skill, dict) and skill.get('ownerHandle'):
+            return str(skill['ownerHandle'])
+
+        value = data.get('value')
+        if isinstance(value, dict):
+            page = value.get('page')
+            if isinstance(page, list) and page:
+                first = page[0]
+                if isinstance(first, dict) and first.get('ownerHandle'):
+                    return str(first['ownerHandle'])
+        return None
 
     def _filter_skills(self, skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
@@ -276,10 +294,12 @@ class ClawHubSyncService:
 
         translated = await translation_service.translate_skill_metadata(
             name=name,
-            description=description
+            description=description,
+            tag_hints=self._extract_tag_hints(clawhub_skill),
         )
-
-        tags = self._extract_tags(clawhub_skill, slug)
+        tags_en = translation_service.normalize_tag_list(translated.get('tags_en'))
+        tags_zh = translation_service.normalize_tag_list(translated.get('tags_zh'))
+        tags = tags_en or tags_zh or [slug]
 
         # Map category based on slug or summary using LLM
         category = await self._classify_skill(db, name, description)
@@ -302,10 +322,12 @@ class ClawHubSyncService:
             'description_zh': translated['description_zh'],
             'source_language': translated['source_language'],
             'icon_url': None,
-            'emoji': None,
-            'author_name': 'ClawHub Community',
+            'emoji': translated.get('emoji'),
+            'author_name': owner_handle,
             'category': category,
             'tags': json.dumps(tags, ensure_ascii=False),
+            'tags_en': json.dumps(tags_en or tags, ensure_ascii=False),
+            'tags_zh': json.dumps(tags_zh or tags, ensure_ascii=False),
             'pricing_type': 'free',
             'price': 0,
             'is_official': False,
@@ -367,10 +389,12 @@ class ClawHubSyncService:
                         'description_zh': translated['description_zh'],
                         'source_language': translated['source_language'],
                         'icon_url': None,
-                        'emoji': None,
-                        'author_name': 'ClawHub Community',
+                        'emoji': translated.get('emoji'),
+                        'author_name': owner_handle,
                         'category': category,
                         'tags': json.dumps(tags, ensure_ascii=False),
+                        'tags_en': json.dumps(tags_en or tags, ensure_ascii=False),
+                        'tags_zh': json.dumps(tags_zh or tags, ensure_ascii=False),
                         'pricing_type': 'free',
                         'price': 0,
                         'is_official': False,
@@ -590,24 +614,18 @@ class ClawHubSyncService:
             return None
 
     @staticmethod
-    def _extract_tags(clawhub_skill: dict[str, Any], slug: str) -> list[str]:
+    def _extract_tag_hints(clawhub_skill: dict[str, Any]) -> list[str]:
         tags = clawhub_skill.get('tags')
         if isinstance(tags, list):
             normalized = [str(tag).strip() for tag in tags if str(tag).strip()]
         elif isinstance(tags, dict):
-            values: list[Any] = []
-            for value in tags.values():
-                if isinstance(value, list):
-                    values.extend(value)
-                elif value:
-                    values.append(value)
-            normalized = [str(tag).strip() for tag in values if str(tag).strip()]
+            normalized = [str(tag).strip() for tag in tags if str(tag).strip()]
         elif isinstance(tags, str):
             normalized = [tag.strip() for tag in tags.split(',') if tag.strip()]
         else:
             normalized = []
 
-        return normalized or [slug]
+        return translation_service.normalize_tag_list(normalized)
 
 
 # Singleton instance

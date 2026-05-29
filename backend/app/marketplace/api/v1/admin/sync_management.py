@@ -12,6 +12,7 @@ from backend.app.marketplace.service.clawhub_sync_service import clawhub_sync_se
 from backend.app.marketplace.service.github_app_sync_service import github_app_sync_service
 from backend.app.marketplace.service.github_sync_service import github_sync_service
 from backend.app.marketplace.service.package_service import package_service
+from backend.app.marketplace.service.skill_translation_backfill_service import backfill_skill_translations
 from backend.common.security.rbac import DependsRBAC
 from backend.database.db import CurrentSession
 
@@ -22,6 +23,15 @@ class SyncRequest(BaseModel):
     """Sync request model"""
     force: bool = False
     skill_ids: list[str] | None = None
+
+
+class RetranslateRequest(BaseModel):
+    """Translation backfill request model"""
+    only_missing: bool = False
+    skill_ids: list[str] | None = None
+    limit: int | None = None
+    batch_size: int = 10
+    concurrency: int = 4
 
 
 @router.post('/github', summary='Trigger GitHub sync')
@@ -62,6 +72,22 @@ async def trigger_clawhub_sync(
         skill_ids=request.skill_ids
     )
     return result
+
+
+@router.post('/retranslate', summary='Backfill bilingual translations + emoji')
+async def trigger_retranslate(
+    db: CurrentSession,
+    request: RetranslateRequest
+) -> dict[str, Any]:
+    """Re-translate existing skills (name/description/tags + emoji) in batches."""
+    return await backfill_skill_translations(
+        db,
+        only_missing=request.only_missing,
+        skill_ids=request.skill_ids,
+        limit=request.limit,
+        batch_size=request.batch_size,
+        concurrency=request.concurrency,
+    )
 
 
 @router.get('/status', summary='Get sync status')

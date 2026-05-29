@@ -50,8 +50,7 @@ async def test_filter_skills():
 
         print(f"✅ 原始技能数: {len(skills)}")
         print(f"✅ 过滤后技能数: {len(filtered)}")
-        print(f"✅ 过滤条件: downloads >= {clawhub_sync_service.sync_filters['min_downloads']}, "
-              f"stars >= {clawhub_sync_service.sync_filters['min_stars']}")
+        print(f"✅ 过滤条件: 按 stars/downloads/更新时间排序，取前 {clawhub_sync_service.sync_filters['limit']} 个")
 
     except Exception as e:
         print(f"❌ 过滤技能失败: {e}")

@@ -73,14 +73,19 @@ class GitHubSyncService:
             # Scan for skills
             skills_data = await self._scan_skills()
 
+            # Translate all scanned skills in one batched pass (10 per LLM request)
+            # instead of one request per skill — language detection, bilingual
+            # name/description, bilingual tags, and emoji all come back together.
+            translations = await self._batch_translate(skills_data)
+
             # Sync to database
             synced_count = 0
             failed_count = 0
             errors = []
 
-            for skill_data in skills_data:
+            for skill_data, translated in zip(skills_data, translations):
                 try:
-                    await self._sync_skill(db, skill_data)
+                    await self._sync_skill(db, skill_data, translated)
                     synced_count += 1
                 except Exception as e:  # noqa: PERF203
                     failed_count += 1
@@ -210,7 +215,7 @@ class GitHubSyncService:
             if not metadata.get(field):
                 raise ValueError(f"SKILL.md frontmatter missing {field}: {skill_md_path}")
 
-        tags = normalize_tags(metadata.get('tags'))
+        tag_hints = normalize_tags(metadata.get('tags'))
         icon_path = self._find_local_icon(skill_md_path.parent)
         skill_id = f'{namespace}/{slug}'
         return {
@@ -224,7 +229,7 @@ class GitHubSyncService:
             'icon_path': icon_path,
             'emoji': metadata.get('emoji'),
             'author_name': metadata.get('author') or metadata.get('author_name'),
-            'tags': json.dumps(tags, ensure_ascii=False),
+            'tag_hints': tag_hints,
             'pricing_type': metadata.get('pricing_type', 'free'),
             'price': metadata.get('price', 0),
             'is_official': is_official,
@@ -265,24 +270,42 @@ class GitHubSyncService:
                 return icon_path
         return None
 
-    async def _sync_skill(self, db: AsyncSession, skill_data: dict[str, Any]) -> None:
+    async def _batch_translate(self, skills_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Translate all scanned skills in batched LLM requests (10 per request)."""
+        if not skills_data:
+            return []
+        items = [
+            {
+                'name': skill_data.get('name', ''),
+                'description': skill_data.get('description', ''),
+                'tag_hints': skill_data.get('tag_hints'),
+                'source_lang': skill_data.get('source_language'),
+            }
+            for skill_data in skills_data
+        ]
+        return await translation_service.batch_translate_skill_metadata(items, concurrency=4)
+
+    async def _sync_skill(
+        self,
+        db: AsyncSession,
+        skill_data: dict[str, Any],
+        translated: dict[str, Any],
+    ) -> None:
         """
         Sync a single skill to database
 
         Args:
             db: Database session
             skill_data: Skill metadata
+            translated: Pre-computed bilingual translation for this skill
         """
         skill_id = skill_data['skill_id']
 
-        # Translate name and description
         name = skill_data.get('name', '')
-        description = skill_data.get('description', '')
 
-        translated = await translation_service.translate_skill_metadata(
-            name=name,
-            description=description
-        )
+        tags_en = translation_service.normalize_tag_list(translated.get('tags_en'))
+        tags_zh = translation_service.normalize_tag_list(translated.get('tags_zh'))
+        tags = tags_en or tags_zh or translation_service.normalize_tag_list(skill_data.get('tag_hints'))
 
         # Check if skill exists
         existing_skill = await marketplace_skill_dao.get_by_id(db, skill_id)
@@ -299,10 +322,12 @@ class GitHubSyncService:
             'description_zh': translated.get('description_zh'),
             'source_language': translated.get('source_language', skill_data.get('source_language')),
             'icon_url': await self._resolve_icon_url(db, skill_data),
-            'emoji': skill_data.get('emoji'),
+            'emoji': skill_data.get('emoji') or translated.get('emoji'),
             'author_name': skill_data.get('author_name'),
             'category': skill_data.get('category'),
-            'tags': skill_data.get('tags'),
+            'tags': json.dumps(tags, ensure_ascii=False),
+            'tags_en': json.dumps(tags_en or tags, ensure_ascii=False),
+            'tags_zh': json.dumps(tags_zh or tags, ensure_ascii=False),
             'pricing_type': skill_data.get('pricing_type'),
             'price': skill_data.get('price'),
             'is_official': skill_data.get('is_official'),
