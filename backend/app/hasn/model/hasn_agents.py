@@ -32,7 +32,11 @@ class HasnAgents(Base):
     profile_source: Mapped[str] = mapped_column(sa.String(20), default='cloud', comment='Profile 来源 (cloud:云端事实源:green/imported:导入:blue)')
     profile_revision: Mapped[int] = mapped_column(sa.BigInteger, default=1, comment='Agent Profile 修订号')
     api_key_hash: Mapped[str] = mapped_column(sa.String(64), default='', comment='Agent Key 的 SHA256 哈希')
-    tags: Mapped[list | None] = mapped_column(postgresql.JSONB(), default=list, comment='Agent 标签数组（云端权威，daemon 仅镜像）')
+    tags: Mapped[list[str] | None] = mapped_column(
+        postgresql.JSONB(),
+        default_factory=list,
+        comment='Agent 标签数组（云端权威，daemon 仅镜像）',
+    )
     capability_set_id: Mapped[str | None] = mapped_column(sa.String(80), default=None, comment='Agent 能力集 ID（与 hasn_agent_capabilities 关联，云端权威）')
     persona_ref: Mapped[str | None] = mapped_column(sa.String(120), default=None, comment='Agent persona 引用（template / persona 资产 ID，云端权威）')
     status: Mapped[str] = mapped_column(sa.String(20), default='', comment='状态/生命周期 (active:活跃:green/disabled:已停用:orange/revoked:已吊销:red/archived:已归档:gray/deleted:已删除:gray)')

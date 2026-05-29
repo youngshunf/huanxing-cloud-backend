@@ -76,11 +76,15 @@ async def refresh_agent_token(
 
     # 查询 Agent 是否存在且属于当前 Owner
     from sqlalchemy import text
+    from loguru import logger
+
+    logger.info(f"刷新 Agent token: agent_hasn_id={agent_hasn_id}, owner_user_id={owner_user_id}")
+
     result = await db.execute(
         text("""
-            SELECT ha.hasn_id, ha.name, hh.hasn_id as owner_hasn_id
+            SELECT ha.hasn_id, ha.display_name, hh.hasn_id as owner_hasn_id
             FROM hasn_agents ha
-            JOIN hasn_humans hh ON ha.owner_id = hh.id
+            JOIN hasn_humans hh ON ha.owner_id = hh.hasn_id
             WHERE ha.hasn_id = :agent_hasn_id
               AND hh.user_id = :owner_user_id
               AND ha.status = 'active'
@@ -93,9 +97,30 @@ async def refresh_agent_token(
     row = result.fetchone()
 
     if not row:
+        # 调试：查询 Agent 是否存在
+        debug_result = await db.execute(
+            text("SELECT hasn_id, owner_id, status FROM hasn_agents WHERE hasn_id = :agent_hasn_id"),
+            {"agent_hasn_id": agent_hasn_id}
+        )
+        debug_row = debug_result.fetchone()
+        if debug_row:
+            logger.warning(f"Agent 存在但查询失败: hasn_id={debug_row[0]}, owner_id={debug_row[1]}, status={debug_row[2]}")
+            # 查询 owner 信息
+            owner_result = await db.execute(
+                text("SELECT hasn_id, user_id FROM hasn_humans WHERE hasn_id = :owner_id"),
+                {"owner_id": debug_row[1]}
+            )
+            owner_row = owner_result.fetchone()
+            if owner_row:
+                logger.warning(f"Owner 信息: hasn_id={owner_row[0]}, user_id={owner_row[1]}, 期望 user_id={owner_user_id}")
+            else:
+                logger.warning(f"Owner 不存在: owner_id={debug_row[1]}")
+        else:
+            logger.warning(f"Agent 不存在: agent_hasn_id={agent_hasn_id}")
+
         raise errors.NotFoundError(msg='Agent 不存在或不属于当前用户')
 
-    agent_name = row[1]
+    agent_display_name = row[1]
     owner_hasn_id = row[2]
 
     # 获取 Agent 的权限配置
@@ -105,7 +130,7 @@ async def refresh_agent_token(
     # 签发新的 Agent JWT
     agent_token = await create_agent_access_token(
         agent_hasn_id=agent_hasn_id,
-        agent_name=agent_name,
+        agent_name=agent_display_name,
         owner_hasn_id=owner_hasn_id,
         owner_user_id=owner_user_id,
         scopes=scopes,
