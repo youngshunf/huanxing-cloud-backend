@@ -3,6 +3,7 @@ HASN 云端 MCP Server
 
 提供云端工具给 Agent Runtime
 """
+import hashlib
 import logging
 
 from typing import Any
@@ -17,6 +18,12 @@ from backend.app.mcp.tools.registry import ToolRegistry
 from backend.app.mcp.tools.tool_search import ToolSearchTool
 
 logger = logging.getLogger(__name__)
+
+# 发现工具名（含迁移别名）。其 summary 级查询属"普通查询"，可降采样（04 §6）。
+_DISCOVERY_TOOL_NAMES = frozenset({"hasn.cloud.tool.search", "hasn.tool.search"})
+
+# 普通 summary/sources/apps 发现查询的审计采样率：约 1/N 落库，trace_id 仍全量保留聚合能力。
+_SUMMARY_AUDIT_SAMPLE_RATE = 10
 
 
 async def load_app_tools_for_agent(agent_id: str, owner_id: str) -> list[BaseTool]:
@@ -122,10 +129,12 @@ class HasnCloudMcpServer:
             # 按 source 分发执行
             result = await self._dispatch_by_source(agent_context, tool, source, arguments)
 
-            # 记录审计日志
-            await self._log_tool_call(
-                agent_context, tool_name, arguments, result, success=True
-            )
+            # 记录审计日志（04 §6）：真实工具调用 / schema 查询必审计；
+            # 普通 summary 发现查询可降采样（trace_id 仍全量返回，保留聚合能力）。
+            if self._should_audit_call(tool_name, arguments, success=True):
+                await self._log_tool_call(
+                    agent_context, tool_name, arguments, result, success=True
+                )
 
             return result
         except Exception as e:
@@ -134,16 +143,40 @@ class HasnCloudMcpServer:
                 exc_info=True
             )
 
-            # 记录审计日志
+            # 失败 / 拒绝一律审计（04 §6：Tool 拒绝 + scope/role 拒绝必审计）。
             try:
                 await self._log_tool_call(
                     agent_context, tool_name, arguments, None,
                     success=False, error=str(e)
                 )
-            except:
-                pass
+            except Exception:
+                logger.exception("Failed to record tool-call denial audit")
 
             raise
+
+    def _should_audit_call(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        success: bool,
+    ) -> bool:
+        """审计采样判定（04 §6）。
+
+        必审计：失败 / 拒绝、真实工具调用、schema 查询。
+        可降采样：普通 summary/sources/apps 发现查询——按 (tool, query) 稳定哈希
+        约 1/N 落库；trace_id 仍随结果全量返回，聚合能力不丢失。
+        """
+        if not success:
+            return True
+        if tool_name not in _DISCOVERY_TOOL_NAMES:
+            return True
+        detail = str((arguments or {}).get("detail", "summary"))
+        if detail == "schema":
+            return True
+        query = str((arguments or {}).get("query", ""))
+        digest = hashlib.sha256(f"{tool_name}|{query}".encode()).hexdigest()
+        return int(digest[:8], 16) % _SUMMARY_AUDIT_SAMPLE_RATE == 0
 
     def _check_tool_permission(
         self,

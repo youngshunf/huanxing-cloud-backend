@@ -203,3 +203,47 @@ class TestExecutionLocation:
             )
         )
         assert result["schemas"][0]["execution_location"] == "cloud"
+
+
+class TestAuditSampling:
+    """P5: audit landing (`04 §6`) — calls/schema/denials always; summary sampled."""
+
+    def _server(self) -> HasnCloudMcpServer:  # noqa: F821
+        from backend.app.mcp.server import HasnCloudMcpServer
+
+        return HasnCloudMcpServer()
+
+    def test_real_tool_call_always_audited(self) -> None:
+        server = self._server()
+        assert server._should_audit_call("hasn.contact.list", {"limit": 10}, success=True)
+
+    def test_failure_or_denial_always_audited(self) -> None:
+        server = self._server()
+        assert server._should_audit_call(
+            "hasn.cloud.tool.search",
+            {"detail": "summary", "query": "anything"},
+            success=False,
+        )
+
+    def test_schema_query_always_audited(self) -> None:
+        server = self._server()
+        assert server._should_audit_call(
+            "hasn.cloud.tool.search",
+            {"detail": "schema", "query": "knowledge"},
+            success=True,
+        )
+
+    def test_summary_discovery_queries_are_downsampled(self) -> None:
+        server = self._server()
+        decisions = [
+            server._should_audit_call(
+                "hasn.cloud.tool.search",
+                {"detail": "summary", "query": f"q{i}"},
+                success=True,
+            )
+            for i in range(100)
+        ]
+        audited = sum(decisions)
+        # Downsampled: not every summary query lands in the audit log, but some
+        # do — and every call still returns a trace_id for aggregation.
+        assert 0 < audited < 100
