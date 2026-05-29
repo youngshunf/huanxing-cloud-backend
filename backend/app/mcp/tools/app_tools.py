@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+
 from typing import TYPE_CHECKING, Any
 
 from backend.app.mcp.tools.base import BaseTool
@@ -37,6 +38,12 @@ class AppTool(BaseTool):
         self._output_schema = tool_output_schema or {"type": "object"}
         self._required_scopes = tool_required_scopes
         self._risk_level = risk_level
+
+        # P0: validate the derived canonical name (rejects reserved-namespace
+        # conflicts and malformed names) at construction time.
+        from backend.app.mcp.canonical import validate_canonical_name
+
+        validate_canonical_name(self.name, self.source)
 
     @property
     def source(self) -> str:

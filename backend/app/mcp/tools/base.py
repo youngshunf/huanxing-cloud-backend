@@ -48,6 +48,31 @@ class BaseTool(ABC):
         """所需权限范围"""
         return []
 
+    def descriptor(self) -> dict[str, Any]:
+        """结构化描述符投影（P0），与 Rust ToolDescriptor 对齐。
+
+        统一暴露 source/namespace/action/schema_hash/scopes/risk/visibility/
+        execution_location，供 source 维度索引与后续阶段消费。execution_location
+        为 P0 占位（local 来源→local，其余→cloud），P3 由工具显式声明覆盖。
+        """
+        from backend.app.mcp.canonical import schema_hash, validate_canonical_name
+
+        parsed = validate_canonical_name(self.name, self.source)
+        output_schema = getattr(self, "output_schema", None)
+        default_location = "local" if self.source == "local" else "cloud"
+        return {
+            "canonical_name": parsed.full,
+            "source": self.source,
+            "namespace": parsed.namespace,
+            "action": parsed.action,
+            "input_schema_hash": schema_hash(self.input_schema),
+            "output_schema_hash": schema_hash(output_schema) if output_schema else None,
+            "required_scopes": self.required_scopes,
+            "risk_level": getattr(self, "risk_level", "low"),
+            "schema_visibility": getattr(self, "schema_visibility", "public"),
+            "execution_location": getattr(self, "execution_location", default_location),
+        }
+
     @abstractmethod
     async def execute(
         self,
