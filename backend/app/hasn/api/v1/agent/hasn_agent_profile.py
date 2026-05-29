@@ -18,12 +18,17 @@ from backend.app.hasn.model import HasnAgents
 from backend.app.hasn.schema.hasn_agents import (
     AgentProfileResponse,
     AgentProfileRevisionResponse,
+    MemoryContributeRequest,
+    MemoryContributeResponse,
+    OwnerMemoryResponse,
 )
+from backend.app.hasn.service.owner_memory_service import owner_memory_service
 from backend.common.dataclasses import AgentTokenPayload
 from backend.common.exception import errors
+from backend.common.log import log
 from backend.common.response.response_schema import ResponseSchemaModel, response_base
 from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
-from backend.database.db import CurrentSession
+from backend.database.db import CurrentSession, CurrentSessionTransaction
 
 router = APIRouter()
 
@@ -96,3 +101,51 @@ async def get_agent_profile_revision(
     if rev is None:
         raise errors.NotFoundError(msg='ERR_HASN_AGENT_NOT_FOUND')
     return response_base.success(data=AgentProfileRevisionResponse(profile_revision=int(rev or 1)))
+
+
+@router.post(
+    '/memory/contribute',
+    summary='Agent 上传 owner 记忆观察（触发云端合并下发）',
+)
+async def contribute_owner_memory(
+    agent: Annotated[AgentTokenPayload, DependsAgentJwtAuth],
+    db: CurrentSessionTransaction,
+    body: MemoryContributeRequest,
+) -> ResponseSchemaModel[MemoryContributeResponse]:
+    """Agent 把本地 USER.md 观察上传为 contribution，并尽力触发一次合并下发。
+
+    owner/agent 身份恒取自 agent JWT（owner_hasn_id / agent_hasn_id），不读 body。
+    合并失败不影响贡献入库：contribution 留待下次合并（零 fake，不产生假合并）。
+    """
+    accepted = await owner_memory_service.contribute(
+        db,
+        owner_id=agent.owner_hasn_id,
+        agent_hasn_id=agent.agent_hasn_id,
+        content=body.content,
+    )
+    merged = False
+    version: int | None = None
+    if accepted.get('accepted'):
+        try:
+            outcome = await owner_memory_service.merge_owner_memory(db, owner_id=agent.owner_hasn_id)
+            merged = bool(outcome.get('merged'))
+            version = outcome.get('version')
+        except Exception as exc:
+            log.warning(f'owner memory merge deferred for {agent.owner_hasn_id}: {exc}')
+    return response_base.success(
+        data=MemoryContributeResponse(accepted=bool(accepted.get('accepted')), merged=merged, version=version)
+    )
+
+
+@router.get(
+    '/memory',
+    summary='Agent 拉取当前 owner 记忆（下发的 USER.md）',
+)
+async def get_owner_memory(
+    agent: Annotated[AgentTokenPayload, DependsAgentJwtAuth],
+    db: CurrentSession,
+) -> ResponseSchemaModel[OwnerMemoryResponse]:
+    memory = await owner_memory_service.get_owner_memory(db, owner_id=agent.owner_hasn_id)
+    return response_base.success(
+        data=OwnerMemoryResponse(content=memory.get('content'), version=int(memory.get('version') or 0))
+    )

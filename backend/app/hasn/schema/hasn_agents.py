@@ -217,3 +217,24 @@ class AgentProfileRevisionResponse(SchemaBase):
     """轻量轮询：仅返回 Profile 修订号。"""
 
     profile_revision: int = Field(default=1, description='Profile 修订号')
+
+
+class MemoryContributeRequest(SchemaBase):
+    """Agent 上传一条 owner 记忆观察（本地 USER.md 增量）。"""
+
+    content: str = Field(min_length=1, description='Agent 观察到的主人信息片段')
+
+
+class MemoryContributeResponse(SchemaBase):
+    """记忆贡献结果（含本轮是否触发合并）。"""
+
+    accepted: bool = Field(description='是否已接收为待合并贡献')
+    merged: bool = Field(default=False, description='本次是否触发了合并')
+    version: int | None = Field(None, description='合并后 owner 记忆版本（未合并则 None）')
+
+
+class OwnerMemoryResponse(SchemaBase):
+    """下发给 Agent 的当前 owner 记忆。"""
+
+    content: str | None = Field(None, description='当前 owner 记忆（合并后的 USER.md）')
+    version: int = Field(default=0, description='记忆版本（0 表示尚无合并记忆）')
