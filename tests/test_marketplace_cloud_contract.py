@@ -404,6 +404,15 @@ def test_marketplace_skill_sync_timestamps_are_timezone_aware() -> None:
     assert MarketplaceSkill.__table__.c.translated_at.type.timezone is True
 
 
+def test_marketplace_template_datetime_columns_are_timezone_aware() -> None:
+    from backend.app.marketplace.model import MarketplaceTemplate
+
+    # DB columns are timestamptz; the model must declare them tz-aware or
+    # inserting tz-aware values (timezone.now()) fails under asyncpg.
+    for column in ('reviewed_at', 'published_at', 'suspended_at', 'synced_at', 'translated_at'):
+        assert MarketplaceTemplate.__table__.c[column].type.timezone is True, column
+
+
 def test_marketplace_skill_has_bilingual_tag_columns() -> None:
     assert 'tags_en' in MarketplaceSkill.__table__.c
     assert 'tags_zh' in MarketplaceSkill.__table__.c

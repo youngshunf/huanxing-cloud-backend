@@ -5,7 +5,7 @@ import sqlalchemy as sa
 
 from sqlalchemy.orm import Mapped, mapped_column
 
-from backend.common.model import Base, UniversalText, id_key
+from backend.common.model import Base, TimeZone, UniversalText, id_key
 
 
 class MarketplaceTemplate(Base):
@@ -26,10 +26,10 @@ class MarketplaceTemplate(Base):
     status: Mapped[str] = mapped_column(sa.String(20), default='published', comment='发布状态')
     visibility: Mapped[str] = mapped_column(sa.String(20), default='public', comment='可见性')
     reviewed_by: Mapped[int | None] = mapped_column(sa.BIGINT(), default=None, comment='审核人用户ID')
-    reviewed_at: Mapped[datetime | None] = mapped_column(default=None, comment='审核时间')
+    reviewed_at: Mapped[datetime | None] = mapped_column(TimeZone, default=None, comment='审核时间')
     review_note: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='审核备注')
-    published_at: Mapped[datetime | None] = mapped_column(default=None, comment='发布时间')
-    suspended_at: Mapped[datetime | None] = mapped_column(default=None, comment='封禁时间')
+    published_at: Mapped[datetime | None] = mapped_column(TimeZone, default=None, comment='发布时间')
+    suspended_at: Mapped[datetime | None] = mapped_column(TimeZone, default=None, comment='封禁时间')
     suspend_reason: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='封禁原因')
     template_type: Mapped[str] = mapped_column(
         sa.String(20),
@@ -81,5 +81,5 @@ class MarketplaceTemplate(Base):
     )
     repo_path: Mapped[str | None] = mapped_column(sa.String(500), default=None, comment='在 huanxing-hub 中的路径')
     git_commit_hash: Mapped[str | None] = mapped_column(sa.String(64), default=None, comment='最新同步的 commit hash')
-    synced_at: Mapped[datetime | None] = mapped_column(default=None, comment='最后同步时间')
-    translated_at: Mapped[datetime | None] = mapped_column(default=None, comment='最后翻译时间')
+    synced_at: Mapped[datetime | None] = mapped_column(TimeZone, default=None, comment='最后同步时间')
+    translated_at: Mapped[datetime | None] = mapped_column(TimeZone, default=None, comment='最后翻译时间')
