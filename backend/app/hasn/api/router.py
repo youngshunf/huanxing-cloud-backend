@@ -213,7 +213,6 @@ app.include_router(app_profile_router, prefix='/profile', tags=['合并 Profile 
 
 # --- IM 业务 API ---
 from backend.app.hasn.api.v1.app.hasn_im import router as app_hasn_im_router
-from backend.app.hasn.api.v1.app.community import router as app_community_router
 from backend.app.hasn.api.v1.app.hasn_skill_bundle import router as app_hasn_skill_bundle_router
 from backend.app.hasn.api.v1.app.hasn_task import router as app_hasn_task_router
 from backend.app.hasn.api.v1.app.hasn_task_run import router as app_hasn_task_run_router
@@ -237,8 +236,6 @@ app.include_router(app_hasn_task_run_router, prefix='/hasn/task/runs', tags=['�
 app.include_router(
     app_hasn_owner_api_keys_router, prefix='/hasn/owner/api/keyss', tags=['HASN Owner API Key -HASN Owner API Key ']
 )
-# 社区自定义 API（替代 codegen 生成的 CRUD）
-app.include_router(app_community_router, prefix='/community', tags=['社区'])
 app.include_router(app_hasn_sessions_router, prefix='/hasn/sessionss', tags=['HASN 会话分层 - 逻辑会话-HASN 会话分层 - 逻辑会话'])
 app.include_router(app_hasn_session_events_router, prefix='/hasn/session/eventss', tags=['HASN 会话事件-HASN 会话事件'])
 app.include_router(app_hasn_session_artifacts_router, prefix='/hasn/session/artifactss', tags=['HASN 会话产物-HASN 会话产物'])

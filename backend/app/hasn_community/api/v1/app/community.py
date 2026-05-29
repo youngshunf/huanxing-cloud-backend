@@ -1,13 +1,13 @@
 """
 社区用户端 API
 
-路由前缀: /api/v1/hasn/app/community
+路由前缀: /api/v1/community/app（规范）；兼容别名 /api/v1/hasn/app/community
 认证方式: Owner JWT
 """
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from backend.app.hasn.service.community_service import community_service
+from backend.app.hasn_community.service.community_service import community_service
 from backend.common.response.response_schema import ResponseModel, response_base
 from backend.common.security.jwt import DependsJwtAuth
 from backend.database.db import CurrentSession, CurrentSessionTransaction

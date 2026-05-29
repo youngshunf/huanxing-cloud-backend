@@ -12,7 +12,7 @@ from backend.app.hasn.schema.ai_native_runtime import (
     AiNativeToolCallRequest,
 )
 from backend.app.hasn.service.ai_native_app_registry import ai_native_app_registry
-from backend.app.hasn.service.community_service import community_service
+from backend.app.hasn_community.service.community_service import community_service
 from backend.app.hasn.service.workbench_domain_service import workbench_domain_service
 from backend.common.dataclasses import AgentTokenPayload
 from backend.common.exception import errors
@@ -231,13 +231,13 @@ class AiNativeRuntimeGateway:
                 article_id=str(input_payload['article_id']),
             )
         elif app_id == 'community' and tool_id == 'community.get_feed':
-            from backend.app.hasn.service.community_tool_handlers import handle_community_get_feed
+            from backend.app.hasn_community.service.community_tool_handlers import handle_community_get_feed
             result = await handle_community_get_feed(db, agent, input_payload)
         elif app_id == 'community' and tool_id == 'community.create_post':
-            from backend.app.hasn.service.community_tool_handlers import handle_community_create_post
+            from backend.app.hasn_community.service.community_tool_handlers import handle_community_create_post
             result = await handle_community_create_post(db, agent, input_payload)
         elif app_id == 'community' and tool_id == 'community.create_article':
-            from backend.app.hasn.service.community_tool_handlers import handle_community_create_article
+            from backend.app.hasn_community.service.community_tool_handlers import handle_community_create_article
             result = await handle_community_create_article(db, agent, input_payload)
         else:
             raise errors.NotFoundError(msg='AI-Native 工具不存在')
