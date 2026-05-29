@@ -8,12 +8,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import Text, and_, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from backend.app.hasn.model import HasnAgents, HasnHumans
-from backend.app.hasn_community.model import HasnArticles, HasnCollectionItems, HasnCollections, HasnComments, HasnFollows, HasnLikes, HasnPosts
+from backend.app.hasn_community.model import HasnArticles, HasnCollectionItems, HasnCollections, HasnCommunityBlocks, HasnComments, HasnFollows, HasnLikes, HasnPosts
 from backend.common.dataclasses import AgentTokenPayload
 from backend.common.exception import errors
 from backend.database.db import uuid4_str
@@ -1750,70 +1750,115 @@ class CommunityService:
     async def get_recommended_agents(
         db: AsyncSession,
         *,
-        viewer_user_id: int,
+        viewer_user_id: int | None = None,
+        category: str | None = None,
+        sort: str = 'relevance',
+        capability: str | None = None,
+        cursor: str | None = None,
         limit: int = 3,
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """
-        获取推荐 Agent
+        获取推荐/广场 Agent（doc-13 §3.4，对应 D1/E-4 筛选）。
 
-        :param db: 数据库会话
-        :param viewer_user_id: 查看者用户 ID
-        :param limit: 返回数量
-        :return: 推荐 Agent 列表
+        - category/capability：按 capability_summary_json 文本匹配过滤（真实过滤）
+        - sort：relevance（粉丝数）/ collected（内容被收藏数）/ active（最近活跃）
+        - cursor：offset 分页
+        修复历史 bug：social_enabled（非 hasn_social_enabled）、follower_count 实时统计（无该列）。
+
+        :return: {items, next_cursor}
         """
-        # 查询活跃的 Agent（按粉丝数排序）
         OwnerHuman = aliased(HasnHumans)
+
+        # 实时粉丝数（相关子查询）
+        follower_sq = (
+            select(func.count())
+            .select_from(HasnFollows)
+            .where(
+                HasnFollows.target_type == 'agent',
+                HasnFollows.target_hasn_id == HasnAgents.hasn_id,
+            )
+            .correlate(HasnAgents)
+            .scalar_subquery()
+        )
+        # 内容被收藏数（相关子查询，用于 collected 排序）
+        collected_sq = (
+            select(func.coalesce(func.sum(HasnPosts.collect_count), 0))
+            .where(HasnPosts.author_hasn_id == HasnAgents.hasn_id)
+            .correlate(HasnAgents)
+            .scalar_subquery()
+        )
 
         stmt = (
             select(
                 HasnAgents,
                 OwnerHuman.hasn_id.label('owner_hasn_id'),
                 OwnerHuman.nickname.label('owner_nickname'),
+                follower_sq.label('follower_count'),
+                collected_sq.label('collected_count'),
             )
             .join(OwnerHuman, HasnAgents.owner_id == OwnerHuman.hasn_id)
-            .where(HasnAgents.hasn_social_enabled == True)  # noqa: E712
-            .order_by(HasnAgents.follower_count.desc())
-            .limit(limit)
+            .where(HasnAgents.social_enabled == True)  # noqa: E712
         )
 
-        result = await db.execute(stmt)
-        rows = result.all()
+        # 能力/分类过滤：capability_summary_json 文本匹配
+        keyword = capability or category
+        if keyword:
+            stmt = stmt.where(
+                cast(HasnAgents.capability_summary_json, Text).ilike(f'%{keyword}%')
+            )
 
-        # 查询当前用户是否已关注这些 Agent
-        from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+        # 排序
+        if sort == 'collected':
+            stmt = stmt.order_by(collected_sq.desc(), HasnAgents.created_time.desc())
+        elif sort == 'active':
+            stmt = stmt.order_by(HasnAgents.last_heartbeat_at.desc().nullslast(), HasnAgents.created_time.desc())
+        else:  # relevance
+            stmt = stmt.order_by(follower_sq.desc(), HasnAgents.created_time.desc())
 
-        viewer_human = await hasn_humans_dao.get_by_user_id(db, viewer_user_id)
-        viewer_hasn_id = viewer_human.hasn_id if viewer_human else None
+        # offset 游标
+        offset = int(cursor) if cursor else 0
+        stmt = stmt.offset(offset).limit(limit + 1)
+
+        rows = (await db.execute(stmt)).all()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+
+        viewer_hasn_id = await CommunityService._resolve_human_hasn_id(db, viewer_user_id)
 
         agents = []
         for row in rows:
             agent = row.HasnAgents
-
-            # 检查是否已关注
             is_following = False
             if viewer_hasn_id:
-                follow_stmt = select(HasnFollows).where(
-                    HasnFollows.follower_hasn_id == viewer_hasn_id,
-                    HasnFollows.target_type == 'agent',
-                    HasnFollows.target_hasn_id == agent.hasn_id,
-                )
-                follow_result = await db.execute(follow_stmt)
-                is_following = follow_result.scalars().first() is not None
+                is_following = (
+                    await db.execute(
+                        select(HasnFollows.id).where(
+                            HasnFollows.follower_hasn_id == viewer_hasn_id,
+                            HasnFollows.target_type == 'agent',
+                            HasnFollows.target_hasn_id == agent.hasn_id,
+                        ).limit(1)
+                    )
+                ).first() is not None
 
             agents.append({
                 'hasn_id': agent.hasn_id,
                 'display_name': agent.display_name,
                 'bio': agent.bio or '',
                 'avatar': agent.avatar,
+                'capability_summary': agent.capability_summary_json or {},
                 'owner': {
                     'hasn_id': row.owner_hasn_id,
                     'display_name': row.owner_nickname or row.owner_hasn_id,
                 },
-                'follower_count': agent.follower_count,
+                'follower_count': int(row.follower_count or 0),
+                'collected_count': int(row.collected_count or 0),
                 'is_following': is_following,
             })
 
-        return agents
+        return {
+            'items': agents,
+            'next_cursor': str(offset + limit) if has_more else None,
+        }
 
     # ==================== 待确认草稿 ====================
 
@@ -2486,6 +2531,129 @@ class CommunityService:
             'created_time': article.created_time.isoformat() if article.created_time else None,
             'published_time': article.published_time.isoformat() if article.published_time else None,
         }
+
+    # ==================== 个人社区设置 + 黑名单 ====================
+
+    @staticmethod
+    async def get_community_settings(db: AsyncSession, *, hasn_id: str) -> dict[str, Any]:
+        """读取个人社区设置（默认值与已存配置合并），doc-13 §2.3.1。"""
+        human = (
+            await db.execute(select(HasnHumans).where(HasnHumans.hasn_id == hasn_id))
+        ).scalar_one_or_none()
+        if not human:
+            raise errors.NotFoundError(msg='用户 HASN 身份不存在')
+        stored = human.community_settings if isinstance(human.community_settings, dict) else {}
+        merged = dict(DEFAULT_COMMUNITY_SETTINGS)
+        merged.update({k: v for k, v in stored.items() if k != 'notify'})
+        notify = dict(DEFAULT_COMMUNITY_SETTINGS['notify'])
+        if isinstance(stored.get('notify'), dict):
+            notify.update(stored['notify'])
+        merged['notify'] = notify
+        return merged
+
+    @staticmethod
+    async def update_community_settings(
+        db: AsyncSession, *, hasn_id: str, patch: dict[str, Any]
+    ) -> dict[str, Any]:
+        """部分更新个人社区设置，doc-13 §3.3。"""
+        human = (
+            await db.execute(select(HasnHumans).where(HasnHumans.hasn_id == hasn_id))
+        ).scalar_one_or_none()
+        if not human:
+            raise errors.NotFoundError(msg='用户 HASN 身份不存在')
+        current = dict(human.community_settings) if isinstance(human.community_settings, dict) else {}
+        for k, v in patch.items():
+            if k == 'notify' and isinstance(v, dict):
+                cur_notify = dict(current.get('notify') or {})
+                cur_notify.update(v)
+                current['notify'] = cur_notify
+            else:
+                current[k] = v
+        human.community_settings = current
+        await db.flush()
+        return await CommunityService.get_community_settings(db, hasn_id=hasn_id)
+
+    @staticmethod
+    async def list_blocks(db: AsyncSession, *, blocker_hasn_id: str) -> dict[str, Any]:
+        """黑名单列表，doc-13 §3.3。"""
+        rows = (
+            await db.execute(
+                select(HasnCommunityBlocks)
+                .where(HasnCommunityBlocks.blocker_hasn_id == blocker_hasn_id)
+                .order_by(HasnCommunityBlocks.created_time.desc())
+            )
+        ).scalars().all()
+        return {
+            'items': [
+                {
+                    'blocked_hasn_id': b.blocked_hasn_id,
+                    'blocked_type': b.blocked_type,
+                    'reason': b.reason,
+                    'created_time': b.created_time.isoformat() if b.created_time else None,
+                }
+                for b in rows
+            ]
+        }
+
+    @staticmethod
+    async def add_block(
+        db: AsyncSession,
+        *,
+        blocker_hasn_id: str,
+        blocked_hasn_id: str,
+        blocked_type: str = 'human',
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """拉黑（幂等），doc-13 §3.3。"""
+        if blocked_hasn_id == blocker_hasn_id:
+            raise errors.RequestError(msg='不能拉黑自己')
+        existing = (
+            await db.execute(
+                select(HasnCommunityBlocks).where(
+                    HasnCommunityBlocks.blocker_hasn_id == blocker_hasn_id,
+                    HasnCommunityBlocks.blocked_hasn_id == blocked_hasn_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing:
+            return {'blocked_hasn_id': blocked_hasn_id, 'blocked': True}
+        db.add(
+            HasnCommunityBlocks(
+                blocker_hasn_id=blocker_hasn_id,
+                blocked_hasn_id=blocked_hasn_id,
+                blocked_type=blocked_type,
+                reason=reason,
+            )
+        )
+        await db.flush()
+        return {'blocked_hasn_id': blocked_hasn_id, 'blocked': True}
+
+    @staticmethod
+    async def remove_block(
+        db: AsyncSession, *, blocker_hasn_id: str, blocked_hasn_id: str
+    ) -> dict[str, Any]:
+        """解除拉黑，doc-13 §3.3。"""
+        block = (
+            await db.execute(
+                select(HasnCommunityBlocks).where(
+                    HasnCommunityBlocks.blocker_hasn_id == blocker_hasn_id,
+                    HasnCommunityBlocks.blocked_hasn_id == blocked_hasn_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if block:
+            await db.delete(block)
+            await db.flush()
+        return {'blocked_hasn_id': blocked_hasn_id, 'blocked': False}
+
+
+DEFAULT_COMMUNITY_SETTINGS: dict[str, Any] = {
+    'show_profile': True,
+    'searchable': True,
+    'allow_follow': True,
+    'default_comment_policy': 'all',
+    'notify': {'like': True, 'comment': True, 'follow': True, 'collect': True},
+}
 
 
 community_service = CommunityService()

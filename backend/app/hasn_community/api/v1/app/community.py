@@ -1082,14 +1082,22 @@ async def get_trending_topics(
 async def get_recommended_agents(
     request: Request,
     db: CurrentSession,
+    category: str | None = None,
+    sort: str = 'relevance',
+    capability: str | None = None,
+    cursor: str | None = None,
     limit: int = 3,
 ) -> ResponseModel:
-    """获取推荐 Agent"""
+    """获取推荐/广场 Agent（支持 category/sort/capability 筛选 + 游标分页）"""
     user_id = request.user.id
 
     result = await community_service.get_recommended_agents(
         db,
         viewer_user_id=user_id,
+        category=category,
+        sort=sort,
+        capability=capability,
+        cursor=cursor,
         limit=limit,
     )
 
@@ -1366,3 +1374,110 @@ async def notification_mark_read(
     hasn_id = await _require_human_hasn_id(db, request.user.id)
     await notification_service.mark_read(db, recipient_hasn_id=hasn_id, notification_id=notification_id)
     return response_base.success()
+
+
+# ==================== 个人社区设置 + 黑名单 ====================
+
+
+class UpdateCommunitySettingsRequest(BaseModel):
+    """更新个人社区设置请求（部分字段 patch）"""
+
+    show_profile: bool | None = Field(default=None, description='是否公开个人主页')
+    searchable: bool | None = Field(default=None, description='是否可被搜索')
+    allow_follow: bool | None = Field(default=None, description='是否允许被关注')
+    default_comment_policy: str | None = Field(default=None, description='默认评论策略 all/followers/closed')
+    notify: dict | None = Field(default=None, description='通知开关 {like,comment,follow,collect}')
+
+
+class AddBlockRequest(BaseModel):
+    """拉黑请求"""
+
+    blocked_hasn_id: str = Field(description='被拉黑对象 hasn_id')
+    blocked_type: str = Field(default='human', description='被拉黑对象类型 human/agent')
+    reason: str | None = Field(default=None, description='拉黑原因（可选）', max_length=200)
+
+
+@router.get(
+    '/settings/profile',
+    summary='读取个人社区设置',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_community_settings(request: Request, db: CurrentSession) -> ResponseModel:
+    """读取个人社区设置"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.get_community_settings(db, hasn_id=hasn_id)
+    return response_base.success(data=result)
+
+
+@router.put(
+    '/settings/profile',
+    summary='更新个人社区设置',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def update_community_settings(
+    request: Request,
+    db: CurrentSessionTransaction,
+    body: UpdateCommunitySettingsRequest,
+) -> ResponseModel:
+    """更新个人社区设置（部分 patch）"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    patch = body.model_dump(exclude_none=True)
+    result = await community_service.update_community_settings(db, hasn_id=hasn_id, patch=patch)
+    return response_base.success(data=result)
+
+
+@router.get(
+    '/settings/blocks',
+    summary='黑名单列表',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def list_blocks(request: Request, db: CurrentSession) -> ResponseModel:
+    """黑名单列表"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.list_blocks(db, blocker_hasn_id=hasn_id)
+    return response_base.success(data=result)
+
+
+@router.post(
+    '/settings/blocks',
+    summary='拉黑',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def add_block(
+    request: Request,
+    db: CurrentSessionTransaction,
+    body: AddBlockRequest,
+) -> ResponseModel:
+    """拉黑"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.add_block(
+        db,
+        blocker_hasn_id=hasn_id,
+        blocked_hasn_id=body.blocked_hasn_id,
+        blocked_type=body.blocked_type,
+        reason=body.reason,
+    )
+    return response_base.success(data=result)
+
+
+@router.delete(
+    '/settings/blocks/{blocked_hasn_id}',
+    summary='解除拉黑',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def remove_block(
+    request: Request,
+    db: CurrentSessionTransaction,
+    blocked_hasn_id: str,
+) -> ResponseModel:
+    """解除拉黑"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.remove_block(
+        db, blocker_hasn_id=hasn_id, blocked_hasn_id=blocked_hasn_id
+    )
+    return response_base.success(data=result)
