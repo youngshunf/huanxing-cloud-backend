@@ -47,6 +47,8 @@ class MarketplaceSkill(Base):
     author_name: Mapped[str | None] = mapped_column(sa.String(100), default=None, comment='作者名称')
     category: Mapped[str | None] = mapped_column(sa.String(50), default=None, comment='分类')
     tags: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='标签，JSON数组字符串')
+    tags_en: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='英文标签，JSON数组字符串')
+    tags_zh: Mapped[str | None] = mapped_column(UniversalText, default=None, comment='中文标签，JSON数组字符串')
     source_type: Mapped[str | None] = mapped_column(
         sa.String(20),
         default='github',

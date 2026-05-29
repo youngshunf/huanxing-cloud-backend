@@ -32,7 +32,9 @@ class MarketplaceSkillSchemaBase(SchemaBase):
     author_id: int | None = Field(None, description='作者用户ID')
     author_name: str | None = Field(None, description='作者名称')
     category: str | None = Field(None, description='分类')
-    tags: str | None = Field(None, description='标签，逗号分隔')
+    tags: str | None = Field(None, description='默认标签，JSON数组字符串')
+    tags_en: str | None = Field(None, description='英文标签，JSON数组字符串')
+    tags_zh: str | None = Field(None, description='中文标签，JSON数组字符串')
     source_type: str | None = Field(
         'github',
         description='来源类型 (huanxing:幻形自研:purple/github:GitHub:blue/clawhub:ClawHub:green)',

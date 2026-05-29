@@ -7,7 +7,9 @@ ADD COLUMN IF NOT EXISTS name_en varchar(200),
 ADD COLUMN IF NOT EXISTS name_zh varchar(200),
 ADD COLUMN IF NOT EXISTS description_en text,
 ADD COLUMN IF NOT EXISTS description_zh text,
-ADD COLUMN IF NOT EXISTS source_language varchar(10);
+ADD COLUMN IF NOT EXISTS source_language varchar(10),
+ADD COLUMN IF NOT EXISTS tags_en text,
+ADD COLUMN IF NOT EXISTS tags_zh text;
 
 -- 如果存在旧的 name 和 description 字段，迁移数据
 DO $$
@@ -41,8 +43,9 @@ COMMENT ON COLUMN marketplace_skill.name_zh IS '中文名称';
 COMMENT ON COLUMN marketplace_skill.description_en IS '英文描述';
 COMMENT ON COLUMN marketplace_skill.description_zh IS '中文描述';
 COMMENT ON COLUMN marketplace_skill.source_language IS '原始语言 (en/zh)';
+COMMENT ON COLUMN marketplace_skill.tags_en IS '英文标签，JSON数组字符串';
+COMMENT ON COLUMN marketplace_skill.tags_zh IS '中文标签，JSON数组字符串';
 
 -- 添加普通索引用于搜索（不使用全文搜索）
 CREATE INDEX IF NOT EXISTS idx_marketplace_skill_name_zh ON marketplace_skill(name_zh);
 CREATE INDEX IF NOT EXISTS idx_marketplace_skill_name_en ON marketplace_skill(name_en);
-

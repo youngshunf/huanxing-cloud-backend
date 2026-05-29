@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -39,6 +41,7 @@ from backend.app.marketplace.service.translation_service import translation_serv
 from backend.app.marketplace.schema.marketplace_skill import CreateMarketplaceSkillParam, UpdateMarketplaceSkillParam
 from backend.app.marketplace.service.marketplace_skill_service import marketplace_skill_service
 from backend.app.marketplace.service.marketplace_template_service import marketplace_template_service
+from backend.app.marketplace.service.translation_service import TranslationService
 from backend.app.router import router as app_router
 from backend.common.exception import errors
 from backend.common.exception.errors import BaseExceptionError
@@ -399,6 +402,20 @@ def test_namespaced_resource_id_columns_are_wide_enough() -> None:
 def test_marketplace_skill_sync_timestamps_are_timezone_aware() -> None:
     assert MarketplaceSkill.__table__.c.synced_at.type.timezone is True
     assert MarketplaceSkill.__table__.c.translated_at.type.timezone is True
+
+
+def test_marketplace_skill_has_bilingual_tag_columns() -> None:
+    assert 'tags_en' in MarketplaceSkill.__table__.c
+    assert 'tags_zh' in MarketplaceSkill.__table__.c
+
+    sql_root = Path(__file__).resolve().parents[1] / 'backend' / 'sql' / 'marketplace'
+    table_sql = (sql_root / 'tables' / 'marketplace_skill.sql').read_text()
+    migration_sql = (sql_root / 'migrations' / '2026-05-29-marketplace-skill-bilingual-tags.sql').read_text()
+
+    assert '"tags_en" text' in table_sql
+    assert '"tags_zh" text' in table_sql
+    assert 'ADD COLUMN IF NOT EXISTS "tags_en" text' in migration_sql
+    assert 'ADD COLUMN IF NOT EXISTS "tags_zh" text' in migration_sql
 
 
 def test_user_skill_publish_review_open_download_and_unpublish_e2e(client: TestClient) -> None:
@@ -972,6 +989,8 @@ def test_marketplace_skill_sync_params_preserve_sync_metadata() -> None:
         'description_zh': 'Git helper',
         'source_language': 'en',
         'tags': '["git"]',
+        'tags_en': '["git"]',
+        'tags_zh': '["Git"]',
         'source_type': 'github',
         'pricing_type': 'free',
         'price': Decimal('0'),
@@ -989,9 +1008,112 @@ def test_marketplace_skill_sync_params_preserve_sync_metadata() -> None:
         data = schema_cls(**payload).model_dump()
 
         assert data['star_count'] == 8
+        assert data['tags_en'] == '["git"]'
+        assert data['tags_zh'] == '["Git"]'
         assert data['git_commit_hash'] == 'abc123'
         assert data['synced_at'] == synced_at
         assert data['translated_at'] == translated_at
+
+
+def test_translation_service_parses_sse_chat_completion_chunks() -> None:
+    raw = (
+        'data: {"choices":[{"delta":{"content":"{\\"ok\\":"}}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"true}"}}]}\n\n'
+        'data: [DONE]\n\n'
+    )
+
+    parsed = TranslationService._parse_sse_chat_response(raw)
+
+    assert TranslationService._extract_chat_content(parsed) == '{"ok":true}'
+
+
+@pytest.mark.asyncio
+async def test_translation_service_falls_back_when_primary_model_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = TranslationService()
+    calls: list[str] = []
+
+    class _Response:
+        def __init__(self, model: str) -> None:
+            self.status_code = 200
+            self.headers = {'content-type': 'application/json'}
+            self.text = ''
+            self._model = model
+
+        def json(self) -> dict[str, Any]:
+            if self._model == 'primary-model':
+                return {'choices': []}
+            return {'choices': [{'message': {'content': '{"ok":true}'}}]}
+
+    class _Client:
+        def __init__(self, **_kwargs: Any) -> None:
+            return None
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def post(self, _url: str, *, json: dict[str, Any], headers: dict[str, str]) -> _Response:
+            calls.append(json['model'])
+            return _Response(json['model'])
+
+    monkeypatch.setattr('backend.app.marketplace.service.translation_service.httpx.AsyncClient', _Client)
+    monkeypatch.setattr('backend.app.marketplace.service.translation_service.settings.TRANSLATION_MODEL', 'primary-model')
+    monkeypatch.setattr(
+        'backend.app.marketplace.service.translation_service.settings.TRANSLATION_FALLBACK_MODEL',
+        'fallback-model',
+        raising=False,
+    )
+
+    content = await service._complete_chat([{'role': 'user', 'content': 'json'}], response_format={'type': 'json_object'})
+
+    assert content == '{"ok":true}'
+    assert calls == ['primary-model', 'primary-model', 'fallback-model']
+
+
+@pytest.mark.asyncio
+async def test_translation_service_normalizes_metadata_with_llm_tags(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = TranslationService()
+
+    async def _llm(
+        _messages: list[dict[str, str]],
+        max_tokens: int = 1000,
+        *,
+        response_format: dict[str, str] | None = None,
+    ) -> str:
+        assert response_format == {'type': 'json_object'}
+        return json.dumps({
+            'source_language': 'zh',
+            'target_language': 'en',
+            'name_en': 'Deals Finder',
+            'name_zh': '虾虾优惠',
+            'description_en': 'Cross-platform price comparison and coupon aggregation.',
+            'description_zh': '跨平台电商比价与优惠券聚合工具。',
+            'tags_en': ['price comparison', 'coupons', 'shopping'],
+            'tags_zh': ['比价', '优惠券', '购物'],
+        }, ensure_ascii=False)
+
+    monkeypatch.setattr(service, '_complete_chat', _llm)
+
+    normalized = await service.translate_skill_metadata(
+        name='虾虾优惠',
+        description='跨平台电商比价与优惠券聚合工具。',
+        tag_hints=['1.6.2', 'coupon', 'shopping'],
+    )
+
+    assert normalized == {
+        'source_language': 'zh',
+        'target_language': 'en',
+        'name_en': 'Deals Finder',
+        'name_zh': '虾虾优惠',
+        'description_en': 'Cross-platform price comparison and coupon aggregation.',
+        'description_zh': '跨平台电商比价与优惠券聚合工具。',
+        'tags_en': ['price comparison', 'coupons', 'shopping'],
+        'tags_zh': ['比价', '优惠券', '购物'],
+    }
 
 
 def test_clawhub_filter_selects_top_100_by_rating_without_minimums() -> None:
@@ -1023,20 +1145,20 @@ def test_clawhub_filter_selects_top_100_by_rating_without_minimums() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clawhub_sync_preserves_name_and_json_tags(
+async def test_clawhub_sync_uses_owner_handle_and_llm_bilingual_tags(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = ClawHubSyncService()
 
     async def _owner(_slug: str) -> str:
-        return 'owner'
+        return 'cheese9102'
 
     async def _category(_db: AsyncSession, _name: str, _description: str) -> str:
         return 'productivity'
 
     async def _download(**_kwargs: Any) -> str:
-        return 'clawhub/owner/demo-skill'
+        return 'clawhub/cheese9102/xiaxiayouhui-deals'
 
     async def _translate(name: str | None = None, description: str | None = None, **_kwargs: Any) -> dict[str, str]:
         return {
@@ -1045,6 +1167,9 @@ async def test_clawhub_sync_preserves_name_and_json_tags(
             'description_en': description,
             'description_zh': description,
             'source_language': 'en',
+            'target_language': 'zh',
+            'tags_en': ['price comparison', 'coupons', 'shopping'],
+            'tags_zh': ['比价', '优惠券', '购物'],
         }
 
     monkeypatch.setattr(service, '_get_skill_owner', _owner)
@@ -1055,25 +1180,60 @@ async def test_clawhub_sync_preserves_name_and_json_tags(
     await service._sync_skill(
         db_session,
         {
-            'slug': 'demo-skill',
-            'displayName': 'Demo Skill',
-            'summary': 'Demo helper',
+            'slug': 'xiaxiayouhui-deals',
+            'displayName': 'Publish',
+            'summary': '跨平台电商比价与优惠券聚合工具。',
             'stats': {'downloads': 42, 'stars': 7},
-            'tags': {'latest': ['demo', 'helper']},
-            'latestVersion': {'version': '1.2.3', 'changelog': 'Initial', 'createdAt': 1780045762056},
+            'tags': {'latest': '1.6.2', 'coupon': '1.5.8', 'shopping': '1.5.8'},
+            'latestVersion': {'version': '1.6.2', 'changelog': 'Initial', 'createdAt': 1780045762056},
         },
     )
     await db_session.flush()
 
     skill = await db_session.get(MarketplaceSkill, 1)
     assert skill is not None
-    assert skill.name == 'Demo Skill'
-    assert skill.tags == '["demo", "helper"]'
-    assert skill.repo_path == 'clawhub/owner/demo-skill'
+    assert skill.skill_id == 'clawhub/cheese9102/xiaxiayouhui-deals'
+    assert skill.namespace == 'clawhub/cheese9102'
+    assert skill.author_name == 'cheese9102'
+    assert skill.name == 'Publish'
+    assert json.loads(skill.tags) == ['price comparison', 'coupons', 'shopping']
+    assert json.loads(skill.tags_en) == ['price comparison', 'coupons', 'shopping']
+    assert json.loads(skill.tags_zh) == ['比价', '优惠券', '购物']
+    assert '1.6.2' not in skill.tags
+    assert skill.repo_path == 'clawhub/cheese9102/xiaxiayouhui-deals'
     assert skill.star_count == 7
     assert skill.download_count == 42
     assert skill.synced_at is not None
     assert skill.translated_at is not None
+
+
+@pytest.mark.asyncio
+async def test_clawhub_owner_reads_value_page_owner_handle(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = ClawHubSyncService()
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {'value': {'page': [{'ownerHandle': 'adwilkinson'}]}}
+
+    class _Client:
+        def __init__(self, **_kwargs: Any) -> None:
+            return None
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def get(self, _url: str) -> _Response:
+            return _Response()
+
+    monkeypatch.setattr('backend.app.marketplace.service.clawhub_sync_service.httpx.AsyncClient', _Client)
+
+    assert await service._get_skill_owner('oneshot-ship') == 'adwilkinson'
 
 
 @pytest.mark.asyncio
@@ -1140,12 +1300,74 @@ async def test_huanxing_hub_sync_uses_huanxing_and_github_roots_only(
     assert by_id['huanxing/finance/advisor']['source_type'] == 'huanxing'
     assert by_id['huanxing/finance/advisor']['version'] == '1.4.0'
     assert by_id['huanxing/finance/advisor']['name'] == 'Finance Advisor'
-    assert by_id['huanxing/finance/advisor']['tags'] == '["finance", "advisor"]'
+    assert by_id['huanxing/finance/advisor']['tag_hints'] == ['finance', 'advisor']
     assert by_id['huanxing/finance/advisor']['icon_path'].name == 'icon.svg'
     assert 'clawhub/mnetfairy/ai-insurance-advisor' not in by_id
     assert 'github/anthropics-skills/template' not in by_id
     assert by_id['github/anthropics-skills/git']['namespace'] == 'github/anthropics-skills'
     assert by_id['github/anthropics-skills/git']['repo_path'] == 'github/anthropics-skills/skills/git'
+    assert by_id['github/anthropics-skills/git']['tag_hints'] == ['git', 'mcp']
+
+
+@pytest.mark.asyncio
+async def test_github_and_huanxing_sync_use_llm_bilingual_tags(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = GitHubSyncService()
+
+    async def _translate(name: str | None = None, description: str | None = None, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            'name_en': name,
+            'name_zh': f'{name} 中文',
+            'description_en': description,
+            'description_zh': f'{description} 中文',
+            'source_language': 'en',
+            'target_language': 'zh',
+            'tags_en': ['git', 'automation'],
+            'tags_zh': ['Git', '自动化'],
+        }
+
+    monkeypatch.setattr(translation_service, 'translate_skill_metadata', _translate)
+    async def _icon(_db: AsyncSession, _skill_data: dict[str, Any]) -> None:
+        return None
+
+    monkeypatch.setattr(service, '_resolve_icon_url', _icon)
+
+    await service._sync_skill(
+        db_session,
+        {
+            'skill_id': 'github/anthropics-skills/git',
+            'namespace': 'github/anthropics-skills',
+            'slug': 'git',
+            'category': None,
+            'repo_path': 'github/anthropics-skills/skills/git',
+            'git_commit_hash': 'abc123',
+            'icon_url': None,
+            'icon_path': None,
+            'emoji': None,
+            'author_name': 'Anthropic',
+            'tag_hints': ['git', 'mcp'],
+            'pricing_type': 'free',
+            'price': 0,
+            'is_official': False,
+            'is_private': False,
+            'source_type': 'github',
+            'source_language': 'en',
+            'name': 'Git Skill',
+            'description': 'Git helper',
+            'version': '1.0.0',
+            'changelog': 'Version 1.0.0',
+            'versions': [{'version': '1.0.0', 'is_latest': True}],
+        },
+    )
+    await db_session.flush()
+
+    skill = await db_session.get(MarketplaceSkill, 1)
+    assert skill is not None
+    assert skill.tags == '["git", "automation"]'
+    assert skill.tags_en == '["git", "automation"]'
+    assert skill.tags_zh == '["Git", "自动化"]'
 
 
 @pytest.mark.asyncio

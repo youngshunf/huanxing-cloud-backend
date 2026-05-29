@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS "public"."marketplace_skill" (
   "author_name" varchar(100),
   "category" varchar(50),
   "tags" text,
+  "tags_en" text,
+  "tags_zh" text,
   "pricing_type" varchar(20) DEFAULT 'free',
   "price" numeric(10, 2) DEFAULT 0,
   "is_private" bool DEFAULT false,
@@ -49,7 +51,9 @@ COMMENT ON COLUMN "public"."marketplace_skill"."emoji" IS 'emoji图标';
 COMMENT ON COLUMN "public"."marketplace_skill"."author_id" IS '作者用户ID';
 COMMENT ON COLUMN "public"."marketplace_skill"."author_name" IS '作者名称';
 COMMENT ON COLUMN "public"."marketplace_skill"."category" IS '分类';
-COMMENT ON COLUMN "public"."marketplace_skill"."tags" IS '标签，JSON数组字符串';
+COMMENT ON COLUMN "public"."marketplace_skill"."tags" IS '默认标签，JSON数组字符串';
+COMMENT ON COLUMN "public"."marketplace_skill"."tags_en" IS '英文标签，JSON数组字符串';
+COMMENT ON COLUMN "public"."marketplace_skill"."tags_zh" IS '中文标签，JSON数组字符串';
 COMMENT ON COLUMN "public"."marketplace_skill"."pricing_type" IS '定价类型 (free:免费:green/paid:付费:orange)';
 COMMENT ON COLUMN "public"."marketplace_skill"."price" IS '价格';
 COMMENT ON COLUMN "public"."marketplace_skill"."is_private" IS '是否私有';

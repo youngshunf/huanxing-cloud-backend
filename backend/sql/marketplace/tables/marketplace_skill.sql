@@ -26,7 +26,9 @@ CREATE TABLE "public"."marketplace_skill" (
   "author_id" int8,
   "author_name" varchar(100) COLLATE "pg_catalog"."default",
   "category" varchar(50) COLLATE "pg_catalog"."default",
-  "tags" varchar(500) COLLATE "pg_catalog"."default",
+  "tags" text COLLATE "pg_catalog"."default",
+  "tags_en" text COLLATE "pg_catalog"."default",
+  "tags_zh" text COLLATE "pg_catalog"."default",
   "source_type" varchar(20) COLLATE "pg_catalog"."default" DEFAULT 'github',
   "source_repo_url" varchar(500) COLLATE "pg_catalog"."default",
   "source_repo_path" varchar(500) COLLATE "pg_catalog"."default",
@@ -81,7 +83,9 @@ COMMENT ON COLUMN "public"."marketplace_skill"."emoji" IS 'emoji图标';
 COMMENT ON COLUMN "public"."marketplace_skill"."author_id" IS '作者用户ID';
 COMMENT ON COLUMN "public"."marketplace_skill"."author_name" IS '作者名称';
 COMMENT ON COLUMN "public"."marketplace_skill"."category" IS '分类';
-COMMENT ON COLUMN "public"."marketplace_skill"."tags" IS '标签，逗号分隔';
+COMMENT ON COLUMN "public"."marketplace_skill"."tags" IS '默认标签，JSON数组字符串';
+COMMENT ON COLUMN "public"."marketplace_skill"."tags_en" IS '英文标签，JSON数组字符串';
+COMMENT ON COLUMN "public"."marketplace_skill"."tags_zh" IS '中文标签，JSON数组字符串';
 COMMENT ON COLUMN "public"."marketplace_skill"."source_type" IS '来源类型 (huanxing:幻形自研:purple/github:GitHub:blue/clawhub:ClawHub:green)';
 COMMENT ON COLUMN "public"."marketplace_skill"."source_repo_url" IS '源仓库 URL';
 COMMENT ON COLUMN "public"."marketplace_skill"."source_repo_path" IS '仓库内路径（如 huanxing-skills/productivity/translator-pro）';

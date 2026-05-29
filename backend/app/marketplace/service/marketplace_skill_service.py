@@ -44,6 +44,11 @@ def _normalize_tags_for_storage(tags: Any) -> str | None:
     return json.dumps([value for value in values if value], ensure_ascii=False)
 
 
+def _localized_tags_for_storage(tags: Any) -> tuple[str | None, str | None, str | None]:
+    stored = _normalize_tags_for_storage(tags)
+    return stored, stored, stored
+
+
 class MarketplaceSkillService:
     @staticmethod
     async def get(*, db: AsyncSession, pk: int) -> MarketplaceSkill:
@@ -103,6 +108,8 @@ class MarketplaceSkillService:
             'author_name': skill.author_name,
             'category': skill.category,
             'tags': skill.tags,
+            'tags_en': skill.tags_en,
+            'tags_zh': skill.tags_zh,
             'source_type': skill.source_type,
             'pricing_type': skill.pricing_type,
             'price': float(skill.price) if skill.price is not None else 0,
@@ -187,7 +194,7 @@ class MarketplaceSkillService:
             )
 
         skill = await marketplace_skill_dao.get_by_namespace_slug_for_user(db, namespace, final_slug, user_id)
-        tags = json.dumps(metadata.get('tags', []), ensure_ascii=False)
+        tags, tags_en, tags_zh = _localized_tags_for_storage(metadata.get('tags', []))
         if skill:
             skill.name = str(metadata.get('name'))
             skill.name_en = str(metadata.get('name'))
@@ -196,6 +203,8 @@ class MarketplaceSkillService:
             skill.description_zh = str(metadata.get('description'))
             skill.category = metadata.get('category')
             skill.tags = tags
+            skill.tags_en = tags_en
+            skill.tags_zh = tags_zh
             skill.icon_url = icon_url or skill.icon_url
             skill.emoji = metadata.get('emoji')
             skill.status = 'draft'
@@ -223,6 +232,8 @@ class MarketplaceSkillService:
                 author_name=metadata.get('author') or hasn_id,
                 category=metadata.get('category'),
                 tags=tags,
+                tags_en=tags_en,
+                tags_zh=tags_zh,
                 source_type='user',
                 pricing_type='free',
                 price=Decimal(0),
@@ -387,7 +398,7 @@ class MarketplaceSkillService:
         if 'category' in payload:
             skill.category = payload['category']
         if 'tags' in payload:
-            skill.tags = _normalize_tags_for_storage(payload['tags'])
+            skill.tags, skill.tags_en, skill.tags_zh = _localized_tags_for_storage(payload['tags'])
         if 'emoji' in payload:
             skill.emoji = payload['emoji']
         if 'icon_url' in payload:

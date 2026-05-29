@@ -86,6 +86,8 @@ async def search(
                 MarketplaceSkill.description_en.ilike(search_pattern),
                 MarketplaceSkill.skill_id.ilike(search_pattern),
                 MarketplaceSkill.tags.ilike(search_pattern),
+                MarketplaceSkill.tags_en.ilike(search_pattern),
+                MarketplaceSkill.tags_zh.ilike(search_pattern),
                 MarketplaceSkill.category.ilike(search_pattern),
             )
         )

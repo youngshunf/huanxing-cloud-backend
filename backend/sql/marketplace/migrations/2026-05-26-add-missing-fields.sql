@@ -23,6 +23,8 @@ ADD COLUMN IF NOT EXISTS name_zh varchar(200),
 ADD COLUMN IF NOT EXISTS description_en text,
 ADD COLUMN IF NOT EXISTS description_zh text,
 ADD COLUMN IF NOT EXISTS source_language varchar(10),
+ADD COLUMN IF NOT EXISTS tags_en text,
+ADD COLUMN IF NOT EXISTS tags_zh text,
 ADD COLUMN IF NOT EXISTS source_type varchar(20) DEFAULT 'github',
 ADD COLUMN IF NOT EXISTS source_repo_url varchar(500),
 ADD COLUMN IF NOT EXISTS source_repo_path varchar(500);
@@ -69,6 +71,8 @@ COMMENT ON COLUMN marketplace_skill.name_zh IS '中文名称';
 COMMENT ON COLUMN marketplace_skill.description_en IS '英文描述';
 COMMENT ON COLUMN marketplace_skill.description_zh IS '中文描述';
 COMMENT ON COLUMN marketplace_skill.source_language IS '源语言（en/zh）';
+COMMENT ON COLUMN marketplace_skill.tags_en IS '英文标签，JSON数组字符串';
+COMMENT ON COLUMN marketplace_skill.tags_zh IS '中文标签，JSON数组字符串';
 COMMENT ON COLUMN marketplace_skill.source_type IS '来源类型 (huanxing/github/clawhub)';
 COMMENT ON COLUMN marketplace_skill.source_repo_url IS '源仓库 URL';
 COMMENT ON COLUMN marketplace_skill.source_repo_path IS '仓库内路径';

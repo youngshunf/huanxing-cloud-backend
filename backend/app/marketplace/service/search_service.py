@@ -110,7 +110,11 @@ class SearchService:
             query = query.where(MarketplaceSkill.namespace == namespace)
         if tags:
             for tag in tags:
-                query = query.where(MarketplaceSkill.tags.contains(tag))
+                query = query.where(or_(
+                    MarketplaceSkill.tags.contains(tag),
+                    MarketplaceSkill.tags_en.contains(tag),
+                    MarketplaceSkill.tags_zh.contains(tag),
+                ))
         return query
 
     def _skill_keyword_clause(self, keyword: str, lang: str) -> Any:
@@ -125,6 +129,8 @@ class SearchService:
             MarketplaceSkill.name.ilike(f'%{keyword}%'),
             MarketplaceSkill.skill_id.ilike(f'%{keyword}%'),
             MarketplaceSkill.tags.ilike(f'%{keyword}%'),
+            MarketplaceSkill.tags_en.ilike(f'%{keyword}%'),
+            MarketplaceSkill.tags_zh.ilike(f'%{keyword}%'),
         )
 
     def _order_skills(self, query: Any, sort_by: str) -> Any:
@@ -345,6 +351,10 @@ class SearchService:
         if not description:
             description = skill.description_en if lang == 'zh' else skill.description_zh
 
+        tags = skill.tags_zh if lang == 'zh' else skill.tags_en
+        if not tags:
+            tags = skill.tags
+
         result = {
             'skill_id': skill.skill_id,
             'namespace': skill.namespace,
@@ -355,7 +365,9 @@ class SearchService:
             'emoji': skill.emoji,
             'author_name': skill.author_name,
             'category': skill.category,
-            'tags': skill.tags,
+            'tags': tags,
+            'tags_en': skill.tags_en,
+            'tags_zh': skill.tags_zh,
             'download_count': skill.download_count,
             'star_count': skill.star_count,
             'is_official': skill.is_official,

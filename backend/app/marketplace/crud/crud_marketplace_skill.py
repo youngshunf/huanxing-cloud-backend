@@ -174,7 +174,11 @@ class CRUDMarketplaceSkill(CRUDPlus[MarketplaceSkill]):
         if category:
             stmt = stmt.where(MarketplaceSkill.category == category)
         if tags:
-            stmt = stmt.where(MarketplaceSkill.tags.contains(tags))
+            stmt = stmt.where(or_(
+                MarketplaceSkill.tags.contains(tags),
+                MarketplaceSkill.tags_en.contains(tags),
+                MarketplaceSkill.tags_zh.contains(tags),
+            ))
         if pricing_type:
             stmt = stmt.where(MarketplaceSkill.pricing_type == pricing_type)
         if is_official is not None:
@@ -216,6 +220,8 @@ class CRUDMarketplaceSkill(CRUDPlus[MarketplaceSkill]):
                 MarketplaceSkill.description_en.ilike(f'%{keyword}%'),
                 MarketplaceSkill.skill_id.ilike(f'%{keyword}%'),
                 MarketplaceSkill.tags.ilike(f'%{keyword}%'),
+                MarketplaceSkill.tags_en.ilike(f'%{keyword}%'),
+                MarketplaceSkill.tags_zh.ilike(f'%{keyword}%'),
                 MarketplaceSkill.category.ilike(f'%{keyword}%'),
             ),
         )
