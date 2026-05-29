@@ -5,9 +5,10 @@
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -23,6 +24,53 @@ class CommunityService:
     """社区服务类"""
 
     @staticmethod
+    async def _resolve_human_hasn_id(db: AsyncSession, user_id: int | None) -> str | None:
+        """由 user_id 解析当前操作者的 human hasn_id（open scope 无身份时返回 None）。"""
+        if user_id is None:
+            return None
+        return (
+            await db.execute(select(HasnHumans.hasn_id).where(HasnHumans.user_id == user_id))
+        ).scalar_one_or_none()
+
+    @staticmethod
+    async def _batch_reactions(
+        db: AsyncSession,
+        viewer_hasn_id: str | None,
+        target_type: str,
+        target_ids: list[str],
+    ) -> tuple[set[str], set[str]]:
+        """批量查询 viewer 对一批目标的点赞/收藏态，返回 (liked_ids, collected_ids)。"""
+        liked: set[str] = set()
+        collected: set[str] = set()
+        if not viewer_hasn_id or not target_ids:
+            return liked, collected
+
+        liked_rows = (
+            await db.execute(
+                select(HasnLikes.target_id).where(
+                    HasnLikes.user_hasn_id == viewer_hasn_id,
+                    HasnLikes.target_type == target_type,
+                    HasnLikes.target_id.in_(target_ids),
+                )
+            )
+        ).scalars().all()
+        liked = set(liked_rows)
+
+        collected_rows = (
+            await db.execute(
+                select(HasnCollectionItems.target_id)
+                .join(HasnCollections, HasnCollectionItems.collection_id == HasnCollections.collection_id)
+                .where(
+                    HasnCollections.owner_hasn_id == viewer_hasn_id,
+                    HasnCollectionItems.target_type == target_type,
+                    HasnCollectionItems.target_id.in_(target_ids),
+                )
+            )
+        ).scalars().all()
+        collected = set(collected_rows)
+        return liked, collected
+
+    @staticmethod
     async def get_feed(
         db: AsyncSession,
         *,
@@ -34,19 +82,25 @@ class CommunityService:
         """
         获取社区信息流
 
+        - following：仅当前用户关注对象的内容（JOIN hasn_follows）；未登录返回空
+        - recommend/articles：按 published_time 倒序
+        - hot：按 like_count 倒序
+        - 游标分页：keyset（按排序键 + post_id），返回真实 next_cursor
+        - is_liked/is_collected：批量回填当前 viewer 的互动态
+
         :param db: 数据库会话
-        :param user_id: 用户 ID
+        :param user_id: 用户 ID（open scope 可为 None）
         :param feed_type: 信息流类型（following/recommend/hot/articles）
-        :param cursor: 分页游标
+        :param cursor: 分页游标（格式 "{排序值}|{post_id}"）
         :param limit: 每页条数
-        :return: 信息流数据
+        :return: 信息流数据 {items, next_cursor}
         """
-        # 创建别名用于 JOIN
         AuthorHuman = aliased(HasnHumans)
         AuthorAgent = aliased(HasnAgents)
         OwnerHuman = aliased(HasnHumans)
 
-        # 构建查询，JOIN 用户信息表
+        viewer_hasn_id = await CommunityService._resolve_human_hasn_id(db, user_id)
+
         stmt = (
             select(
                 HasnPosts,
@@ -63,37 +117,66 @@ class CommunityService:
             .where(HasnPosts.status == 'published')
         )
 
-        # 根据 feed_type 过滤
+        # 关注流：JOIN hasn_follows 过滤为"当前用户关注对象"的内容
         if feed_type == 'following':
-            # TODO: 实现关注流（需要查询 hasn_follows 表）
-            stmt = stmt.order_by(HasnPosts.published_time.desc())
-        elif feed_type == 'recommend':
-            # 推荐流：按发布时间倒序
-            stmt = stmt.order_by(HasnPosts.published_time.desc())
-        elif feed_type == 'hot':
-            # 热门流：按点赞数倒序
-            stmt = stmt.order_by(HasnPosts.like_count.desc())
-        elif feed_type == 'articles':
-            # 文章流：只返回文章类型
-            stmt = stmt.order_by(HasnPosts.published_time.desc())
+            if not viewer_hasn_id:
+                return {'items': [], 'next_cursor': None}
+            following_subq = select(HasnFollows.target_hasn_id).where(
+                HasnFollows.follower_hasn_id == viewer_hasn_id
+            )
+            stmt = stmt.where(HasnPosts.author_hasn_id.in_(following_subq))
 
-        # 分页
+        is_hot = feed_type == 'hot'
+
+        # keyset 游标：排序键与游标必须一致
         if cursor:
-            # TODO: 实现游标分页
-            pass
+            try:
+                sort_val, cur_post_id = cursor.split('|', 1)
+            except ValueError:
+                sort_val, cur_post_id = None, None
+            if sort_val is not None:
+                if is_hot:
+                    cv = int(sort_val)
+                    stmt = stmt.where(
+                        or_(
+                            HasnPosts.like_count < cv,
+                            and_(HasnPosts.like_count == cv, HasnPosts.post_id < cur_post_id),
+                        )
+                    )
+                else:
+                    cv = datetime.fromisoformat(sort_val)
+                    stmt = stmt.where(
+                        or_(
+                            HasnPosts.published_time < cv,
+                            and_(HasnPosts.published_time == cv, HasnPosts.post_id < cur_post_id),
+                        )
+                    )
 
-        stmt = stmt.limit(limit)
+        # 排序
+        if is_hot:
+            stmt = stmt.order_by(HasnPosts.like_count.desc(), HasnPosts.post_id.desc())
+        else:
+            stmt = stmt.order_by(HasnPosts.published_time.desc(), HasnPosts.post_id.desc())
 
-        # 执行查询
+        # 多取一条以判断是否还有下一页
+        stmt = stmt.limit(limit + 1)
+
         result = await db.execute(stmt)
         rows = result.all()
 
-        # 构建响应
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+
+        # 批量回填 is_liked / is_collected
+        post_ids = [row.HasnPosts.post_id for row in rows]
+        liked_ids, collected_ids = await CommunityService._batch_reactions(
+            db, viewer_hasn_id, 'post', post_ids
+        )
+
         items = []
         for row in rows:
             post = row.HasnPosts
 
-            # 构建 author 信息
             author_info = {
                 'hasn_id': post.author_hasn_id,
                 'type': post.author_type,
@@ -105,7 +188,6 @@ class CommunityService:
             else:  # agent
                 author_info['display_name'] = row.agent_display_name or post.author_hasn_id
                 author_info['avatar'] = row.agent_avatar
-                # 添加 owner 信息
                 if row.owner_hasn_id:
                     author_info['owner'] = {
                         'hasn_id': row.owner_hasn_id,
@@ -125,13 +207,22 @@ class CommunityService:
                 'like_count': post.like_count,
                 'comment_count': post.comment_count,
                 'published_time': post.published_time.isoformat() if post.published_time else None,
-                'is_liked': False,  # TODO: 查询当前用户是否点赞
-                'is_collected': False,  # TODO: 查询当前用户是否收藏
+                'is_liked': post.post_id in liked_ids,
+                'is_collected': post.post_id in collected_ids,
             })
+
+        # 真实 next_cursor（仅当还有下一页）
+        next_cursor = None
+        if has_more and rows:
+            last = rows[-1].HasnPosts
+            if is_hot:
+                next_cursor = f'{last.like_count}|{last.post_id}'
+            elif last.published_time:
+                next_cursor = f'{last.published_time.isoformat()}|{last.post_id}'
 
         return {
             'items': items,
-            'next_cursor': rows[-1].HasnPosts.post_id if rows else None,
+            'next_cursor': next_cursor,
         }
 
     @staticmethod
@@ -341,6 +432,12 @@ class CommunityService:
 
         post = row.HasnPosts
 
+        # 当前 viewer 的点赞/收藏态
+        viewer_hasn_id = await CommunityService._resolve_human_hasn_id(db, user_id)
+        liked_ids, collected_ids = await CommunityService._batch_reactions(
+            db, viewer_hasn_id, 'post', [post.post_id]
+        )
+
         # 构建 author 信息
         author_info = {
             'hasn_id': post.author_hasn_id,
@@ -372,9 +469,10 @@ class CommunityService:
             'tags': post.tags or [],
             'like_count': post.like_count,
             'comment_count': post.comment_count,
+            'collect_count': post.collect_count,
             'published_time': post.published_time.isoformat() if post.published_time else None,
-            'is_liked': False,  # TODO: 查询当前用户是否点赞
-            'is_collected': False,  # TODO: 查询当前用户是否收藏
+            'is_liked': post.post_id in liked_ids,
+            'is_collected': post.post_id in collected_ids,
         }
 
     @staticmethod

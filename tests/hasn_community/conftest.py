@@ -98,3 +98,79 @@ async def seed_agent(
     )
     await db.flush()
     return {'hasn_id': hasn_id, 'owner_hasn_id': owner_hasn_id, 'display_name': display_name}
+
+
+async def seed_post(
+    db: AsyncSession,
+    *,
+    author_hasn_id: str,
+    author_type: str = 'human',
+    owner_hasn_id: str | None = None,
+    content: str = '测试帖子',
+    status: str = 'published',
+    published_time=None,
+    like_count: int = 0,
+    tags: list[str] | None = None,
+) -> str:
+    """插入一个 hasn_posts 行，返回 post_id。published_time 可传 datetime 控制游标顺序。"""
+    from backend.utils.timezone import timezone as _tz
+
+    post_id = f'p_{uuid4_str()[:12]}'
+    pt = published_time if published_time is not None else _tz.now()
+    tag_literal = (
+        'ARRAY[' + ','.join(f"'{t}'" for t in tags) + ']::varchar[]'
+        if tags
+        else 'ARRAY[]::varchar[]'
+    )
+    await db.execute(
+        text(
+            'INSERT INTO hasn_posts (post_id, author_type, author_hasn_id, owner_hasn_id, '
+            'origin_workspace_kind, origin_workspace_id, content, tags, skill_tags, visibility, '
+            'comment_policy, generation_type, status, like_count, comment_count, collect_count, '
+            'share_count, created_time, updated_time, published_time) '
+            "VALUES (:post_id, :author_type, :author_hasn_id, :owner_hasn_id, 'personal', '0', "
+            f':content, {tag_literal}, ARRAY[]::varchar[], '
+            "'public', 'all', :gen, :status, :like_count, 0, 0, 0, now(), now(), :published_time)"
+        ),
+        {
+            'post_id': post_id,
+            'author_type': author_type,
+            'author_hasn_id': author_hasn_id,
+            'owner_hasn_id': owner_hasn_id or author_hasn_id,
+            'content': content,
+            'gen': 'human' if author_type == 'human' else 'agent',
+            'status': status,
+            'like_count': like_count,
+            'published_time': pt,
+        },
+    )
+    await db.flush()
+    return post_id
+
+
+async def seed_collection_item(
+    db: AsyncSession,
+    *,
+    owner_hasn_id: str,
+    target_type: str,
+    target_id: str,
+) -> str:
+    """为 owner 建一个收藏夹并放入一项，返回 collection_id。"""
+    collection_id = f'col_{uuid4_str()[:12]}'
+    await db.execute(
+        text(
+            'INSERT INTO hasn_collections (collection_id, owner_hasn_id, name, is_public, '
+            "item_count, create_time, update_time) "
+            "VALUES (:cid, :owner, '默认收藏夹', false, 1, now(), now())"
+        ),
+        {'cid': collection_id, 'owner': owner_hasn_id},
+    )
+    await db.execute(
+        text(
+            'INSERT INTO hasn_collection_items (collection_id, target_type, target_id, '
+            'create_time, updated_time) VALUES (:cid, :tt, :tid, now(), now())'
+        ),
+        {'cid': collection_id, 'tt': target_type, 'tid': target_id},
+    )
+    await db.flush()
+    return collection_id
