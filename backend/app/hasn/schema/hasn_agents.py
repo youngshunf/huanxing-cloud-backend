@@ -23,9 +23,12 @@ class HasnAgentsSchemaBase(SchemaBase):
     node_id: str | None = Field(None, description='Agent 驻留节点 ID（设备指纹派生）')
     home_client_id: int | None = Field(None, description='本地 Agent 归属客户端 ID')
     template_id: str | None = Field(None, description='Agent 模板 ID')
+    template_version: str | None = Field(None, description='Agent 模板版本（创建时快照）')
     skills: dict[str, Any] | list[Any] | None = Field(None, description='Agent 技能配置 JSON')
     soul_md: str | None = Field(None, description='Agent SOUL.md 内容')
+    agents_md: str | None = Field(None, description='Agent AGENTS.md 内容')
     user_md: str | None = Field(None, description='Agent USER.md 内容')
+    memory_md: str | None = Field(None, description='Agent MEMORY.md 内容（自我演化记忆）')
     profile_source: str = Field(default='cloud', description='Profile 来源')
     profile_revision: int = Field(default=1, description='Agent Profile 修订号')
     api_key_hash: str = Field(description='API Key 的 SHA256 哈希')
@@ -81,9 +84,12 @@ class AgentSnapshot(SchemaBase):
     persona_ref: str | None = Field(None, description='Agent persona 引用')
     tags: list[str] = Field(default_factory=list, description='Agent 标签数组')
     template_id: str | None = Field(None, description='模板 ID')
+    template_version: str | None = Field(None, description='模板版本（创建时快照）')
     skills: dict[str, Any] | list[Any] | None = Field(None, description='技能配置')
     soul_md: str | None = Field(None, description='SOUL.md 内容')
+    agents_md: str | None = Field(None, description='AGENTS.md 内容')
     user_md: str | None = Field(None, description='USER.md 内容')
+    memory_md: str | None = Field(None, description='MEMORY.md 内容（自我演化记忆）')
     profile_revision: int = Field(default=1, description='Profile 修订号')
     status: str = Field(default='active', description='Agent 状态/生命周期 (active/disabled/revoked/archived/deleted)')
     social_enabled: bool = Field(default=False, description='是否对外开启社交可见')
@@ -106,6 +112,7 @@ class CloudCreateAgentRequest(SchemaBase):
     avatar: str | None = Field(None, description='Agent 头像 URL')
     skills: dict[str, Any] | list[Any] | None = Field(None, description='技能配置')
     soul_md: str | None = Field(None, description='SOUL.md 内容')
+    agents_md: str | None = Field(None, description='AGENTS.md 内容')
     user_md: str | None = Field(None, description='USER.md 内容')
     runtime_type: str | None = Field(None, description='期望本地绑定 Runtime 类型')
     node_id: str | None = Field(None, description='创建发起节点 ID')
@@ -185,3 +192,28 @@ class AgentHeartbeatResponse(SchemaBase):
     """心跳上报响应。"""
 
     success: bool = Field(description='是否成功')
+
+
+class AgentProfileResponse(SchemaBase):
+    """Agent scope 直连拉取的 Profile（Runtime 据此物化为本地文件 + 下载技能）。
+
+    身份恒取自 agent JWT，不读 body；Runtime 用 agent JWT 调
+    GET /api/v1/hasn/agent/profile 获取自己的 Profile。
+    """
+
+    hasn_id: str = Field(description='HASN Agent ID')
+    display_name: str = Field(description='Agent 显示名')
+    soul_md: str | None = Field(None, description='SOUL.md 内容')
+    agents_md: str | None = Field(None, description='AGENTS.md 内容')
+    user_md: str | None = Field(None, description='USER.md 内容（owner 记忆下发）')
+    memory_md: str | None = Field(None, description='MEMORY.md 内容（自我演化记忆）')
+    skills: list[str] = Field(default_factory=list, description='技能 skill_id 清单')
+    template_id: str | None = Field(None, description='模板 ID')
+    template_version: str | None = Field(None, description='模板版本')
+    profile_revision: int = Field(default=1, description='Profile 修订号（跨端同步信标）')
+
+
+class AgentProfileRevisionResponse(SchemaBase):
+    """轻量轮询：仅返回 Profile 修订号。"""
+
+    profile_revision: int = Field(default=1, description='Profile 修订号')

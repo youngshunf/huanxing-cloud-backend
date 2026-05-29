@@ -74,6 +74,21 @@ class MarketplaceTemplate(Base):
         default=None,
         comment='依赖的技能ID列表，逗号分隔',
     )
+    soul_md: Mapped[str | None] = mapped_column(
+        UniversalText,
+        default=None,
+        comment='模板 SOUL.md 内容（Agent 身份档案，创建时物化进 hasn_agents.soul_md）',
+    )
+    agents_md: Mapped[str | None] = mapped_column(
+        UniversalText,
+        default=None,
+        comment='模板 AGENTS.md 内容（Agent 行为指南，创建时物化进 hasn_agents.agents_md）',
+    )
+    user_md: Mapped[str | None] = mapped_column(
+        UniversalText,
+        default=None,
+        comment='模板 USER.md 内容（主人信息种子，创建时物化进 hasn_agents.user_md）',
+    )
     sop_dependencies: Mapped[str | None] = mapped_column(
         UniversalText,
         default=None,
