@@ -161,7 +161,7 @@ async def seed_collection_item(
     await db.execute(
         text(
             'INSERT INTO hasn_collections (collection_id, owner_hasn_id, name, is_public, '
-            "item_count, create_time, update_time) "
+            "item_count, created_time, updated_time) "
             "VALUES (:cid, :owner, '默认收藏夹', false, 1, now(), now())"
         ),
         {'cid': collection_id, 'owner': owner_hasn_id},
@@ -169,7 +169,7 @@ async def seed_collection_item(
     await db.execute(
         text(
             'INSERT INTO hasn_collection_items (collection_id, target_type, target_id, '
-            'create_time, updated_time) VALUES (:cid, :tt, :tid, now(), now())'
+            'created_time, updated_time) VALUES (:cid, :tt, :tid, now(), now())'
         ),
         {'cid': collection_id, 'tt': target_type, 'tid': target_id},
     )
