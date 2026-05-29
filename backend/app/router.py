@@ -24,7 +24,6 @@ from backend.app.hasn.api.router import (
 )
 from backend.app.hasn_community.api.router import agent as community_agent
 from backend.app.hasn_community.api.router import app as community_app
-from backend.app.hasn_community.api.router import app_compat as community_app_compat
 from backend.app.hermes.api.router import app as hermes_app
 from backend.app.hermes.api.router import internal as hermes_internal
 from backend.app.hermes.api.router import v1 as hermes_v1
@@ -110,7 +109,6 @@ router.include_router(hasn_ai_native)      # AI-Native 应用平台 API
 # HASN 社区（从 hasn 巨型模块拆分的独立模块 hasn_community）
 router.include_router(community_app)          # 社区 用户端 API（/api/v1/community/app）
 router.include_router(community_agent)        # 社区 Agent API（/api/v1/community/agent，Agent JWT）
-router.include_router(community_app_compat)   # 社区 用户端 兼容别名（/api/v1/hasn/app/community，daemon 过渡用，待切换后删除）
 
 
 # Hermes（后台管理 CRUD；用户端 /hermes/app/agents 后续手写编排 API）

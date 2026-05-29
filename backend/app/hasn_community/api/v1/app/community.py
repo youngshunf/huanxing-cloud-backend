@@ -1,7 +1,7 @@
 """
 社区用户端 API
 
-路由前缀: /api/v1/community/app（规范）；兼容别名 /api/v1/hasn/app/community
+路由前缀: /api/v1/community/app
 认证方式: Owner JWT
 """
 from fastapi import APIRouter, Request
