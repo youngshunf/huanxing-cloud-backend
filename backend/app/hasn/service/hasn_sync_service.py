@@ -264,7 +264,7 @@ class SqlAlchemySyncGateway:
                     OR event_type = 'task_run.summary_reported'
                   )
                   AND (
-                    :node_id IS NULL
+                    :node_id::text IS NULL
                     OR :node_id = ''
                     OR event_type = 'task_run.summary_reported'
                     OR (
