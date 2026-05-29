@@ -34,8 +34,7 @@ class ClawHubSyncService:
         self.hub_local_path = Path(getattr(settings, 'HUANXING_HUB_LOCAL_PATH', '/tmp/huanxing-hub'))
         self.sync_filters = {
             'official_only': False,  # Sync all skills (ClawHub doesn't have official flag)
-            'min_downloads': 10,     # Minimum download count
-            'min_stars': 1           # Minimum star count
+            'limit': 100,            # Sync top-rated skills only
         }
 
     async def sync_from_clawhub(
@@ -236,22 +235,15 @@ class ClawHubSyncService:
         Returns:
             Filtered list of skills
         """
-        filtered = []
-
-        for skill in skills:
-            stats = skill.get('stats', {})
-
-            # Check download count
-            if stats.get('downloads', 0) < self.sync_filters['min_downloads']:
-                continue
-
-            # Check star count
-            if stats.get('stars', 0) < self.sync_filters['min_stars']:
-                continue
-
-            filtered.append(skill)
-
-        return filtered
+        return sorted(
+            skills,
+            key=lambda skill: (
+                (skill.get('stats') or {}).get('stars') or 0,
+                (skill.get('stats') or {}).get('downloads') or 0,
+                skill.get('updatedAt') or skill.get('createdAt') or 0,
+            ),
+            reverse=True,
+        )[: self.sync_filters['limit']]
 
     async def _sync_skill(self, db: AsyncSession, clawhub_skill: dict[str, Any]):
         """
@@ -287,10 +279,7 @@ class ClawHubSyncService:
             description=description
         )
 
-        # Extract tags from ClawHub tags object (it's a dict with version tags)
-        tags_obj = clawhub_skill.get('tags', {})
-        # For now, just use the slug as a tag
-        tags = [slug]
+        tags = self._extract_tags(clawhub_skill, slug)
 
         # Map category based on slug or summary using LLM
         category = await self._classify_skill(db, name, description)
@@ -301,10 +290,12 @@ class ClawHubSyncService:
             UpdateMarketplaceSkillParam
         )
 
+        now = datetime.now()
         skill_data = {
             'skill_id': skill_id,
             'namespace': namespace,
             'slug': slug,
+            'name': name,
             'name_en': translated['name_en'],
             'name_zh': translated['name_zh'],
             'description_en': translated['description_en'],
@@ -314,7 +305,7 @@ class ClawHubSyncService:
             'emoji': None,
             'author_name': 'ClawHub Community',
             'category': category,
-            'tags': ','.join(tags),
+            'tags': json.dumps(tags, ensure_ascii=False),
             'pricing_type': 'free',
             'price': 0,
             'is_official': False,
@@ -323,7 +314,8 @@ class ClawHubSyncService:
             'source_repo_url': f"https://clawhub.ai/skills/{slug}",
             'download_count': stats.get('downloads', 0),
             'star_count': stats.get('stars', 0),
-            'synced_at': datetime.now()
+            'synced_at': now,
+            'translated_at': now,
         }
 
         if existing_skill:
@@ -363,10 +355,12 @@ class ClawHubSyncService:
 
                 if current_skill:
                     # Create update param with repo_path (本地 huanxing-hub 路径)
+                    now = datetime.now()
                     update_data = {
                         'skill_id': skill_id,
                         'namespace': namespace,
                         'slug': slug,
+                        'name': name,
                         'name_en': translated['name_en'],
                         'name_zh': translated['name_zh'],
                         'description_en': translated['description_en'],
@@ -376,7 +370,7 @@ class ClawHubSyncService:
                         'emoji': None,
                         'author_name': 'ClawHub Community',
                         'category': category,
-                        'tags': ','.join(tags),
+                        'tags': json.dumps(tags, ensure_ascii=False),
                         'pricing_type': 'free',
                         'price': 0,
                         'is_official': False,
@@ -386,7 +380,8 @@ class ClawHubSyncService:
                         'repo_path': repo_path,  # 本地 huanxing-hub 路径
                         'download_count': stats.get('downloads', 0),
                         'star_count': stats.get('stars', 0),
-                        'synced_at': datetime.now()
+                        'synced_at': now,
+                        'translated_at': now,
                     }
                     update_param = UpdateMarketplaceSkillParam(**update_data)
                     await marketplace_skill_dao.update(db, current_skill.id, update_param)
@@ -593,6 +588,26 @@ class ClawHubSyncService:
         except Exception as e:
             log.error(f"Failed to download skill {slug}: {e}")
             return None
+
+    @staticmethod
+    def _extract_tags(clawhub_skill: dict[str, Any], slug: str) -> list[str]:
+        tags = clawhub_skill.get('tags')
+        if isinstance(tags, list):
+            normalized = [str(tag).strip() for tag in tags if str(tag).strip()]
+        elif isinstance(tags, dict):
+            values: list[Any] = []
+            for value in tags.values():
+                if isinstance(value, list):
+                    values.extend(value)
+                elif value:
+                    values.append(value)
+            normalized = [str(tag).strip() for tag in values if str(tag).strip()]
+        elif isinstance(tags, str):
+            normalized = [tag.strip() for tag in tags.split(',') if tag.strip()]
+        else:
+            normalized = []
+
+        return normalized or [slug]
 
 
 # Singleton instance

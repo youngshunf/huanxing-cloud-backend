@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,8 +32,11 @@ from backend.app.marketplace.model.marketplace_skill import MarketplaceSkill
 from backend.app.marketplace.model.marketplace_skill_version import MarketplaceSkillVersion
 from backend.app.marketplace.model.marketplace_template import MarketplaceTemplate
 from backend.app.marketplace.model.marketplace_template_version import MarketplaceTemplateVersion
+from backend.app.marketplace.service.clawhub_sync_service import ClawHubSyncService
 from backend.app.marketplace.service.github_app_sync_service import github_app_sync_service
-from backend.app.marketplace.service.github_sync_service import github_sync_service
+from backend.app.marketplace.service.github_sync_service import GitHubSyncService, github_sync_service
+from backend.app.marketplace.service.translation_service import translation_service
+from backend.app.marketplace.schema.marketplace_skill import CreateMarketplaceSkillParam, UpdateMarketplaceSkillParam
 from backend.app.marketplace.service.marketplace_skill_service import marketplace_skill_service
 from backend.app.marketplace.service.marketplace_template_service import marketplace_template_service
 from backend.app.router import router as app_router
@@ -389,6 +394,11 @@ def test_namespaced_resource_id_columns_are_wide_enough() -> None:
     migration_sql = (sql_root / 'migrations' / '2026-05-28-marketplace-user-status-fields.sql').read_text()
     assert 'idx_marketplace_skill_namespace_slug' in migration_sql
     assert 'idx_marketplace_template_namespace_slug' in migration_sql
+
+
+def test_marketplace_skill_sync_timestamps_are_timezone_aware() -> None:
+    assert MarketplaceSkill.__table__.c.synced_at.type.timezone is True
+    assert MarketplaceSkill.__table__.c.translated_at.type.timezone is True
 
 
 def test_user_skill_publish_review_open_download_and_unpublish_e2e(client: TestClient) -> None:
@@ -948,8 +958,126 @@ def test_upload_rejects_hidden_system_files(client: TestClient) -> None:
     assert response.json()['code'] == 400
 
 
+def test_marketplace_skill_sync_params_preserve_sync_metadata() -> None:
+    synced_at = datetime(2026, 5, 29, 10, 30, 0)
+    translated_at = datetime(2026, 5, 29, 10, 31, 0)
+    payload = {
+        'skill_id': 'github/anthropics-skills/git',
+        'namespace': 'github/anthropics-skills',
+        'slug': 'git',
+        'name': 'Git Skill',
+        'name_en': 'Git Skill',
+        'name_zh': 'Git Skill',
+        'description_en': 'Git helper',
+        'description_zh': 'Git helper',
+        'source_language': 'en',
+        'tags': '["git"]',
+        'source_type': 'github',
+        'pricing_type': 'free',
+        'price': Decimal('0'),
+        'is_private': False,
+        'is_official': False,
+        'download_count': 13,
+        'star_count': 8,
+        'repo_path': 'github/anthropics-skills/skills/git',
+        'git_commit_hash': 'abc123',
+        'synced_at': synced_at,
+        'translated_at': translated_at,
+    }
+
+    for schema_cls in (CreateMarketplaceSkillParam, UpdateMarketplaceSkillParam):
+        data = schema_cls(**payload).model_dump()
+
+        assert data['star_count'] == 8
+        assert data['git_commit_hash'] == 'abc123'
+        assert data['synced_at'] == synced_at
+        assert data['translated_at'] == translated_at
+
+
+def test_clawhub_filter_selects_top_100_by_rating_without_minimums() -> None:
+    service = ClawHubSyncService()
+    skills = [
+        {
+            'slug': f'skill-{index}',
+            'stats': {'stars': index % 5, 'downloads': index},
+            'updatedAt': index,
+        }
+        for index in range(130)
+    ]
+
+    selected = service._filter_skills(skills)
+
+    assert len(selected) == 100
+    assert [skill['slug'] for skill in selected[:4]] == [
+        'skill-129',
+        'skill-124',
+        'skill-119',
+        'skill-114',
+    ]
+    selected_keys = [
+        (skill['stats']['stars'], skill['stats']['downloads'], skill['updatedAt'])
+        for skill in selected
+    ]
+    assert selected_keys == sorted(selected_keys, reverse=True)
+    assert 'skill-4' in {skill['slug'] for skill in selected}
+
+
 @pytest.mark.asyncio
-async def test_huanxing_hub_sync_uses_skill_markdown_only(
+async def test_clawhub_sync_preserves_name_and_json_tags(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ClawHubSyncService()
+
+    async def _owner(_slug: str) -> str:
+        return 'owner'
+
+    async def _category(_db: AsyncSession, _name: str, _description: str) -> str:
+        return 'productivity'
+
+    async def _download(**_kwargs: Any) -> str:
+        return 'clawhub/owner/demo-skill'
+
+    async def _translate(name: str | None = None, description: str | None = None, **_kwargs: Any) -> dict[str, str]:
+        return {
+            'name_en': name,
+            'name_zh': name,
+            'description_en': description,
+            'description_zh': description,
+            'source_language': 'en',
+        }
+
+    monkeypatch.setattr(service, '_get_skill_owner', _owner)
+    monkeypatch.setattr(service, '_classify_skill', _category)
+    monkeypatch.setattr(service, '_download_skill_file', _download)
+    monkeypatch.setattr(translation_service, 'translate_skill_metadata', _translate)
+
+    await service._sync_skill(
+        db_session,
+        {
+            'slug': 'demo-skill',
+            'displayName': 'Demo Skill',
+            'summary': 'Demo helper',
+            'stats': {'downloads': 42, 'stars': 7},
+            'tags': {'latest': ['demo', 'helper']},
+            'latestVersion': {'version': '1.2.3', 'changelog': 'Initial', 'createdAt': 1780045762056},
+        },
+    )
+    await db_session.flush()
+
+    skill = await db_session.get(MarketplaceSkill, 1)
+    assert skill is not None
+    assert skill.name == 'Demo Skill'
+    assert skill.tags == '["demo", "helper"]'
+    assert skill.repo_path == 'clawhub/owner/demo-skill'
+    assert skill.star_count == 7
+    assert skill.download_count == 42
+    assert skill.synced_at is not None
+    assert skill.translated_at is not None
+
+
+@pytest.mark.asyncio
+async def test_huanxing_hub_sync_uses_huanxing_and_github_roots_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -983,9 +1111,18 @@ async def test_huanxing_hub_sync_uses_skill_markdown_only(
         encoding='utf-8',
     )
 
-    (tmp_path / 'github' / 'anthropics-mcp-servers' / 'git').mkdir(parents=True)
-    (tmp_path / 'github' / 'anthropics-mcp-servers' / 'git' / 'SKILL.md').write_text(
+    (tmp_path / 'github' / 'anthropics-skills' / 'skills' / 'git').mkdir(parents=True)
+    (tmp_path / 'github' / 'anthropics-skills' / 'skills' / 'git' / 'SKILL.md').write_text(
         '---\nname: Git Skill\ndescription: Git helper\ntags:\n  - git\n  - mcp\n---\n# Skill\n',
+        encoding='utf-8',
+    )
+    (tmp_path / 'github' / 'anthropics-skills' / 'template').mkdir(parents=True)
+    (tmp_path / 'github' / 'anthropics-skills' / 'template' / 'SKILL.md').write_text(
+        '---\n'
+        'name: template-skill\n'
+        'description: Replace with description of the skill and when Claude should use it.\n'
+        '---\n'
+        '# Insert instructions below\n',
         encoding='utf-8',
     )
 
@@ -1000,14 +1137,178 @@ async def test_huanxing_hub_sync_uses_skill_markdown_only(
     by_id = {skill['skill_id']: skill for skill in skills}
 
     assert by_id['huanxing/finance/advisor']['namespace'] == 'huanxing/finance'
-    assert by_id['huanxing/finance/advisor']['source_type'] == 'official'
+    assert by_id['huanxing/finance/advisor']['source_type'] == 'huanxing'
     assert by_id['huanxing/finance/advisor']['version'] == '1.4.0'
     assert by_id['huanxing/finance/advisor']['name'] == 'Finance Advisor'
     assert by_id['huanxing/finance/advisor']['tags'] == '["finance", "advisor"]'
     assert by_id['huanxing/finance/advisor']['icon_path'].name == 'icon.svg'
-    assert by_id['clawhub/mnetfairy/ai-insurance-advisor']['namespace'] == 'clawhub/mnetfairy'
-    assert by_id['clawhub/mnetfairy/ai-insurance-advisor']['tags'] == '["insurance", "china", "advisor"]'
-    assert by_id['github/anthropics-mcp-servers/git']['namespace'] == 'github/anthropics-mcp-servers'
+    assert 'clawhub/mnetfairy/ai-insurance-advisor' not in by_id
+    assert 'github/anthropics-skills/template' not in by_id
+    assert by_id['github/anthropics-skills/git']['namespace'] == 'github/anthropics-skills'
+    assert by_id['github/anthropics-skills/git']['repo_path'] == 'github/anthropics-skills/skills/git'
+
+
+@pytest.mark.asyncio
+async def test_github_sync_versions_default_published_at(db_session: AsyncSession) -> None:
+    service = GitHubSyncService()
+
+    await service._sync_skill_version(
+        db_session,
+        db_skill_id=1,
+        skill_id='github/anthropics-skills/git',
+        version_data={'version': '1.0.0', 'is_latest': True},
+    )
+    await db_session.flush()
+
+    version = await db_session.get(MarketplaceSkillVersion, 1)
+    assert version is not None
+    assert version.skill_id == 'github/anthropics-skills/git'
+    assert version.published_at is not None
+
+
+def test_github_repository_update_refreshes_submodules(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[tuple[str, Any]] = []
+
+    class _Environment:
+        def __init__(self, **kwargs: str) -> None:
+            self.kwargs = kwargs
+
+        def __enter__(self) -> None:
+            calls.append(('env_enter', self.kwargs))
+
+        def __exit__(self, *args: Any) -> None:
+            calls.append(('env_exit', None))
+
+    class _Origin:
+        def pull(self) -> None:
+            calls.append(('pull', None))
+
+    class _Git:
+        def custom_environment(self, **kwargs: str) -> _Environment:
+            return _Environment(**kwargs)
+
+        def submodule(self, *args: str) -> None:
+            calls.append(('submodule', args))
+
+    class _Repo:
+        remotes = SimpleNamespace(origin=_Origin())
+        git = _Git()
+
+        def __init__(self, path: str) -> None:
+            calls.append(('open', path))
+
+    monkeypatch.setattr('backend.app.marketplace.service.github_sync_service.Repo', _Repo)
+    service = GitHubSyncService()
+    service.local_path = str(tmp_path)
+
+    import asyncio
+
+    asyncio.run(service._update_repository())
+
+    assert calls == [
+        ('open', str(tmp_path)),
+        ('pull', None),
+        ('submodule', ('sync', '--recursive')),
+        ('env_enter', {'GIT_HTTP_VERSION': 'HTTP/1.1'}),
+        ('submodule', ('update', '--init', '--recursive', '--remote')),
+        ('env_exit', None),
+    ]
+
+
+def test_github_repository_clone_initializes_submodules(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[tuple[str, Any]] = []
+
+    class _Environment:
+        def __init__(self, **kwargs: str) -> None:
+            self.kwargs = kwargs
+
+        def __enter__(self) -> None:
+            calls.append(('env_enter', self.kwargs))
+
+        def __exit__(self, *args: Any) -> None:
+            calls.append(('env_exit', None))
+
+    class _Git:
+        def custom_environment(self, **kwargs: str) -> _Environment:
+            return _Environment(**kwargs)
+
+        def submodule(self, *args: str) -> None:
+            calls.append(('submodule', args))
+
+    class _Repo:
+        git = _Git()
+
+        @classmethod
+        def clone_from(cls, url: str, path: str, **kwargs: Any) -> _Repo:
+            calls.append(('clone', (url, path, kwargs)))
+            return cls()
+
+    monkeypatch.setattr('backend.app.marketplace.service.github_sync_service.Repo', _Repo)
+    service = GitHubSyncService()
+    service.local_path = str(tmp_path / 'missing-hub')
+    service.repo_url = 'git@example.com:huanxing/huanxing-hub.git'
+
+    import asyncio
+
+    asyncio.run(service._update_repository())
+
+    assert calls == [
+        ('clone', (
+            'git@example.com:huanxing/huanxing-hub.git',
+            str(tmp_path / 'missing-hub'),
+            {'multi_options': ['--recurse-submodules']},
+        )),
+        ('submodule', ('sync', '--recursive')),
+        ('env_enter', {'GIT_HTTP_VERSION': 'HTTP/1.1'}),
+        ('submodule', ('update', '--init', '--recursive', '--remote')),
+        ('env_exit', None),
+    ]
+
+
+def test_github_webhook_treats_submodule_path_change_as_skill_change(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[bool] = []
+
+    async def _sync_from_github(_db: AsyncSession, force: bool = False) -> dict[str, Any]:  # noqa: FBT001, FBT002
+        calls.append(force)
+        return {'success': True, 'synced': 2, 'failed': 0}
+
+    monkeypatch.setattr(github_sync_service, 'sync_from_github', _sync_from_github)
+
+    response = client.post(
+        '/api/v1/marketplace/webhook/github/skills',
+        headers={'X-GitHub-Event': 'push'},
+        json={'commits': [{'modified': ['github/anthropics-skills']}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()['data']['synced'] == 2
+    assert calls == [True]
+
+
+def test_github_webhook_ignores_clawhub_cache_changes(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[bool] = []
+
+    async def _sync_from_github(_db: AsyncSession, force: bool = False) -> dict[str, Any]:  # noqa: FBT001, FBT002
+        calls.append(force)
+        return {'success': True, 'synced': 1, 'failed': 0}
+
+    monkeypatch.setattr(github_sync_service, 'sync_from_github', _sync_from_github)
+
+    response = client.post(
+        '/api/v1/marketplace/webhook/github/skills',
+        headers={'X-GitHub-Event': 'push'},
+        json={'commits': [{'modified': ['clawhub/mnetfairy/ai-insurance-advisor/SKILL.md']}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()['data']['message'] == 'No skill changes detected'
+    assert calls == []
 
 
 @pytest.mark.asyncio

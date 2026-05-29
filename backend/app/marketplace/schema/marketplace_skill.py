@@ -35,7 +35,7 @@ class MarketplaceSkillSchemaBase(SchemaBase):
     tags: str | None = Field(None, description='标签，逗号分隔')
     source_type: str | None = Field(
         'github',
-        description='来源类型 (github:GitHub:blue/clawhub:ClawHub:green/local:本地:gray)',
+        description='来源类型 (huanxing:幻形自研:purple/github:GitHub:blue/clawhub:ClawHub:green)',
     )
     source_repo_url: str | None = Field(None, description='源仓库 URL')
     source_repo_path: str | None = Field(
@@ -48,6 +48,10 @@ class MarketplaceSkillSchemaBase(SchemaBase):
     is_private: bool = Field(description='是否私有')
     is_official: bool = Field(description='是否官方技能')
     download_count: int = Field(description='下载次数')
+    star_count: int = Field(0, description='星标数')
+    git_commit_hash: str | None = Field(None, description='最新同步的 commit hash')
+    synced_at: datetime | None = Field(None, description='最后同步时间')
+    translated_at: datetime | None = Field(None, description='最后翻译时间')
 
 
 class CreateMarketplaceSkillParam(MarketplaceSkillSchemaBase):

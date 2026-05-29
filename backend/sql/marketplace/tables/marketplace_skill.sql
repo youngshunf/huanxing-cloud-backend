@@ -82,7 +82,7 @@ COMMENT ON COLUMN "public"."marketplace_skill"."author_id" IS '作者用户ID';
 COMMENT ON COLUMN "public"."marketplace_skill"."author_name" IS '作者名称';
 COMMENT ON COLUMN "public"."marketplace_skill"."category" IS '分类';
 COMMENT ON COLUMN "public"."marketplace_skill"."tags" IS '标签，逗号分隔';
-COMMENT ON COLUMN "public"."marketplace_skill"."source_type" IS '来源类型 (github:GitHub:blue/clawhub:ClawHub:green/local:本地:gray)';
+COMMENT ON COLUMN "public"."marketplace_skill"."source_type" IS '来源类型 (huanxing:幻形自研:purple/github:GitHub:blue/clawhub:ClawHub:green)';
 COMMENT ON COLUMN "public"."marketplace_skill"."source_repo_url" IS '源仓库 URL';
 COMMENT ON COLUMN "public"."marketplace_skill"."source_repo_path" IS '仓库内路径（如 huanxing-skills/productivity/translator-pro）';
 COMMENT ON COLUMN "public"."marketplace_skill"."pricing_type" IS '定价类型 (free:免费:green/paid:付费:orange)';

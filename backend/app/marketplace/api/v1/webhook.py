@@ -28,6 +28,21 @@ class WebhookResponse(BaseModel):
     failed: int = 0
 
 
+def has_skill_source_changes(commits: list[dict]) -> bool:
+    """Return true when push payload touches managed skill source roots."""
+    for commit in commits:
+        changed = commit.get('modified', []) + commit.get('added', []) + commit.get('removed', [])
+        if any(
+            path == '.gitmodules'
+            or path.startswith('huanxing-skills/')
+            or path == 'github'
+            or path.startswith('github/')
+            for path in changed
+        ):
+            return True
+    return False
+
+
 def verify_github_signature(payload: bytes, signature: str) -> bool:
     """
     Verify GitHub webhook signature
@@ -97,21 +112,7 @@ async def github_webhook_skills(
                 message=f"Ignored event: {x_github_event}"
             ))
 
-        # Check if marketplace skill directories were modified.
-        commits = payload.get('commits', [])
-        has_skill_changes = False
-
-        for commit in commits:
-            modified = commit.get('modified', []) + commit.get('added', []) + commit.get('removed', [])
-            if any(
-                f.startswith(('huanxing-skills/', 'clawhub/', 'github/'))
-                and f.endswith(('SKILL.md', 'icon.svg', 'icon.png', 'icon.jpg', 'icon.jpeg'))
-                for f in modified
-            ):
-                has_skill_changes = True
-                break
-
-        if not has_skill_changes:
+        if not has_skill_source_changes(payload.get('commits', [])):
             log.info("No skill changes detected, skipping sync")
             return response_base.success(data=WebhookResponse(
                 message="No skill changes detected"

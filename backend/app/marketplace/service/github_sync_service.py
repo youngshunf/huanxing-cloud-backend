@@ -141,7 +141,11 @@ class GitHubSyncService:
         else:
             # Clone repository
             log.info(f"Cloning repository from {self.repo_url}")
-            self.repo = Repo.clone_from(self.repo_url, self.local_path)
+            self.repo = Repo.clone_from(self.repo_url, self.local_path, multi_options=['--recurse-submodules'])
+
+        self.repo.git.submodule('sync', '--recursive')
+        with self.repo.git.custom_environment(GIT_HTTP_VERSION='HTTP/1.1'):
+            self.repo.git.submodule('update', '--init', '--recursive', '--remote')
 
     async def _scan_skills(self) -> list[dict[str, Any]]:
         """
@@ -152,51 +156,53 @@ class GitHubSyncService:
         """
         skills = []
         repo_root = Path(self.local_path)
-        scan_roots = (
-            ('huanxing-skills', 'official'),
-            ('clawhub', 'clawhub'),
-            ('github', 'github'),
-        )
-
-        for root_name, source_type in scan_roots:
-            root = repo_root / root_name
-            if not root.exists():
-                continue
-            for skill_md in root.glob('*/*/SKILL.md'):
-                try:
-                    skills.append(await self._parse_skill_markdown(skill_md, root_name, source_type))
-                except Exception as exc:  # noqa: PERF203
-                    log.error(f"Failed to parse {skill_md}: {exc}")
+        for skill_md in self._iter_skill_markdown(repo_root):
+            try:
+                skills.append(await self._parse_skill_markdown(skill_md))
+            except Exception as exc:  # noqa: PERF203
+                log.error(f"Failed to parse {skill_md}: {exc}")
 
         if not skills:
             log.warning(f"No SKILL.md skills found under {repo_root}")
 
         return skills
 
-    async def _parse_skill_markdown(self, skill_md_path: Path, root_name: str, source_type: str) -> dict[str, Any]:
+    def _iter_skill_markdown(self, repo_root: Path) -> list[Path]:
+        skill_files: list[Path] = []
+        huanxing_root = repo_root / 'huanxing-skills'
+        if huanxing_root.exists():
+            skill_files.extend(huanxing_root.glob('*/*/SKILL.md'))
+
+        github_root = repo_root / 'github'
+        if github_root.exists():
+            skill_files.extend(
+                skill_md for skill_md in github_root.glob('*/*/*/SKILL.md')
+                if skill_md.parent.parent.name == 'skills'
+            )
+
+        return skill_files
+
+    async def _parse_skill_markdown(self, skill_md_path: Path) -> dict[str, Any]:
         relative = skill_md_path.parent.relative_to(Path(self.local_path))
         parts = relative.parts
-        if len(parts) != 3:
-            raise ValueError(f"Unexpected skill path: {relative}")
-
-        _, owner_or_category, slug = parts
-        if root_name == 'huanxing-skills':
+        root_name = parts[0] if parts else ''
+        if root_name == 'huanxing-skills' and len(parts) == 3:
+            _, owner_or_category, slug = parts
             namespace = f'huanxing/{owner_or_category}'
             repo_path = f'huanxing-skills/{owner_or_category}/{slug}'
             category = owner_or_category
             is_official = True
-        elif root_name == 'clawhub':
-            namespace = f'clawhub/{owner_or_category}'
-            repo_path = f'clawhub/{owner_or_category}/{slug}'
-            category = None
-            is_official = False
-        elif root_name == 'github':
+            source_type = 'huanxing'
+        elif root_name == 'github' and len(parts) >= 3:
+            owner_or_category = parts[1]
+            slug = parts[-1]
             namespace = f'github/{owner_or_category}'
-            repo_path = f'github/{owner_or_category}/{slug}'
+            repo_path = '/'.join(parts)
             category = None
             is_official = False
+            source_type = 'github'
         else:
-            raise ValueError(f"Unsupported skill root: {root_name}")
+            raise ValueError(f"Unsupported skill path: {relative}")
 
         text = skill_md_path.read_text(encoding='utf-8')  # noqa: ASYNC240
         metadata = self._extract_skill_frontmatter(text)
@@ -377,6 +383,7 @@ class GitHubSyncService:
             'file_hash': version_data.get('file_hash'),
             'file_size': version_data.get('file_size'),
             'is_latest': version_data.get('is_latest', True),
+            'published_at': version_data.get('published_at') or timezone.now(),
         }
 
         if existing_version:
