@@ -1,19 +1,21 @@
 """
 工具注册表
 """
-from typing import Optional
 
 from backend.app.mcp.tools.base import BaseTool
 
-
-BOOTSTRAP_TOOL_NAMES = frozenset({"hasn.tool.search"})
+# 云端 server 默认 bootstrap 暴露云端发现工具（03 §3）。
+BOOTSTRAP_TOOL_NAMES = frozenset({"hasn.cloud.tool.search"})
 
 
 class ToolRegistry:
     """工具注册表"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._tools: dict[str, BaseTool] = {}
+        # 迁移别名：别名 → canonical 名。别名可被 get_tool 解析，但不进入
+        # 列表/发现投影，保证发现保持 canonical（与 Rust ToolRegistry 对齐）。
+        self._aliases: dict[str, str] = {}
 
     def register(self, tool: BaseTool) -> None:
         """注册工具"""
@@ -21,9 +23,19 @@ class ToolRegistry:
             raise ValueError(f"Tool already registered: {tool.name}")
         self._tools[tool.name] = tool
 
-    def get_tool(self, name: str) -> Optional[BaseTool]:
-        """获取工具"""
-        return self._tools.get(name)
+    def register_alias(self, alias: str, canonical: str) -> None:
+        """注册迁移别名，解析到已存在的 canonical 工具。"""
+        self._aliases[alias] = canonical
+
+    def get_tool(self, name: str) -> BaseTool | None:
+        """获取工具，解析迁移别名。"""
+        tool = self._tools.get(name)
+        if tool is not None:
+            return tool
+        canonical = self._aliases.get(name)
+        if canonical is not None:
+            return self._tools.get(canonical)
+        return None
 
     def get_all_tools(self) -> list[BaseTool]:
         """获取所有工具"""

@@ -172,7 +172,7 @@ class TestMcpToolsList:
 
         # 验证内置工具存在
         tool_names = [tool["name"] for tool in data["tools"]]
-        assert tool_names == ["hasn.tool.search"]
+        assert tool_names == ["hasn.cloud.tool.search"]
 
     @patch("backend.app.mcp.auth.async_db_session")
     def test_list_tools_with_namespace_filter_stays_bootstrap(
@@ -210,7 +210,7 @@ class TestMcpToolsList:
 
         # 验证仍然只返回 bootstrap 工具
         tool_names = [tool["name"] for tool in tools]
-        assert tool_names == ["hasn.tool.search"]
+        assert tool_names == ["hasn.cloud.tool.search"]
 
     @patch("backend.app.mcp.auth.async_db_session")
     def test_list_tools_inactive_agent(

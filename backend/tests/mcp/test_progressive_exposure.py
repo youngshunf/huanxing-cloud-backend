@@ -168,7 +168,7 @@ class TestMcpProgressiveExposure:
 
         assert response.status_code == 200
         tool_names = [tool["name"] for tool in response.json()["tools"]]
-        assert tool_names == ["hasn.tool.search"]
+        assert tool_names == ["hasn.cloud.tool.search"]
 
     def test_tool_search_returns_builtin_schema(
         self,

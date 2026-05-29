@@ -111,5 +111,28 @@ class TestSourceClassificationAndDescriptor:
         assert search.source == "platform"
         descriptor = search.descriptor()
         assert descriptor["source"] == "platform"
-        assert descriptor["namespace"] == "hasn.tool"
+        assert descriptor["canonical_name"] == "hasn.cloud.tool.search"
         assert descriptor["execution_location"] == "cloud"
+
+
+class TestDiscoveryAlias:
+    """P1: cloud discovery tool name + `hasn.tool.search` migration alias."""
+
+    def test_cloud_search_canonical_and_alias_resolve(self) -> None:
+        from backend.app.mcp.tools.registry import BOOTSTRAP_TOOL_NAMES
+
+        registry = ToolRegistry()
+        directory = ToolDirectoryService(registry)
+        registry.register(ToolSearchTool(directory))
+        registry.register_alias("hasn.tool.search", "hasn.cloud.tool.search")
+
+        assert frozenset({"hasn.cloud.tool.search"}) == BOOTSTRAP_TOOL_NAMES
+
+        canonical = registry.get_tool("hasn.cloud.tool.search")
+        alias = registry.get_tool("hasn.tool.search")
+        assert canonical is not None
+        assert alias is canonical  # alias resolves to the same instance
+
+        # Bootstrap exposes only the canonical, never the alias.
+        bootstrap_names = {tool.name for tool in registry.list_bootstrap_tools()}
+        assert bootstrap_names == {"hasn.cloud.tool.search"}

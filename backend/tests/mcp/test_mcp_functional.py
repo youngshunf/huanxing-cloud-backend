@@ -100,7 +100,7 @@ class TestMcpFunctional:
             assert isinstance(data["tools"], list)
 
             tool_names = [tool["name"] for tool in data["tools"]]
-            assert tool_names == ["hasn.tool.search"]
+            assert tool_names == ["hasn.cloud.tool.search"]
             assert data["tools"][0]["input_schema"]["required"] == ["query"]
 
             print(f"✅ Found {len(data['tools'])} tools")
@@ -132,7 +132,7 @@ class TestMcpFunctional:
             tools = data["tools"]
 
             tool_names = [tool["name"] for tool in tools]
-            assert tool_names == ["hasn.tool.search"]
+            assert tool_names == ["hasn.cloud.tool.search"]
 
             print(f"✅ Found {len(tools)} bootstrap tools")
 
