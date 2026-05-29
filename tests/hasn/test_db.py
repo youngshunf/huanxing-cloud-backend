@@ -84,7 +84,8 @@ def test_hasn_agents_all_columns(db_conn):
         "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='hasn_agents' ORDER BY ordinal_position"
     ))
     columns = [row[0] for row in result]
-    for col in ['id', 'hasn_id', 'star_id', 'owner_id', 'name', 'agent_name', 'type', 'server_id', 'home_client_id', 'api_key_hash', 'status', 'created_via', 'created_time', 'updated_time']:
+    # 注：hasn_agents 历史已用 agent_name/display_name（无独立 name 列）
+    for col in ['id', 'hasn_id', 'star_id', 'owner_id', 'agent_name', 'display_name', 'type', 'server_id', 'home_client_id', 'api_key_hash', 'status', 'created_via', 'created_time', 'updated_time']:
         assert col in columns, f'缺少字段: {col}'
 
 
