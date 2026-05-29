@@ -142,6 +142,7 @@ class ToolDirectoryService:
             "summary": tool.description,
             "required_scopes": tool.required_scopes,
             "risk_level": getattr(tool, "risk_level", "low"),
+            "execution_location": self._execution_location_for_tool(tool),
             "idempotent": True,
             "schema_hash": schema_hash,
             "schema_ref": f"hasn://tool-schema/{tool.name}@{schema_hash}",
@@ -156,6 +157,7 @@ class ToolDirectoryService:
             "output_schema": getattr(tool, "output_schema", {"type": "object"}),
             "required_scopes": tool.required_scopes,
             "risk_level": getattr(tool, "risk_level", "low"),
+            "execution_location": self._execution_location_for_tool(tool),
             "schema_hash": self._schema_hash(tool.input_schema),
         }
 
@@ -164,6 +166,12 @@ class ToolDirectoryService:
 
     def _source_for_tool(self, tool: BaseTool) -> ToolSource:
         return getattr(tool, "source", "platform")
+
+    def _execution_location_for_tool(self, tool: BaseTool) -> str:
+        # P3: registration-time placement. Local-source tools default to local;
+        # everything else to cloud, unless the tool declares otherwise.
+        default = "local" if self._source_for_tool(tool) == "local" else "cloud"
+        return getattr(tool, "execution_location", default)
 
     def _namespace_for_tool(self, tool: BaseTool) -> str:
         return getattr(tool, "namespace", self._fallback_namespace(tool))

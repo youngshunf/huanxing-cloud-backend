@@ -151,3 +151,55 @@ class TestSourceDispatch:
         assert err.code is McpErrorCode.TOOL_NOT_FOUND
         # Subclasses ValueError so MCP routes keep mapping it to HTTP 404.
         assert isinstance(err, ValueError)
+
+
+class TestExecutionLocation:
+    """P3: execution_location registration model + discovery projection."""
+
+    def _app_tool(self, execution_location: str = "cloud") -> AppTool:
+        return AppTool(
+            installation_id="appi_k",
+            app_id="knowledge",
+            app_namespace="knowledge",
+            tool_id="knowledge.search",
+            tool_name="search",
+            action="search",
+            tool_description="Search",
+            tool_input_schema={"type": "object"},
+            tool_required_scopes=[],
+            execution_location=execution_location,
+        )
+
+    def test_app_tool_defaults_to_cloud(self) -> None:
+        tool = self._app_tool()
+        assert tool.execution_location == "cloud"
+        assert tool.descriptor()["execution_location"] == "cloud"
+
+    def test_app_tool_can_declare_local(self) -> None:
+        tool = self._app_tool("local")
+        assert tool.descriptor()["execution_location"] == "local"
+
+    def test_directory_schema_projection_carries_execution_location(self) -> None:
+        import asyncio
+
+        from backend.app.mcp.auth import AgentContext
+        from backend.app.mcp.tool_directory import ToolSearchQuery
+
+        registry = ToolRegistry()
+        registry.register(self._app_tool())
+        directory = ToolDirectoryService(registry)
+        ctx = AgentContext(
+            hasn_id="a_exec",
+            owner_id=1,
+            scopes=[],
+            agent_status="active",
+            metadata={},
+        )
+
+        result = asyncio.run(
+            directory.search(
+                ctx,
+                ToolSearchQuery(query="tool:hasn.knowledge.search", detail="schema"),
+            )
+        )
+        assert result["schemas"][0]["execution_location"] == "cloud"

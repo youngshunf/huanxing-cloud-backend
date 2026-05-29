@@ -26,6 +26,7 @@ class AppTool(BaseTool):
         action: str | None = None,
         tool_output_schema: dict[str, Any] | None = None,
         risk_level: str = "low",
+        execution_location: str = "cloud",
     ) -> None:
         self.installation_id = installation_id
         self.app_id = app_id
@@ -38,6 +39,8 @@ class AppTool(BaseTool):
         self._output_schema = tool_output_schema or {"type": "object"}
         self._required_scopes = tool_required_scopes
         self._risk_level = risk_level
+        # P3: registration-time placement (cloud unless it touches the machine).
+        self._execution_location = execution_location
 
         # P0: validate the derived canonical name (rejects reserved-namespace
         # conflicts and malformed names) at construction time.
@@ -76,6 +79,10 @@ class AppTool(BaseTool):
     @property
     def risk_level(self) -> str:
         return self._risk_level
+
+    @property
+    def execution_location(self) -> str:
+        return self._execution_location
 
     async def execute(
         self,
