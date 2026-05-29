@@ -145,10 +145,13 @@ class CommunityService:
         skill_tags: list[str] | None = None,
         visibility: str = 'public',
         comment_policy: str = 'all',
-        as_agent_hasn_id: str | None = None,
     ) -> dict[str, Any]:
         """
-        创建帖子
+        创建帖子（WebUI Owner JWT 通道：作者恒为操作者本人 human）
+
+        身份模型见 docs/.../13-社区设计补丁 §1.5：WebUI 发帖永远是 human，
+        Agent 自主发帖只走 MCP + Agent JWT（/api/v1/community/agent/*），
+        不接受请求体身份字段，杜绝 as_agent_hasn_id 冒名越权。
 
         :param db: 数据库会话
         :param user_id: 用户 ID
@@ -158,24 +161,16 @@ class CommunityService:
         :param skill_tags: 技能标签
         :param visibility: 可见范围
         :param comment_policy: 评论策略
-        :param as_agent_hasn_id: 以 Agent 身份发布时的 Agent hasn_id
         :return: 帖子信息
         """
         # 生成 post_id
         post_id = f"p_{uuid4_str()[:12]}"
 
-        # 确定作者类型和 owner
-        if as_agent_hasn_id:
-            # TODO: 验证 Agent 归属关系
-            author_type = 'agent'
-            author_hasn_id = as_agent_hasn_id
-            author_user_id = None
-            owner_hasn_id = hasn_id  # 主人的 hasn_id
-        else:
-            author_type = 'human'
-            author_hasn_id = hasn_id
-            author_user_id = user_id
-            owner_hasn_id = hasn_id
+        # 作者恒为当前 Owner JWT 对应的 human（身份 = 认证凭证，不接受请求体指定）
+        author_type = 'human'
+        author_hasn_id = hasn_id
+        author_user_id = user_id
+        owner_hasn_id = hasn_id
 
         # TODO: 获取当前 active workspace
         workspace_kind = 'personal'
@@ -195,7 +190,7 @@ class CommunityService:
             skill_tags=skill_tags or [],
             visibility=visibility,
             comment_policy=comment_policy,
-            generation_type='human' if author_type == 'human' else 'agent',
+            generation_type='human',
             status='published',
             published_time=timezone.now(),
         )
@@ -1246,10 +1241,13 @@ class CommunityService:
         tags: list[str] | None = None,
         visibility: str = 'public',
         comment_policy: str = 'all',
-        as_agent_hasn_id: str | None = None,
     ) -> dict[str, Any]:
         """
-        创建文章
+        创建文章（WebUI Owner JWT 通道：作者恒为操作者本人 human）
+
+        身份模型见 docs/.../13-社区设计补丁 §1.5：WebUI 发文永远是 human，
+        Agent 自主发文只走 MCP + Agent JWT（/api/v1/community/agent/*），
+        不接受请求体身份字段，杜绝 as_agent_hasn_id 冒名越权。
 
         :param db: 数据库会话
         :param user_id: 用户 ID
@@ -1261,7 +1259,6 @@ class CommunityService:
         :param tags: 话题标签
         :param visibility: 可见范围
         :param comment_policy: 评论策略
-        :param as_agent_hasn_id: 以 Agent 身份发布时的 Agent hasn_id
         :return: 文章信息
         """
         from backend.app.hasn_community.model.hasn_articles import HasnArticles
@@ -1269,17 +1266,11 @@ class CommunityService:
         # 生成 article_id
         article_id = f"art_{uuid4_str()[:12]}"
 
-        # 确定作者类型和 owner
-        if as_agent_hasn_id:
-            author_type = 'agent'
-            author_hasn_id = as_agent_hasn_id
-            author_user_id = None
-            owner_hasn_id = hasn_id
-        else:
-            author_type = 'human'
-            author_hasn_id = hasn_id
-            author_user_id = user_id
-            owner_hasn_id = hasn_id
+        # 作者恒为当前 Owner JWT 对应的 human（身份 = 认证凭证，不接受请求体指定）
+        author_type = 'human'
+        author_hasn_id = hasn_id
+        author_user_id = user_id
+        owner_hasn_id = hasn_id
 
         # TODO: 获取当前 active workspace
         workspace_kind = 'personal'
@@ -1301,7 +1292,7 @@ class CommunityService:
             tags=tags or [],
             visibility=visibility,
             comment_policy=comment_policy,
-            generation_type='human' if author_type == 'human' else 'agent',
+            generation_type='human',
             status='published',
             published_time=timezone.now(),
         )

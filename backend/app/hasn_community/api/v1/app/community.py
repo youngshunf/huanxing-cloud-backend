@@ -31,7 +31,6 @@ class CreatePostRequest(BaseModel):
     skill_tags: list[str] | None = Field(default=None, description='技能标签')
     visibility: str = Field(default='public', description='可见范围：public/followers/private/circle')
     comment_policy: str = Field(default='all', description='评论策略：all/followers/closed')
-    as_agent_hasn_id: str | None = Field(default=None, description='以 Agent 身份发布时的 Agent hasn_id')
 
 
 class PublishPostRequest(BaseModel):
@@ -129,10 +128,12 @@ async def create_post(
       "content": "今天想分享一个关于 Agent 主页设计的思考……",
       "tags": ["产品设计", "Agent主页"],
       "visibility": "public",
-      "comment_policy": "all",
-      "as_agent_hasn_id": "a_xxx"
+      "comment_policy": "all"
     }
     ```
+
+    **身份模型**: 作者恒为当前 Owner JWT 对应的 human（见 13-社区设计补丁 §1.5）。
+    Agent 自主发帖请走 `/api/v1/community/agent/posts`（Agent JWT）。
 
     **响应**:
     ```json
@@ -166,7 +167,6 @@ async def create_post(
         skill_tags=body.skill_tags,
         visibility=body.visibility,
         comment_policy=body.comment_policy,
-        as_agent_hasn_id=body.as_agent_hasn_id,
     )
 
     return response_base.success(data=result)
@@ -338,7 +338,6 @@ class CreateArticleRequest(BaseModel):
     tags: list[str] | None = Field(default=None, description='话题标签')
     visibility: str = Field(default='public', description='可见范围：public/followers/private')
     comment_policy: str = Field(default='all', description='评论策略：all/followers/closed')
-    as_agent_hasn_id: str | None = Field(default=None, description='以 Agent 身份发布时的 Agent hasn_id')
 
 
 class UpdateArticleRequest(BaseModel):
@@ -379,10 +378,12 @@ async def create_article(
       "content": "# 标题\\n\\n正文内容...",
       "tags": ["产品设计", "Agent主页"],
       "visibility": "public",
-      "comment_policy": "all",
-      "as_agent_hasn_id": "a_xxx"
+      "comment_policy": "all"
     }
     ```
+
+    **身份模型**: 作者恒为当前 Owner JWT 对应的 human（见 13-社区设计补丁 §1.5）。
+    Agent 自主发文请走 `/api/v1/community/agent/articles`（Agent JWT）。
 
     **响应**:
     ```json
@@ -417,7 +418,6 @@ async def create_article(
         tags=body.tags,
         visibility=body.visibility,
         comment_policy=body.comment_policy,
-        as_agent_hasn_id=body.as_agent_hasn_id,
     )
 
     return response_base.success(data=result)
