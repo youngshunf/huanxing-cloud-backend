@@ -1274,22 +1274,287 @@ class CommunityService:
 
         collection_list = []
         for collection in collections:
-            # 统计收藏项数量
-            count_stmt = select(HasnCollectionItems).where(
-                HasnCollectionItems.collection_id == collection.collection_id
-            )
-            count_result = await db.execute(count_stmt)
-            item_count = len(count_result.scalars().all())
-
             collection_list.append({
                 'collection_id': collection.collection_id,
                 'name': collection.name,
-                'description': collection.description,
                 'is_public': collection.is_public,
-                'item_count': item_count,
+                'item_count': collection.item_count,
             })
 
         return collection_list
+
+    # ==================== 收藏夹与收藏动作 ====================
+
+    @staticmethod
+    async def list_collections(
+        db: AsyncSession,
+        *,
+        owner_hasn_id: str,
+    ) -> dict[str, Any]:
+        """收藏夹列表（含 item_count），doc-13 §3.2。"""
+        stmt = (
+            select(HasnCollections)
+            .where(HasnCollections.owner_hasn_id == owner_hasn_id)
+            .order_by(HasnCollections.created_time.desc())
+        )
+        collections = (await db.execute(stmt)).scalars().all()
+        return {
+            'items': [
+                {
+                    'collection_id': c.collection_id,
+                    'name': c.name,
+                    'is_public': c.is_public,
+                    'item_count': c.item_count,
+                    'created_time': c.created_time.isoformat() if c.created_time else None,
+                }
+                for c in collections
+            ]
+        }
+
+    @staticmethod
+    async def create_collection(
+        db: AsyncSession,
+        *,
+        owner_hasn_id: str,
+        name: str,
+        is_public: bool = False,
+    ) -> dict[str, Any]:
+        """创建收藏夹，doc-13 §3.2。"""
+        collection_id = f'col_{uuid4_str()[:12]}'
+        collection = HasnCollections(
+            collection_id=collection_id,
+            owner_hasn_id=owner_hasn_id,
+            name=name,
+            is_public=is_public,
+            item_count=0,
+        )
+        db.add(collection)
+        await db.flush()
+        return {
+            'collection_id': collection_id,
+            'name': name,
+            'is_public': is_public,
+            'item_count': 0,
+        }
+
+    @staticmethod
+    async def delete_collection(
+        db: AsyncSession,
+        *,
+        owner_hasn_id: str,
+        collection_id: str,
+    ) -> None:
+        """删除收藏夹（仅本人）+ 级联删除其收藏项，doc-13 §3.2。"""
+        collection = (
+            await db.execute(
+                select(HasnCollections).where(
+                    HasnCollections.collection_id == collection_id,
+                    HasnCollections.owner_hasn_id == owner_hasn_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if not collection:
+            raise errors.NotFoundError(msg='收藏夹不存在')
+
+        # 删除项 + 回退被收藏内容的 collect_count
+        items = (
+            await db.execute(
+                select(HasnCollectionItems).where(
+                    HasnCollectionItems.collection_id == collection_id
+                )
+            )
+        ).scalars().all()
+        for item in items:
+            await CommunityService._adjust_collect_count(db, item.target_type, item.target_id, -1)
+            await db.delete(item)
+        await db.delete(collection)
+        await db.flush()
+
+    @staticmethod
+    async def get_collection_items(
+        db: AsyncSession,
+        *,
+        owner_hasn_id: str,
+        collection_id: str,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """收藏夹内容列表（回填 target 内容摘要），doc-13 §3.2。"""
+        collection = (
+            await db.execute(
+                select(HasnCollections).where(
+                    HasnCollections.collection_id == collection_id,
+                    HasnCollections.owner_hasn_id == owner_hasn_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if not collection:
+            raise errors.NotFoundError(msg='收藏夹不存在')
+
+        stmt = (
+            select(HasnCollectionItems)
+            .where(HasnCollectionItems.collection_id == collection_id)
+            .order_by(HasnCollectionItems.id.desc())
+        )
+        if cursor:
+            stmt = stmt.where(HasnCollectionItems.id < int(cursor))
+        stmt = stmt.limit(limit + 1)
+        items = (await db.execute(stmt)).scalars().all()
+
+        has_more = len(items) > limit
+        items = items[:limit]
+
+        # 批量回填内容摘要
+        post_ids = [i.target_id for i in items if i.target_type == 'post']
+        article_ids = [i.target_id for i in items if i.target_type == 'article']
+        post_map: dict[str, Any] = {}
+        article_map: dict[str, Any] = {}
+        if post_ids:
+            for p in (await db.execute(select(HasnPosts).where(HasnPosts.post_id.in_(post_ids)))).scalars().all():
+                post_map[p.post_id] = p
+        if article_ids:
+            for a in (await db.execute(select(HasnArticles).where(HasnArticles.article_id.in_(article_ids)))).scalars().all():
+                article_map[a.article_id] = a
+
+        result_items = []
+        for item in items:
+            entry: dict[str, Any] = {
+                'target_type': item.target_type,
+                'target_id': item.target_id,
+            }
+            if item.target_type == 'post' and item.target_id in post_map:
+                p = post_map[item.target_id]
+                entry['preview'] = (p.content or '')[:120]
+                entry['like_count'] = p.like_count
+            elif item.target_type == 'article' and item.target_id in article_map:
+                a = article_map[item.target_id]
+                entry['title'] = a.title
+                entry['preview'] = (a.summary or a.content or '')[:120]
+                entry['like_count'] = a.like_count
+            result_items.append(entry)
+
+        return {
+            'items': result_items,
+            'next_cursor': str(items[-1].id) if has_more and items else None,
+        }
+
+    @staticmethod
+    async def _adjust_collect_count(db: AsyncSession, target_type: str, target_id: str, delta: int) -> None:
+        """维护被收藏内容的 collect_count。"""
+        if target_type == 'post':
+            obj = (await db.execute(select(HasnPosts).where(HasnPosts.post_id == target_id))).scalars().first()
+        elif target_type == 'article':
+            obj = (await db.execute(select(HasnArticles).where(HasnArticles.article_id == target_id))).scalars().first()
+        else:
+            obj = None
+        if obj is not None:
+            obj.collect_count = max(0, (obj.collect_count or 0) + delta)
+
+    @staticmethod
+    async def collect(
+        db: AsyncSession,
+        *,
+        owner_hasn_id: str,
+        target_type: str,
+        target_id: str,
+        collection_id: str | None = None,
+    ) -> dict[str, Any]:
+        """收藏内容（缺省进默认收藏夹，首次自动创建），doc-13 §2.4/§3.2。"""
+        # 解析目标收藏夹
+        if collection_id:
+            collection = (
+                await db.execute(
+                    select(HasnCollections).where(
+                        HasnCollections.collection_id == collection_id,
+                        HasnCollections.owner_hasn_id == owner_hasn_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if not collection:
+                raise errors.NotFoundError(msg='收藏夹不存在')
+        else:
+            # 默认收藏夹：取最早的一个，没有则创建
+            collection = (
+                await db.execute(
+                    select(HasnCollections)
+                    .where(HasnCollections.owner_hasn_id == owner_hasn_id)
+                    .order_by(HasnCollections.created_time.asc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if not collection:
+                collection = HasnCollections(
+                    collection_id=f'col_{uuid4_str()[:12]}',
+                    owner_hasn_id=owner_hasn_id,
+                    name='默认收藏夹',
+                    is_public=False,
+                    item_count=0,
+                )
+                db.add(collection)
+                await db.flush()
+
+        # 幂等：已收藏则直接返回
+        existing = (
+            await db.execute(
+                select(HasnCollectionItems).where(
+                    HasnCollectionItems.collection_id == collection.collection_id,
+                    HasnCollectionItems.target_type == target_type,
+                    HasnCollectionItems.target_id == target_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing:
+            return {'collection_id': collection.collection_id, 'is_collected': True}
+
+        db.add(
+            HasnCollectionItems(
+                collection_id=collection.collection_id,
+                target_type=target_type,
+                target_id=target_id,
+            )
+        )
+        collection.item_count = (collection.item_count or 0) + 1
+        await CommunityService._adjust_collect_count(db, target_type, target_id, 1)
+        await db.flush()
+        return {'collection_id': collection.collection_id, 'is_collected': True}
+
+    @staticmethod
+    async def uncollect(
+        db: AsyncSession,
+        *,
+        owner_hasn_id: str,
+        target_type: str,
+        target_id: str,
+    ) -> dict[str, Any]:
+        """取消收藏（移除该 owner 所有收藏夹中的该目标），doc-13 §3.2。"""
+        items = (
+            await db.execute(
+                select(HasnCollectionItems)
+                .join(HasnCollections, HasnCollectionItems.collection_id == HasnCollections.collection_id)
+                .where(
+                    HasnCollections.owner_hasn_id == owner_hasn_id,
+                    HasnCollectionItems.target_type == target_type,
+                    HasnCollectionItems.target_id == target_id,
+                )
+            )
+        ).scalars().all()
+        if not items:
+            return {'is_collected': False}
+
+        affected_collection_ids = set()
+        for item in items:
+            affected_collection_ids.add(item.collection_id)
+            await db.delete(item)
+        # 回退 item_count 与 collect_count
+        for cid in affected_collection_ids:
+            collection = (
+                await db.execute(select(HasnCollections).where(HasnCollections.collection_id == cid))
+            ).scalars().first()
+            if collection:
+                collection.item_count = max(0, (collection.item_count or 0) - 1)
+        await CommunityService._adjust_collect_count(db, target_type, target_id, -len(items))
+        await db.flush()
+        return {'is_collected': False}
 
     # ==================== 热门话题 ====================
 

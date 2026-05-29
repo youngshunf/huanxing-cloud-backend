@@ -1132,3 +1132,151 @@ async def get_pending_drafts(
     )
 
     return response_base.success(data=result)
+
+
+# ==================== 收藏夹与收藏动作 ====================
+
+
+async def _require_human_hasn_id(db, user_id: int) -> str:
+    """解析当前 Owner 的 human hasn_id（不存在则 404）。"""
+    from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+    from backend.common.exception import errors
+
+    human = await hasn_humans_dao.get_by_user_id(db, user_id)
+    if not human:
+        raise errors.NotFoundError(msg='用户 HASN 身份不存在')
+    return human.hasn_id
+
+
+class CreateCollectionRequest(BaseModel):
+    """创建收藏夹请求"""
+
+    name: str = Field(description='收藏夹名称', min_length=1, max_length=100)
+    is_public: bool = Field(default=False, description='是否公开')
+
+
+class CollectRequest(BaseModel):
+    """收藏请求"""
+
+    target_type: str = Field(description='目标类型：post/article')
+    target_id: str = Field(description='目标 ID')
+    collection_id: str | None = Field(default=None, description='收藏夹 ID（缺省进默认收藏夹）')
+
+
+@router.get(
+    '/collections',
+    summary='获取收藏夹列表',
+    description='获取当前用户的收藏夹列表（含 item_count）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def list_collections(request: Request, db: CurrentSession) -> ResponseModel:
+    """收藏夹列表"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.list_collections(db, owner_hasn_id=hasn_id)
+    return response_base.success(data=result)
+
+
+@router.post(
+    '/collections',
+    summary='创建收藏夹',
+    description='创建一个新的收藏夹',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def create_collection(
+    request: Request,
+    db: CurrentSessionTransaction,
+    body: CreateCollectionRequest,
+) -> ResponseModel:
+    """创建收藏夹"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.create_collection(
+        db, owner_hasn_id=hasn_id, name=body.name, is_public=body.is_public
+    )
+    return response_base.success(data=result)
+
+
+@router.delete(
+    '/collections/{collection_id}',
+    summary='删除收藏夹',
+    description='删除指定收藏夹及其收藏项',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def delete_collection(
+    request: Request,
+    db: CurrentSessionTransaction,
+    collection_id: str,
+) -> ResponseModel:
+    """删除收藏夹"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    await community_service.delete_collection(db, owner_hasn_id=hasn_id, collection_id=collection_id)
+    return response_base.success()
+
+
+@router.get(
+    '/collections/{collection_id}/items',
+    summary='获取收藏夹内容',
+    description='获取指定收藏夹内的收藏项（含内容摘要，游标分页）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_collection_items(
+    request: Request,
+    db: CurrentSession,
+    collection_id: str,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> ResponseModel:
+    """收藏夹内容列表"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.get_collection_items(
+        db, owner_hasn_id=hasn_id, collection_id=collection_id, cursor=cursor, limit=limit
+    )
+    return response_base.success(data=result)
+
+
+@router.post(
+    '/collect',
+    summary='收藏内容',
+    description='收藏帖子/文章（缺省进默认收藏夹，首次自动创建）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def collect(
+    request: Request,
+    db: CurrentSessionTransaction,
+    body: CollectRequest,
+) -> ResponseModel:
+    """收藏内容"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.collect(
+        db,
+        owner_hasn_id=hasn_id,
+        target_type=body.target_type,
+        target_id=body.target_id,
+        collection_id=body.collection_id,
+    )
+    return response_base.success(data=result)
+
+
+@router.delete(
+    '/collect',
+    summary='取消收藏',
+    description='取消收藏（query：target_type + target_id）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def uncollect(
+    request: Request,
+    db: CurrentSessionTransaction,
+    target_type: str,
+    target_id: str,
+) -> ResponseModel:
+    """取消收藏"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.uncollect(
+        db, owner_hasn_id=hasn_id, target_type=target_type, target_id=target_id
+    )
+    return response_base.success(data=result)
