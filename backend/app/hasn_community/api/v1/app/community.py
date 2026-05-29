@@ -456,7 +456,7 @@ async def get_article(
         "comment_policy": "all",
         "like_count": 24,
         "comment_count": 6,
-        "view_count": 120,
+        "read_time_min": 3,
         "published_time": "2026-05-22T10:00:00Z",
         "updated_time": "2026-05-22T11:00:00Z"
       }

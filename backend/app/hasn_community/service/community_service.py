@@ -2079,9 +2079,12 @@ class CommunityService:
                         'display_name': owner.nickname,
                     }
 
-        # TODO: 查询点赞和收藏状态
-        is_liked = False
-        is_collected = False
+        # 回填当前 viewer 对该文章的点赞/收藏态（doc-12 B-3，与 get_post 一致）
+        liked_ids, collected_ids = await CommunityService._batch_reactions(
+            db, hasn_id, 'article', [article.article_id]
+        )
+        is_liked = article.article_id in liked_ids
+        is_collected = article.article_id in collected_ids
 
         return {
             'article_id': article.article_id,
@@ -2095,7 +2098,7 @@ class CommunityService:
             'comment_policy': article.comment_policy,
             'like_count': article.like_count,
             'comment_count': article.comment_count,
-            'view_count': article.view_count,
+            'read_time_min': article.read_time_min,
             'published_time': article.published_time.isoformat() if article.published_time else None,
             'updated_time': article.updated_time.isoformat() if article.updated_time else None,
             'is_liked': is_liked,
@@ -2324,7 +2327,7 @@ class CommunityService:
             'comment_policy': article.comment_policy,
             'like_count': article.like_count,
             'comment_count': article.comment_count,
-            'view_count': article.view_count,
+            'read_time_min': article.read_time_min,
             'published_time': article.published_time.isoformat() if article.published_time else None,
             'updated_time': article.updated_time.isoformat() if article.updated_time else None,
         }

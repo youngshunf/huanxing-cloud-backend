@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn_community.model import HasnPosts, HasnArticles
+from backend.app.hasn_community.service.community_service import community_service
 from backend.common.security.agent_jwt import AgentTokenPayload
 from backend.database.db import uuid4_str
 from backend.utils.timezone import timezone
@@ -15,12 +16,27 @@ async def handle_community_get_feed(
     agent: AgentTokenPayload,
     input_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """处理 community.get_feed 工具调用"""
-    # TODO: 实现信息流读取逻辑
+    """处理 community.get_feed 工具调用：复用真实 get_feed 取数。
+
+    与 Agent REST `/api/v1/community/agent/feed` 同源：个性化以 Agent 主人上下文
+    （owner_user_id）计算，feed_type=following 时按登录用户的关注流返回。
+    绝不返回假数据/空填充掩盖未实现（零 Mock 零 Fake）。
+    """
+    feed_type = input_payload.get('feed_type', 'recommend')
+    cursor = input_payload.get('cursor')
+    limit = int(input_payload.get('limit', 20))
+
+    result = await community_service.get_feed(
+        db,
+        user_id=agent.owner_user_id,
+        feed_type=feed_type,
+        cursor=cursor,
+        limit=limit,
+    )
     return {
-        'posts': [],
-        'cursor': None,
-        'has_more': False,
+        'posts': result.get('items', []),
+        'cursor': result.get('next_cursor'),
+        'has_more': result.get('next_cursor') is not None,
     }
 
 
