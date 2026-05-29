@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 from backend.app.mcp.auth import AgentContext
+from backend.app.mcp.errors import McpErrorCode, McpToolError
 from backend.app.mcp.tool_directory import ToolDirectoryService
 from backend.app.mcp.tools.base import BaseTool
 from backend.app.mcp.tools.contact import ContactListTool
@@ -109,10 +110,8 @@ class HasnCloudMcpServer:
 
             await self._load_app_tools(agent_context)
 
-            # 查找工具
-            tool = self.tool_registry.get_tool(tool_name)
-            if not tool:
-                raise ValueError(f"Tool not found: {tool_name}")
+            # 解析工具并确定 source（P2）。未注册 → MCP_9209。
+            tool, source = self._resolve_tool(tool_name)
 
             # 检查权限
             if not self._check_tool_permission(agent_context, tool):
@@ -120,8 +119,8 @@ class HasnCloudMcpServer:
                     f"Missing required scopes: {', '.join(tool.required_scopes)}"
                 )
 
-            # 执行工具
-            result = await tool.execute(agent_context, arguments)
+            # 按 source 分发执行
+            result = await self._dispatch_by_source(agent_context, tool, source, arguments)
 
             # 记录审计日志
             await self._log_tool_call(
@@ -156,6 +155,32 @@ class HasnCloudMcpServer:
             scope in agent_context.scopes
             for scope in tool.required_scopes
         )
+
+    def _resolve_tool(self, tool_name: str) -> tuple[BaseTool, str]:
+        """解析工具名到 (tool, source)，未注册抛 MCP_9209（P2）。"""
+        tool = self.tool_registry.get_tool(tool_name)
+        if tool is None:
+            raise McpToolError(McpErrorCode.TOOL_NOT_FOUND, f"Tool not found: {tool_name}")
+        return tool, getattr(tool, "source", "platform")
+
+    async def _dispatch_by_source(
+        self,
+        agent_context: AgentContext,
+        tool: BaseTool,
+        source: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """按 source 分发到对应 handler（04 §7）。
+
+        platform / app 在云端 server 内由各自 BaseTool.execute 自路由其 handler
+        （app → ai_native_runtime_gateway）。external 在 P7 前云端无承接。
+        """
+        if source == "external":
+            raise McpToolError(
+                McpErrorCode.TOOL_NOT_FOUND,
+                "external MCP tools are not enabled on the cloud server (P7)",
+            )
+        return await tool.execute(agent_context, arguments)
 
     async def _load_app_tools(self, agent_context: AgentContext) -> None:
         try:

@@ -136,3 +136,18 @@ class TestDiscoveryAlias:
         # Bootstrap exposes only the canonical, never the alias.
         bootstrap_names = {tool.name for tool in registry.list_bootstrap_tools()}
         assert bootstrap_names == {"hasn.cloud.tool.search"}
+
+
+class TestSourceDispatch:
+    """P2: MCP error codes carried by the source-dispatch resolution."""
+
+    def test_mcp_tool_error_carries_code_and_is_value_error(self) -> None:
+        from backend.app.mcp.errors import McpErrorCode, McpToolError
+
+        err = McpToolError(McpErrorCode.TOOL_NOT_FOUND, "Tool not found: hasn.x.y")
+        assert "MCP_9209" in str(err)
+        assert "TOOL_NOT_FOUND" in str(err)
+        assert "Tool not found" in str(err)
+        assert err.code is McpErrorCode.TOOL_NOT_FOUND
+        # Subclasses ValueError so MCP routes keep mapping it to HTTP 404.
+        assert isinstance(err, ValueError)
