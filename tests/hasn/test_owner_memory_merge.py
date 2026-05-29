@@ -200,6 +200,35 @@ async def test_empty_contribution_rejected(db: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_contributions_orders_desc_and_counts_pending(db: AsyncSession) -> None:
+    """owner 透明视图：贡献按时间倒序，pending_count 只数未合并。"""
+    owner_id = await _seed_human(db)
+    agent_a = await _seed_agent(db, owner_id=owner_id, display_name='分身A')
+    agent_b = await _seed_agent(db, owner_id=owner_id, display_name='分身B')
+
+    await owner_memory_service.contribute(db, owner_id=owner_id, agent_hasn_id=agent_a, content='观察一')
+    await owner_memory_service.contribute(db, owner_id=owner_id, agent_hasn_id=agent_b, content='观察二')
+
+    async def fake_llm(messages: list[dict[str, str]]) -> str:  # noqa: RUF029 - async 以匹配 LlmComplete 接口
+        return '# 主人\n合并记忆'
+
+    # 先合并这两条（变 merged），再追加一条 pending
+    await owner_memory_service.merge_owner_memory(db, owner_id=owner_id, llm_complete=fake_llm)
+    await owner_memory_service.contribute(db, owner_id=owner_id, agent_hasn_id=agent_a, content='观察三-新')
+
+    listing = await owner_memory_service.list_contributions(db, owner_id=owner_id, limit=50)
+    assert len(listing['items']) == 3
+    # 倒序：最新（观察三-新）在最前
+    assert listing['items'][0]['content'] == '观察三-新'
+    assert listing['items'][0]['status'] == 'pending'
+    # 只有 1 条 pending（另外两条已 merged）
+    assert listing['pending_count'] == 1
+    merged_items = [i for i in listing['items'] if i['status'] == 'merged']
+    assert len(merged_items) == 2
+    assert all(i['merged_into_version'] == 1 for i in merged_items)
+
+
+@pytest.mark.asyncio
 async def test_merge_empty_llm_output_raises_and_keeps_pending(db: AsyncSession) -> None:
     """LLM 返回空内容 -> 抛错且贡献保持 pending（不产生假合并）。"""
     owner_id = await _seed_human(db)

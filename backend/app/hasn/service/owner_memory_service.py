@@ -63,6 +63,43 @@ class OwnerMemoryService:
             return {'content': None, 'version': 0}
         return {'content': row.content, 'version': int(row.version or 1)}
 
+    async def list_contributions(self, db: AsyncSession, *, owner_id: str, limit: int = 50) -> dict[str, Any]:
+        """列出该 owner 的记忆贡献流（owner 透明视图，按时间倒序）。"""
+        rows = list(
+            (
+                await db.execute(
+                    sa.select(HasnOwnerMemoryContribution)
+                    .where(HasnOwnerMemoryContribution.owner_id == owner_id)
+                    .order_by(HasnOwnerMemoryContribution.id.desc())
+                    .limit(max(1, min(int(limit), 200)))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        pending_count = (
+            await db.execute(
+                sa.select(sa.func.count())
+                .select_from(HasnOwnerMemoryContribution)
+                .where(
+                    HasnOwnerMemoryContribution.owner_id == owner_id,
+                    HasnOwnerMemoryContribution.status == 'pending',
+                )
+            )
+        ).scalar_one()
+        items = [
+            {
+                'id': int(r.id),
+                'agent_hasn_id': r.agent_hasn_id,
+                'content': r.content,
+                'status': r.status,
+                'merged_into_version': r.merged_into_version,
+                'created_time': r.created_time,
+            }
+            for r in rows
+        ]
+        return {'items': items, 'pending_count': int(pending_count or 0)}
+
     async def merge_owner_memory(
         self, db: AsyncSession, *, owner_id: str, llm_complete: LlmComplete | None = None
     ) -> dict[str, Any]:

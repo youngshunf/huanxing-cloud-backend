@@ -238,3 +238,21 @@ class OwnerMemoryResponse(SchemaBase):
 
     content: str | None = Field(None, description='当前 owner 记忆（合并后的 USER.md）')
     version: int = Field(default=0, description='记忆版本（0 表示尚无合并记忆）')
+
+
+class OwnerMemoryContributionItem(SchemaBase):
+    """单条 owner 记忆贡献（owner 透明视图）。"""
+
+    id: int = Field(description='贡献 ID')
+    agent_hasn_id: str = Field(description='上传 Agent 的 hasn_id')
+    content: str | None = Field(None, description='观察片段')
+    status: str = Field(description='状态 (pending/merged/discarded)')
+    merged_into_version: int | None = Field(None, description='合并进的 owner_memory 版本')
+    created_time: datetime | None = Field(None, description='上传时间')
+
+
+class OwnerMemoryContributionsResponse(SchemaBase):
+    """owner 查看自己记忆的贡献流（通信对主人透明）。"""
+
+    items: list[OwnerMemoryContributionItem] = Field(default_factory=list, description='贡献列表（按时间倒序）')
+    pending_count: int = Field(default=0, description='待合并贡献数')

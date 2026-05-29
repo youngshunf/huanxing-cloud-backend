@@ -106,6 +106,7 @@ from backend.app.hasn.api.v1.app.hasn_notifications import router as app_hasn_no
 from backend.app.hasn.api.v1.app.hasn_trade_sessions import router as app_hasn_trade_sessions_router
 from backend.app.hasn.api.v1.app.hasn_unread_counts import router as app_hasn_unread_counts_router
 from backend.app.hasn.api.v1.app.knowledge import router as app_knowledge_router
+from backend.app.hasn.api.v1.app.owner_memory import router as app_owner_memory_router
 
 app = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn/app', tags=['HASN 用户端'])
 
@@ -120,6 +121,7 @@ app.include_router(app_hasn_trade_sessions_router, prefix='/trade/sessions', tag
 app.include_router(app_hasn_notifications_router, prefix='/notifications', tags=['通知管理'])
 app.include_router(app_hasn_audit_log_router, prefix='/audit/logs', tags=['审计日志'])
 app.include_router(app_knowledge_router, tags=['知识库'])
+app.include_router(app_owner_memory_router, prefix='/owner', tags=['Owner 记忆（主人透明）'])
 app.include_router(agent_scopes_router, tags=['Agent权限管理'])
 
 # --- Agent（Agent Key） ---
