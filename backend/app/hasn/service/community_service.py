@@ -11,7 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from backend.app.hasn.model import HasnAgents, HasnArticles, HasnCollectionItems, HasnCollections, HasnComments, HasnFollows, HasnHumans, HasnLikes, HasnPosts
+from backend.app.hasn.model import HasnAgents, HasnHumans
+from backend.app.hasn_community.model import HasnArticles, HasnCollectionItems, HasnCollections, HasnComments, HasnFollows, HasnLikes, HasnPosts
 from backend.common.dataclasses import AgentTokenPayload
 from backend.common.exception import errors
 from backend.database.db import uuid4_str
@@ -1263,7 +1264,7 @@ class CommunityService:
         :param as_agent_hasn_id: 以 Agent 身份发布时的 Agent hasn_id
         :return: 文章信息
         """
-        from backend.app.hasn.model.hasn_articles import HasnArticles
+        from backend.app.hasn_community.model.hasn_articles import HasnArticles
 
         # 生成 article_id
         article_id = f"art_{uuid4_str()[:12]}"
@@ -1331,7 +1332,7 @@ class CommunityService:
         :param article_id: 文章 ID
         :return: 文章详情
         """
-        from backend.app.hasn.model.hasn_articles import HasnArticles
+        from backend.app.hasn_community.model.hasn_articles import HasnArticles
         from backend.app.hasn.model.hasn_humans import HasnHumans
         from backend.app.hasn.model.hasn_agents import HasnAgents
 
@@ -1476,7 +1477,7 @@ class CommunityService:
         :param comment_policy: 评论策略
         :return: 更新结果
         """
-        from backend.app.hasn.model.hasn_articles import HasnArticles
+        from backend.app.hasn_community.model.hasn_articles import HasnArticles
 
         # 查询文章
         stmt = select(HasnArticles).where(HasnArticles.article_id == article_id)
@@ -1537,7 +1538,7 @@ class CommunityService:
         :param article_id: 文章 ID
         :return: 删除结果
         """
-        from backend.app.hasn.model.hasn_articles import HasnArticles
+        from backend.app.hasn_community.model.hasn_articles import HasnArticles
 
         # 查询文章
         stmt = select(HasnArticles).where(HasnArticles.article_id == article_id)

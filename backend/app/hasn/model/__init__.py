@@ -30,13 +30,6 @@ from backend.app.hasn.model.hasn_trade_sessions import HasnTradeSessions as Hasn
 from backend.app.hasn.model.hasn_unread_counts import HasnUnreadCounts as HasnUnreadCounts
 from backend.app.hasn.model.hasn_user_active_workspace import HasnUserActiveWorkspace as HasnUserActiveWorkspace
 from backend.app.hasn.model.hasn_workspace_app import HasnWorkspaceApp as HasnWorkspaceApp
-from backend.app.hasn.model.hasn_posts import HasnPosts as HasnPosts
-from backend.app.hasn.model.hasn_articles import HasnArticles as HasnArticles
-from backend.app.hasn.model.hasn_comments import HasnComments as HasnComments
-from backend.app.hasn.model.hasn_follows import HasnFollows as HasnFollows
-from backend.app.hasn.model.hasn_likes import HasnLikes as HasnLikes
-from backend.app.hasn.model.hasn_collections import HasnCollections as HasnCollections
-from backend.app.hasn.model.hasn_collection_items import HasnCollectionItems as HasnCollectionItems
 from backend.app.hasn.model.hasn_skill_bundle import HasnSkillBundle as HasnSkillBundle
 from backend.app.hasn.model.hasn_task import HasnTask as HasnTask
 from backend.app.hasn.model.hasn_task_assignment import HasnTaskAssignment as HasnTaskAssignment

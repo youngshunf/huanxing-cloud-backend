@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nanoid import generate
 
 from backend.common.security.agent_jwt import AgentTokenPayload
-from backend.app.hasn.model import HasnPosts, HasnArticles
+from backend.app.hasn_community.model import HasnPosts, HasnArticles
 from backend.utils.timezone import timezone
 
 
