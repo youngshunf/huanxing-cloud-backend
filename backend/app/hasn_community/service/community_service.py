@@ -1298,23 +1298,68 @@ class CommunityService:
         db: AsyncSession,
         *,
         limit: int = 5,
+        days: int = 7,
     ) -> list[dict[str, Any]]:
         """
-        获取热门话题
+        获取热门话题（真实统计，doc-12 C3）。
+
+        聚合近 ``days`` 天内已发布帖子+文章的 tags：
+        - post_count：使用该 tag 的内容数
+        - heat：内容互动量之和（点赞+评论），用于排序
+        - trend：对比近半窗口 vs 远半窗口的内容数（rising/stable/falling），真实计算
 
         :param db: 数据库会话
         :param limit: 返回数量
-        :return: 热门话题列表
+        :param days: 统计窗口（天）
+        :return: 热门话题列表 [{topic, post_count, trend}]
         """
-        # TODO: 实现真实的热门话题统计
-        # 当前返回模拟数据
-        return [
-            {'topic': 'AI分身产品设计', 'post_count': 128, 'trend': 'rising'},
-            {'topic': 'Agent工作流', 'post_count': 96, 'trend': 'stable'},
-            {'topic': 'HASN社区', 'post_count': 84, 'trend': 'rising'},
-            {'topic': '产品设计', 'post_count': 72, 'trend': 'stable'},
-            {'topic': '技术架构', 'post_count': 58, 'trend': 'falling'},
-        ][:limit]
+        half = max(1, days // 2)
+        sql = text(
+            """
+            WITH tagged AS (
+                SELECT unnest(tags) AS tag, like_count, comment_count, published_time
+                FROM hasn_posts
+                WHERE status = 'published'
+                  AND published_time >= now() - make_interval(days => :days)
+                UNION ALL
+                SELECT unnest(tags) AS tag, like_count, comment_count, published_time
+                FROM hasn_articles
+                WHERE status = 'published'
+                  AND published_time >= now() - make_interval(days => :days)
+            )
+            SELECT
+                tag,
+                count(*) AS post_count,
+                COALESCE(SUM(like_count + comment_count), 0) AS heat,
+                count(*) FILTER (WHERE published_time >= now() - make_interval(days => :half)) AS recent_cnt,
+                count(*) FILTER (WHERE published_time <  now() - make_interval(days => :half)) AS older_cnt
+            FROM tagged
+            WHERE tag IS NOT NULL AND tag <> ''
+            GROUP BY tag
+            ORDER BY heat DESC, post_count DESC, tag ASC
+            LIMIT :limit
+            """
+        )
+        rows = (
+            await db.execute(sql, {'days': days, 'half': half, 'limit': limit})
+        ).mappings().all()
+
+        topics: list[dict[str, Any]] = []
+        for row in rows:
+            recent = row['recent_cnt']
+            older = row['older_cnt']
+            if recent > older:
+                trend = 'rising'
+            elif recent < older:
+                trend = 'falling'
+            else:
+                trend = 'stable'
+            topics.append({
+                'topic': row['tag'],
+                'post_count': int(row['post_count']),
+                'trend': trend,
+            })
+        return topics
 
     # ==================== 推荐 Agent ====================
 
