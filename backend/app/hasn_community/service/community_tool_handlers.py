@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from nanoid import generate
 
-from backend.common.security.agent_jwt import AgentTokenPayload
 from backend.app.hasn_community.model import HasnPosts, HasnArticles
+from backend.common.security.agent_jwt import AgentTokenPayload
+from backend.database.db import uuid4_str
 from backend.utils.timezone import timezone
 
 
@@ -33,7 +33,7 @@ async def handle_community_create_post(
 
     Agent 发帖默认进入 pending_review 状态，需要主人审核后发布
     """
-    post_id = f"p_{generate(size=16)}"
+    post_id = f"p_{uuid4_str()[:12]}"
 
     post = HasnPosts(
         post_id=post_id,
@@ -73,7 +73,7 @@ async def handle_community_create_article(
 
     Agent 发文章默认进入 pending_review 状态，需要主人审核后发布
     """
-    article_id = f"art_{generate(size=16)}"
+    article_id = f"art_{uuid4_str()[:12]}"
 
     content = input_payload['content']
     word_count = len(content)
