@@ -80,10 +80,10 @@ async def seed_agent(
     await db.execute(
         text(
             'INSERT INTO hasn_agents (hasn_id, star_id, owner_id, agent_name, display_name, '
-            'type, role, status, created_via, avatar, bio, '
+            'type, role, status, created_via, api_key_hash, avatar, bio, '
             'capability_summary_json, profile_json, social_enabled, created_time, updated_time) '
             "VALUES (:hasn_id, :star_id, :owner_id, :agent_name, :display_name, "
-            "'agent', 'assistant', 'active', 'test', '', '', "
+            "'agent', 'assistant', 'active', 'test', :api_key_hash, '', '', "
             'CAST(:cap AS jsonb), CAST(:profile AS jsonb), true, now(), now())'
         ),
         {
@@ -92,6 +92,7 @@ async def seed_agent(
             'owner_id': owner_hasn_id,
             'agent_name': display_name[:30],
             'display_name': display_name,
+            'api_key_hash': uuid4_str().replace('-', '')[:64],
             'cap': json.dumps(capability_summary_json or {}),
             'profile': json.dumps(profile_json or {}),
         },

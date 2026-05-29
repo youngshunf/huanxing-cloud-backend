@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -919,30 +919,158 @@ class CommunityService:
         db: AsyncSession,
         *,
         hasn_id: str,
-        viewer_user_id: int,
+        viewer_user_id: int | None = None,
     ) -> dict[str, Any]:
         """
-        获取主页信息
+        获取主页信息（human / agent），全部来自真实字段。
+
+        doc-13 §2.2：
+        - type 判别：先查 hasn_humans，命中则 human，否则查 hasn_agents
+        - human：nickname/avatar/bio/tags
+        - agent：display_name/avatar/bio + capability_summary_json 能力概览
+          + profile_json.community（边界/内容声明/置顶）+ 主人信息条
+          + 聚合 hasn_ai_native_app_audit(decision=allow) 被调用数
+        - 统计：实时 count 关注/粉丝/帖子/文章；被收藏 = 内容 collect_count 之和
+        - is_following：查 hasn_follows(follower=viewer, target=hasn_id)
 
         :param db: 数据库会话
         :param hasn_id: 目标 hasn_id
-        :param viewer_user_id: 查看者用户 ID
+        :param viewer_user_id: 查看者用户 ID（open scope 可为 None）
         :return: 主页信息
         """
-        # TODO: 实现完整的主页信息查询
-        # 需要查询 hasn_humans 或 hasn_agents 表
-        # 需要统计关注数、粉丝数、帖子数等
-        return {
+        viewer_hasn_id = await CommunityService._resolve_human_hasn_id(db, viewer_user_id)
+
+        # 判别类型
+        human = (
+            await db.execute(select(HasnHumans).where(HasnHumans.hasn_id == hasn_id))
+        ).scalar_one_or_none()
+        agent = None
+        if human is None:
+            agent = (
+                await db.execute(select(HasnAgents).where(HasnAgents.hasn_id == hasn_id))
+            ).scalar_one_or_none()
+        if human is None and agent is None:
+            raise errors.NotFoundError(msg='主页不存在')
+
+        # 通用统计（实时 count）
+        following_count = (
+            await db.execute(
+                select(func.count()).select_from(HasnFollows).where(HasnFollows.follower_hasn_id == hasn_id)
+            )
+        ).scalar() or 0
+        follower_count = (
+            await db.execute(
+                select(func.count()).select_from(HasnFollows).where(HasnFollows.target_hasn_id == hasn_id)
+            )
+        ).scalar() or 0
+        post_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(HasnPosts)
+                .where(HasnPosts.author_hasn_id == hasn_id, HasnPosts.status == 'published')
+            )
+        ).scalar() or 0
+        article_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(HasnArticles)
+                .where(HasnArticles.author_hasn_id == hasn_id, HasnArticles.status == 'published')
+            )
+        ).scalar() or 0
+        # 被收藏数 = 该主体内容 collect_count 之和
+        collected_posts = (
+            await db.execute(
+                select(func.coalesce(func.sum(HasnPosts.collect_count), 0)).where(
+                    HasnPosts.author_hasn_id == hasn_id
+                )
+            )
+        ).scalar() or 0
+        collected_articles = (
+            await db.execute(
+                select(func.coalesce(func.sum(HasnArticles.collect_count), 0)).where(
+                    HasnArticles.author_hasn_id == hasn_id
+                )
+            )
+        ).scalar() or 0
+        collected_count = int(collected_posts) + int(collected_articles)
+
+        # is_following
+        is_following = False
+        if viewer_hasn_id and viewer_hasn_id != hasn_id:
+            is_following = (
+                await db.execute(
+                    select(HasnFollows.id)
+                    .where(
+                        HasnFollows.follower_hasn_id == viewer_hasn_id,
+                        HasnFollows.target_hasn_id == hasn_id,
+                    )
+                    .limit(1)
+                )
+            ).first() is not None
+
+        base: dict[str, Any] = {
             'hasn_id': hasn_id,
-            'type': 'human',  # TODO: 判断类型
-            'display_name': 'User',
-            'bio': '',
-            'avatar': '',
-            'follower_count': 0,
-            'following_count': 0,
-            'post_count': 0,
-            'is_following': False,
+            'follower_count': int(follower_count),
+            'following_count': int(following_count),
+            'post_count': int(post_count),
+            'article_count': int(article_count),
+            'collected_count': collected_count,
+            'is_following': is_following,
+            'is_self': bool(viewer_hasn_id and viewer_hasn_id == hasn_id),
         }
+
+        if human is not None:
+            base.update({
+                'type': 'human',
+                'display_name': human.nickname or hasn_id,
+                'avatar': human.avatar or '',
+                'bio': human.bio or '',
+                'tags': human.tags or [],
+            })
+            return base
+
+        # agent
+        profile_json = agent.profile_json if isinstance(agent.profile_json, dict) else {}
+        community_block = profile_json.get('community', {}) if isinstance(profile_json, dict) else {}
+
+        # 被调用数：聚合 AI-Native 调用审计（放行的）
+        called_count = (
+            await db.execute(
+                text(
+                    'SELECT count(*) FROM hasn_ai_native_app_audit '
+                    "WHERE agent_hasn_id = :h AND decision = 'allow'"
+                ),
+                {'h': hasn_id},
+            )
+        ).scalar() or 0
+
+        # 主人信息条
+        owner_info = None
+        if agent.owner_id:
+            owner = (
+                await db.execute(select(HasnHumans).where(HasnHumans.hasn_id == agent.owner_id))
+            ).scalar_one_or_none()
+            if owner:
+                owner_info = {
+                    'hasn_id': owner.hasn_id,
+                    'display_name': owner.nickname or owner.hasn_id,
+                    'avatar': owner.avatar or '',
+                }
+
+        base.update({
+            'type': 'agent',
+            'display_name': agent.display_name or hasn_id,
+            'avatar': agent.avatar or '',
+            'bio': agent.bio or '',
+            'tags': agent.tags or [],
+            'capability_summary': agent.capability_summary_json or {},
+            'boundaries': community_block.get('boundaries', []),
+            'content_statement': community_block.get('content_statement', ''),
+            'pinned': community_block.get('pinned', []),
+            'owner': owner_info,
+            'called_count': int(called_count),
+        })
+        return base
 
     @staticmethod
     async def get_profile_posts(
@@ -1057,21 +1185,24 @@ class CommunityService:
         :param viewer_user_id: 查看者用户 ID
         :return: Agent 列表
         """
-        # 查询该用户拥有的 Agent
+        # 查询该用户拥有的 Agent（hasn_agents 无 follower_count 列，改按创建时间倒序）
         stmt = (
             select(HasnAgents)
             .where(HasnAgents.owner_id == hasn_id)
-            .order_by(HasnAgents.follower_count.desc())
+            .order_by(HasnAgents.created_time.desc())
         )
 
         result = await db.execute(stmt)
         agents = result.scalars().all()
 
-        # 查询当前用户是否已关注这些 Agent
-        from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+        # 查询主人真实 display_name（修 owner display_name 写死，doc-12 C4）
+        owner_human = (
+            await db.execute(select(HasnHumans).where(HasnHumans.hasn_id == hasn_id))
+        ).scalar_one_or_none()
+        owner_display_name = (owner_human.nickname if owner_human else None) or hasn_id
 
-        viewer_human = await hasn_humans_dao.get_by_user_id(db, viewer_user_id)
-        viewer_hasn_id = viewer_human.hasn_id if viewer_human else None
+        # 查询当前用户是否已关注这些 Agent
+        viewer_hasn_id = await CommunityService._resolve_human_hasn_id(db, viewer_user_id)
 
         agent_list = []
         for agent in agents:
@@ -1086,6 +1217,18 @@ class CommunityService:
                 follow_result = await db.execute(follow_stmt)
                 is_following = follow_result.scalars().first() is not None
 
+            # 实时统计该 Agent 的粉丝数
+            agent_follower_count = (
+                await db.execute(
+                    select(func.count())
+                    .select_from(HasnFollows)
+                    .where(
+                        HasnFollows.target_type == 'agent',
+                        HasnFollows.target_hasn_id == agent.hasn_id,
+                    )
+                )
+            ).scalar() or 0
+
             agent_list.append({
                 'hasn_id': agent.hasn_id,
                 'display_name': agent.display_name,
@@ -1093,9 +1236,9 @@ class CommunityService:
                 'avatar': agent.avatar,
                 'owner': {
                     'hasn_id': hasn_id,
-                    'display_name': hasn_id,  # TODO: 查询 owner 的 display_name
+                    'display_name': owner_display_name,
                 },
-                'follower_count': agent.follower_count,
+                'follower_count': int(agent_follower_count),
                 'is_following': is_following,
             })
 
