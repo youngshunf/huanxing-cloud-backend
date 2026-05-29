@@ -29,13 +29,6 @@ from backend.app.hasn.api.v1.admin.hasn_trade_sessions import router as admin_ha
 from backend.app.hasn.api.v1.admin.hasn_unread_counts import router as admin_hasn_unread_counts_router
 from backend.app.hasn.api.v1.admin.hasn_user_active_workspace import router as admin_hasn_user_active_workspace_router
 from backend.app.hasn.api.v1.admin.hasn_workspace_app import router as admin_hasn_workspace_app_router
-from backend.app.hasn.api.v1.admin.hasn_posts import router as admin_hasn_posts_router
-from backend.app.hasn.api.v1.admin.hasn_articles import router as admin_hasn_articles_router
-from backend.app.hasn.api.v1.admin.hasn_comments import router as admin_hasn_comments_router
-from backend.app.hasn.api.v1.admin.hasn_follows import router as admin_hasn_follows_router
-from backend.app.hasn.api.v1.admin.hasn_likes import router as admin_hasn_likes_router
-from backend.app.hasn.api.v1.admin.hasn_collections import router as admin_hasn_collections_router
-from backend.app.hasn.api.v1.admin.hasn_collection_items import router as admin_hasn_collection_items_router
 from backend.app.hasn.api.v1.admin.hasn_skill_bundle import router as admin_hasn_skill_bundle_router
 from backend.app.hasn.api.v1.admin.hasn_task import router as admin_hasn_task_router
 from backend.app.hasn.api.v1.admin.hasn_task_run import router as admin_hasn_task_run_router
@@ -142,13 +135,6 @@ from backend.app.hasn.api.v1.agent.hasn_nodes import router as agent_hasn_nodes_
 from backend.app.hasn.api.v1.agent.hasn_notifications import router as agent_hasn_notifications_router
 from backend.app.hasn.api.v1.agent.hasn_trade_sessions import router as agent_hasn_trade_sessions_router
 from backend.app.hasn.api.v1.agent.hasn_unread_counts import router as agent_hasn_unread_counts_router
-from backend.app.hasn.api.v1.agent.hasn_posts import router as agent_hasn_posts_router
-from backend.app.hasn.api.v1.agent.hasn_articles import router as agent_hasn_articles_router
-from backend.app.hasn.api.v1.agent.hasn_comments import router as agent_hasn_comments_router
-from backend.app.hasn.api.v1.agent.hasn_follows import router as agent_hasn_follows_router
-from backend.app.hasn.api.v1.agent.hasn_likes import router as agent_hasn_likes_router
-from backend.app.hasn.api.v1.agent.hasn_collections import router as agent_hasn_collections_router
-from backend.app.hasn.api.v1.agent.hasn_collection_items import router as agent_hasn_collection_items_router
 from backend.app.hasn.api.v1.agent.hasn_skill_bundle import router as agent_hasn_skill_bundle_router
 from backend.app.hasn.api.v1.agent.hasn_task import router as agent_hasn_task_router
 from backend.app.hasn.api.v1.agent.hasn_task_run import router as agent_hasn_task_run_router
@@ -170,14 +156,6 @@ agent.include_router(agent_hasn_trade_sessions_router, prefix='/trade/sessions',
 agent.include_router(agent_hasn_notifications_router, prefix='/notifications', tags=['通知管理'])
 agent.include_router(agent_hasn_audit_log_router, prefix='/audit/logs', tags=['审计日志'])
 agent.include_router(agent_hasn_nodes_router, prefix='/hasn/nodess', tags=['HASN Node 主-HASN Node 主'])
-# 注释掉 codegen 生成的社区表 agent 路由
-# agent.include_router(agent_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
-# agent.include_router(agent_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
-# agent.include_router(agent_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
-# agent.include_router(agent_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
-# agent.include_router(agent_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
-# agent.include_router(agent_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
-# agent.include_router(agent_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
 agent.include_router(agent_hasn_skill_bundle_router, prefix='/hasn/skill/bundles', tags=['Skill Bundle 定义表（多个 skill 的组合）-Skill Bundle 定义表（多个 skill 的组合）'])
 agent.include_router(agent_hasn_task_router, prefix='/hasn/tasks', tags=['任务定义-任务定义'])
 agent.include_router(agent_hasn_task_run_router, prefix='/hasn/task/runs', tags=['任务执行记录-任务执行记录'])
@@ -187,13 +165,6 @@ agent.include_router(agent_hasn_session_artifacts_router, prefix='/hasn/session/
 
 # --- 公开（无需认证，仅 Agent 能力发现） ---
 from backend.app.hasn.api.v1.open.hasn_agent_capabilities import router as open_hasn_agent_capabilities_router
-from backend.app.hasn.api.v1.open.hasn_posts import router as open_hasn_posts_router
-from backend.app.hasn.api.v1.open.hasn_articles import router as open_hasn_articles_router
-from backend.app.hasn.api.v1.open.hasn_comments import router as open_hasn_comments_router
-from backend.app.hasn.api.v1.open.hasn_follows import router as open_hasn_follows_router
-from backend.app.hasn.api.v1.open.hasn_likes import router as open_hasn_likes_router
-from backend.app.hasn.api.v1.open.hasn_collections import router as open_hasn_collections_router
-from backend.app.hasn.api.v1.open.hasn_collection_items import router as open_hasn_collection_items_router
 from backend.app.hasn.api.v1.open.hasn_skill_bundle import router as open_hasn_skill_bundle_router
 from backend.app.hasn.api.v1.open.hasn_task import router as open_hasn_task_router
 from backend.app.hasn.api.v1.open.hasn_task_run import router as open_hasn_task_run_router
@@ -204,14 +175,6 @@ from backend.app.hasn.api.v1.open.hasn_session_artifacts import router as open_h
 open_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/hasn/open', tags=['HASN 公开接口'])
 
 open_api.include_router(open_hasn_agent_capabilities_router, prefix='/agent/capabilities', tags=['Agent能力发现'])
-# 注释掉 codegen 生成的社区表 open_api 路由
-# open_api.include_router(open_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
-# open_api.include_router(open_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
-# open_api.include_router(open_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
-# open_api.include_router(open_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
-# open_api.include_router(open_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
-# open_api.include_router(open_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
-# open_api.include_router(open_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
 open_api.include_router(open_hasn_skill_bundle_router, prefix='/hasn/skill/bundles', tags=['Skill Bundle 定义表（多个 skill 的组合）-Skill Bundle 定义表（多个 skill 的组合）'])
 open_api.include_router(open_hasn_task_router, prefix='/hasn/tasks', tags=['任务定义-任务定义'])
 open_api.include_router(open_hasn_task_run_router, prefix='/hasn/task/runs', tags=['任务执行记录-任务执行记录'])
@@ -250,13 +213,6 @@ app.include_router(app_profile_router, prefix='/profile', tags=['合并 Profile 
 
 # --- IM 业务 API ---
 from backend.app.hasn.api.v1.app.hasn_im import router as app_hasn_im_router
-from backend.app.hasn.api.v1.app.hasn_posts import router as app_hasn_posts_router
-from backend.app.hasn.api.v1.app.hasn_articles import router as app_hasn_articles_router
-from backend.app.hasn.api.v1.app.hasn_comments import router as app_hasn_comments_router
-from backend.app.hasn.api.v1.app.hasn_follows import router as app_hasn_follows_router
-from backend.app.hasn.api.v1.app.hasn_likes import router as app_hasn_likes_router
-from backend.app.hasn.api.v1.app.hasn_collections import router as app_hasn_collections_router
-from backend.app.hasn.api.v1.app.hasn_collection_items import router as app_hasn_collection_items_router
 from backend.app.hasn.api.v1.app.community import router as app_community_router
 from backend.app.hasn.api.v1.app.hasn_skill_bundle import router as app_hasn_skill_bundle_router
 from backend.app.hasn.api.v1.app.hasn_task import router as app_hasn_task_router
@@ -283,14 +239,6 @@ app.include_router(
 )
 # 社区自定义 API（替代 codegen 生成的 CRUD）
 app.include_router(app_community_router, prefix='/community', tags=['社区'])
-# 注释掉 codegen 生成的社区表 CRUD 路由，使用自定义社区 API
-# app.include_router(app_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
-# app.include_router(app_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
-# app.include_router(app_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
-# app.include_router(app_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
-# app.include_router(app_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
-# app.include_router(app_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
-# app.include_router(app_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
 app.include_router(app_hasn_sessions_router, prefix='/hasn/sessionss', tags=['HASN 会话分层 - 逻辑会话-HASN 会话分层 - 逻辑会话'])
 app.include_router(app_hasn_session_events_router, prefix='/hasn/session/eventss', tags=['HASN 会话事件-HASN 会话事件'])
 app.include_router(app_hasn_session_artifacts_router, prefix='/hasn/session/artifactss', tags=['HASN 会话产物-HASN 会话产物'])
@@ -298,14 +246,6 @@ app.include_router(app_hasn_task_sessions_router, tags=['任务系统 Session AP
 app.include_router(app_hasn_task_api_router, tags=['任务系统 Task API'])
 v1.include_router(work_sessions_router, tags=['外部 APP 工作会话'])
 v1.include_router(node_control_router, tags=['HASN Node 控制平面'])
-# 注释掉 codegen 生成的社区表 admin 路由
-# v1.include_router(admin_hasn_posts_router, prefix='/hasn/postss', tags=['社区帖子-社区帖子'])
-# v1.include_router(admin_hasn_articles_router, prefix='/hasn/articless', tags=['社区文章-社区文章'])
-# v1.include_router(admin_hasn_comments_router, prefix='/hasn/commentss', tags=['社区评论-社区评论'])
-# v1.include_router(admin_hasn_follows_router, prefix='/hasn/followss', tags=['社区关注-社区关注'])
-# v1.include_router(admin_hasn_likes_router, prefix='/hasn/likess', tags=['社区点赞-社区点赞'])
-# v1.include_router(admin_hasn_collections_router, prefix='/hasn/collectionss', tags=['社区收藏夹-社区收藏夹'])
-# v1.include_router(admin_hasn_collection_items_router, prefix='/hasn/collection/itemss', tags=['社区收藏项-社区收藏项'])
 v1.include_router(admin_hasn_skill_bundle_router, prefix='/hasn/skill/bundles', tags=['Skill Bundle 定义表（多个 skill 的组合）-Skill Bundle 定义表（多个 skill 的组合）'])
 v1.include_router(admin_hasn_task_router, prefix='/hasn/tasks', tags=['任务定义-任务定义'])
 v1.include_router(admin_hasn_task_run_router, prefix='/hasn/task/runs', tags=['任务执行记录-任务执行记录'])
