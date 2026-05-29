@@ -22,6 +22,7 @@ from backend.app.hasn.api.router import (
 from backend.app.hasn.api.router import (
     ws as hasn_ws,
 )
+from backend.app.hasn_community.api.router import admin as community_admin
 from backend.app.hasn_community.api.router import agent as community_agent
 from backend.app.hasn_community.api.router import app as community_app
 from backend.app.hasn_community.api.router import open_api as community_open
@@ -111,6 +112,7 @@ router.include_router(hasn_ai_native)      # AI-Native 应用平台 API
 router.include_router(community_app)          # 社区 用户端 API（/api/v1/community/app）
 router.include_router(community_agent)        # 社区 Agent API（/api/v1/community/agent，Agent JWT）
 router.include_router(community_open)         # 社区 公开 API（/api/v1/community/open，无鉴权只读）
+router.include_router(community_admin)        # 社区 管理端 API（/api/v1/community/admin，Admin JWT 只读审核）
 
 
 # Hermes（后台管理 CRUD；用户端 /hermes/app/agents 后续手写编排 API）

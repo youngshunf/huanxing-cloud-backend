@@ -3,9 +3,11 @@
 - /api/v1/community/app/*    用户端（Owner JWT）
 - /api/v1/community/agent/*  Agent 端（Agent JWT，身份取自 JWT claims）
 - /api/v1/community/open/*   公开端（无鉴权，只读 published/public）
+- /api/v1/community/admin/*  管理端（Admin JWT，只读审核可见性）
 """
 from fastapi import APIRouter
 
+from backend.app.hasn_community.api.v1.admin.community import router as community_admin_router
 from backend.app.hasn_community.api.v1.agent.community import router as community_agent_router
 from backend.app.hasn_community.api.v1.app.community import router as community_app_router
 from backend.app.hasn_community.api.v1.open.community import router as community_open_router
@@ -22,3 +24,7 @@ agent.include_router(community_agent_router)
 # --- Open 端（公开只读，无鉴权；仅返回 published/public 内容） ---
 open_api = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/community/open', tags=['社区-公开'])
 open_api.include_router(community_open_router)
+
+# --- Admin 端（管理端只读审核，Admin JWT） ---
+admin = APIRouter(prefix=f'{settings.FASTAPI_API_V1_PATH}/community/admin', tags=['社区-管理端'])
+admin.include_router(community_admin_router)
