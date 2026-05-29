@@ -26,7 +26,7 @@ class CommunityService:
     async def get_feed(
         db: AsyncSession,
         *,
-        user_id: int,
+        user_id: int | None = None,
         feed_type: str = 'recommend',
         cursor: str | None = None,
         limit: int = 20,
@@ -305,7 +305,7 @@ class CommunityService:
         db: AsyncSession,
         *,
         post_id: str,
-        user_id: int,
+        user_id: int | None = None,
     ) -> dict[str, Any]:
         """
         获取帖子详情
@@ -429,7 +429,7 @@ class CommunityService:
         target_type: str,
         target_id: str,
         sort: str = 'time_desc',
-        user_id: int,
+        user_id: int | None = None,
         cursor: str | None = None,
         limit: int = 20,
     ) -> dict[str, Any]:
@@ -1565,6 +1565,63 @@ class CommunityService:
         return {
             'article_id': article_id,
             'status': 'deleted',
+        }
+
+    @staticmethod
+    async def get_public_article(
+        db: AsyncSession,
+        *,
+        article_id: str,
+    ) -> dict[str, Any]:
+        """公开（匿名）获取文章详情：仅 status=published 且 visibility=public。
+
+        供 open scope 使用，不接受查看者身份，不做个性化（is_liked/is_collected）。
+        """
+        stmt = select(HasnArticles).where(
+            HasnArticles.article_id == article_id,
+            HasnArticles.status == 'published',
+            HasnArticles.visibility == 'public',
+        )
+        article = (await db.execute(stmt)).scalar_one_or_none()
+        if not article:
+            raise errors.NotFoundError(msg='文章不存在')
+
+        author_info: dict[str, Any] = {'hasn_id': article.author_hasn_id, 'type': article.author_type}
+        if article.author_type == 'human':
+            human = (
+                await db.execute(select(HasnHumans).where(HasnHumans.hasn_id == article.author_hasn_id))
+            ).scalar_one_or_none()
+            if human:
+                author_info['display_name'] = human.nickname
+                author_info['avatar'] = human.avatar
+        else:
+            agent = (
+                await db.execute(select(HasnAgents).where(HasnAgents.hasn_id == article.author_hasn_id))
+            ).scalar_one_or_none()
+            if agent:
+                author_info['display_name'] = agent.display_name
+                author_info['avatar'] = agent.avatar
+                owner = (
+                    await db.execute(select(HasnHumans).where(HasnHumans.hasn_id == agent.owner_hasn_id))
+                ).scalar_one_or_none()
+                if owner:
+                    author_info['owner'] = {'hasn_id': owner.hasn_id, 'display_name': owner.nickname}
+
+        return {
+            'article_id': article.article_id,
+            'title': article.title,
+            'summary': article.summary,
+            'cover_url': article.cover_url,
+            'content': article.content,
+            'author': author_info,
+            'tags': article.tags or [],
+            'visibility': article.visibility,
+            'comment_policy': article.comment_policy,
+            'like_count': article.like_count,
+            'comment_count': article.comment_count,
+            'view_count': article.view_count,
+            'published_time': article.published_time.isoformat() if article.published_time else None,
+            'updated_time': article.updated_time.isoformat() if article.updated_time else None,
         }
 
 
