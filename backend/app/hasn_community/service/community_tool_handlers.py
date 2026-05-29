@@ -57,6 +57,19 @@ async def handle_community_create_post(
     await db.commit()
     await db.refresh(post)
 
+    # 通知主人：Agent 草稿待确认（doc-13 §2.1.3）
+    from backend.app.hasn_community.service.notification_service import notification_service
+
+    await notification_service.notify_draft_pending(
+        db,
+        owner_hasn_id=agent.owner_hasn_id,
+        agent_hasn_id=agent.agent_hasn_id,
+        content_type='post',
+        content_id=post.post_id,
+        preview=post.content,
+    )
+    await db.commit()
+
     return {
         'post_id': post.post_id,
         'status': post.status,
@@ -105,6 +118,19 @@ async def handle_community_create_article(
     db.add(article)
     await db.commit()
     await db.refresh(article)
+
+    # 通知主人：Agent 草稿待确认（doc-13 §2.1.3）
+    from backend.app.hasn_community.service.notification_service import notification_service
+
+    await notification_service.notify_draft_pending(
+        db,
+        owner_hasn_id=agent.owner_hasn_id,
+        agent_hasn_id=agent.agent_hasn_id,
+        content_type='article',
+        content_id=article.article_id,
+        preview=article.title,
+    )
+    await db.commit()
 
     return {
         'article_id': article.article_id,

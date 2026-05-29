@@ -1280,3 +1280,89 @@ async def uncollect(
         db, owner_hasn_id=hasn_id, target_type=target_type, target_id=target_id
     )
     return response_base.success(data=result)
+
+
+# ==================== 通知 ====================
+
+
+@router.get(
+    '/notifications',
+    summary='获取通知列表',
+    description='获取当前用户通知（type/unread_only 过滤 + 游标分页 + 读时聚合）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def list_notifications(
+    request: Request,
+    db: CurrentSession,
+    type: str | None = None,
+    unread_only: bool = False,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> ResponseModel:
+    """通知列表"""
+    from backend.app.hasn_community.service.notification_service import notification_service
+
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    types = [t.strip() for t in type.split(',') if t.strip()] if type else None
+    result = await notification_service.list_notifications(
+        db, recipient_hasn_id=hasn_id, types=types, unread_only=unread_only, cursor=cursor, limit=limit
+    )
+    return response_base.success(data=result)
+
+
+@router.get(
+    '/notifications/unread-count',
+    summary='获取未读通知数',
+    description='获取当前用户未读通知数（含按类型分组）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def notifications_unread_count(request: Request, db: CurrentSession) -> ResponseModel:
+    """未读通知数"""
+    from backend.app.hasn_community.service.notification_service import notification_service
+
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await notification_service.unread_count(db, recipient_hasn_id=hasn_id)
+    return response_base.success(data=result)
+
+
+@router.put(
+    '/notifications/read-all',
+    summary='全部已读',
+    description='将通知全部标记为已读（可按 type 过滤）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def notifications_read_all(
+    request: Request,
+    db: CurrentSessionTransaction,
+    type: str | None = None,
+) -> ResponseModel:
+    """全部已读"""
+    from backend.app.hasn_community.service.notification_service import notification_service
+
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    types = [t.strip() for t in type.split(',') if t.strip()] if type else None
+    affected = await notification_service.mark_all_read(db, recipient_hasn_id=hasn_id, types=types)
+    return response_base.success(data={'affected': affected})
+
+
+@router.put(
+    '/notifications/{notification_id}/read',
+    summary='标记单条已读',
+    description='将单条通知标记为已读',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def notification_mark_read(
+    request: Request,
+    db: CurrentSessionTransaction,
+    notification_id: int,
+) -> ResponseModel:
+    """标记单条已读"""
+    from backend.app.hasn_community.service.notification_service import notification_service
+
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    await notification_service.mark_read(db, recipient_hasn_id=hasn_id, notification_id=notification_id)
+    return response_base.success()

@@ -671,21 +671,55 @@ class CommunityService:
         db.add(comment)
         await db.flush()
 
-        # 更新目标的评论计数
+        # 更新目标的评论计数 + 捕获内容作者信息（用于通知）
+        target_author_hasn_id = None
+        target_author_type = None
+        target_owner_hasn_id = None
         if target_type == 'post':
             post_stmt = select(HasnPosts).where(HasnPosts.post_id == target_id)
             post_result = await db.execute(post_stmt)
             post = post_result.scalars().first()
             if post:
                 post.comment_count += 1
+                target_author_hasn_id = post.author_hasn_id
+                target_author_type = post.author_type
+                target_owner_hasn_id = post.owner_hasn_id
         elif target_type == 'article':
             article_stmt = select(HasnArticles).where(HasnArticles.article_id == target_id)
             article_result = await db.execute(article_stmt)
             article = article_result.scalars().first()
             if article:
                 article.comment_count += 1
+                target_author_hasn_id = article.author_hasn_id
+                target_author_type = article.author_type
+                target_owner_hasn_id = article.owner_hasn_id
 
         await db.flush()
+
+        # 触发通知：内容作者（+ Agent 主人 relay）+ 被回复评论作者
+        parent_author_hasn_id = None
+        if parent_id:
+            pa = (
+                await db.execute(
+                    select(HasnComments.author_hasn_id).where(HasnComments.comment_id == parent_id)
+                )
+            ).scalar_one_or_none()
+            parent_author_hasn_id = pa
+        if target_author_hasn_id:
+            from backend.app.hasn_community.service.notification_service import notification_service
+
+            await notification_service.notify_content_interaction(
+                db,
+                ntype='community_comment',
+                actor_hasn_id=hasn_id,
+                content_type=target_type,
+                content_id=target_id,
+                author_hasn_id=target_author_hasn_id,
+                author_type=target_author_type or 'human',
+                owner_hasn_id=target_owner_hasn_id,
+                preview=content,
+                extra_recipient_hasn_id=parent_author_hasn_id,
+            )
 
         return {
             'comment_id': comment_id,
@@ -764,27 +798,59 @@ class CommunityService:
         )
         db.add(like)
 
-        # 更新目标的点赞计数
+        # 更新目标的点赞计数 + 捕获作者信息（用于通知）
+        target_author_hasn_id = None
+        target_author_type = None
+        target_owner_hasn_id = None
+        preview = None
         if target_type == 'post':
             post_stmt = select(HasnPosts).where(HasnPosts.post_id == target_id)
             post_result = await db.execute(post_stmt)
             post = post_result.scalars().first()
             if post:
                 post.like_count += 1
+                target_author_hasn_id = post.author_hasn_id
+                target_author_type = post.author_type
+                target_owner_hasn_id = post.owner_hasn_id
+                preview = post.content
         elif target_type == 'article':
             article_stmt = select(HasnArticles).where(HasnArticles.article_id == target_id)
             article_result = await db.execute(article_stmt)
             article = article_result.scalars().first()
             if article:
                 article.like_count += 1
+                target_author_hasn_id = article.author_hasn_id
+                target_author_type = article.author_type
+                target_owner_hasn_id = article.owner_hasn_id
+                preview = article.title
         elif target_type == 'comment':
             comment_stmt = select(HasnComments).where(HasnComments.comment_id == target_id)
             comment_result = await db.execute(comment_stmt)
             comment = comment_result.scalars().first()
             if comment:
                 comment.like_count += 1
+                target_author_hasn_id = comment.author_hasn_id
+                target_author_type = comment.author_type
+                target_owner_hasn_id = comment.owner_hasn_id
+                preview = comment.content
 
         await db.flush()
+
+        # 触发通知：内容作者（Agent 内容额外 relay 给主人；自赞跳过）
+        if target_author_hasn_id and target_type in ('post', 'article'):
+            from backend.app.hasn_community.service.notification_service import notification_service
+
+            await notification_service.notify_content_interaction(
+                db,
+                ntype='community_like',
+                actor_hasn_id=hasn_id,
+                content_type=target_type,
+                content_id=target_id,
+                author_hasn_id=target_author_hasn_id,
+                author_type=target_author_type or 'human',
+                owner_hasn_id=target_owner_hasn_id,
+                preview=preview,
+            )
 
     @staticmethod
     async def delete_like(
@@ -879,6 +945,24 @@ class CommunityService:
         )
         db.add(follow)
         await db.flush()
+
+        # 触发通知：被关注者（Agent 被关注额外 relay 给主人）
+        target_owner_hasn_id = None
+        if target_type == 'agent':
+            target_owner_hasn_id = (
+                await db.execute(
+                    select(HasnAgents.owner_id).where(HasnAgents.hasn_id == target_hasn_id)
+                )
+            ).scalar_one_or_none()
+        from backend.app.hasn_community.service.notification_service import notification_service
+
+        await notification_service.notify_follow(
+            db,
+            actor_hasn_id=hasn_id,
+            target_hasn_id=target_hasn_id,
+            target_type=target_type,
+            target_owner_hasn_id=target_owner_hasn_id,
+        )
 
     @staticmethod
     async def delete_follow(
@@ -1516,6 +1600,40 @@ class CommunityService:
         collection.item_count = (collection.item_count or 0) + 1
         await CommunityService._adjust_collect_count(db, target_type, target_id, 1)
         await db.flush()
+
+        # 触发通知：内容作者（Agent 内容额外 relay 给主人；自藏跳过）
+        # 注意：collect 的 owner_hasn_id 参数 = 收藏者本人（actor）；内容作者另取。
+        author_hasn_id = None
+        author_type = None
+        content_owner_hasn_id = None
+        preview = None
+        if target_type == 'post':
+            obj = (await db.execute(select(HasnPosts).where(HasnPosts.post_id == target_id))).scalars().first()
+            if obj:
+                author_hasn_id, author_type, content_owner_hasn_id, preview = (
+                    obj.author_hasn_id, obj.author_type, obj.owner_hasn_id, obj.content,
+                )
+        elif target_type == 'article':
+            obj = (await db.execute(select(HasnArticles).where(HasnArticles.article_id == target_id))).scalars().first()
+            if obj:
+                author_hasn_id, author_type, content_owner_hasn_id, preview = (
+                    obj.author_hasn_id, obj.author_type, obj.owner_hasn_id, obj.title,
+                )
+        if author_hasn_id:
+            from backend.app.hasn_community.service.notification_service import notification_service
+
+            await notification_service.notify_content_interaction(
+                db,
+                ntype='community_collect',
+                actor_hasn_id=owner_hasn_id,
+                content_type=target_type,
+                content_id=target_id,
+                author_hasn_id=author_hasn_id,
+                author_type=author_type or 'human',
+                owner_hasn_id=content_owner_hasn_id,
+                preview=preview,
+            )
+
         return {'collection_id': collection.collection_id, 'is_collected': True}
 
     @staticmethod
