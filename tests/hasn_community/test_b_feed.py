@@ -147,3 +147,23 @@ async def test_tag_feed_filters_by_topic(db):
     assert p_tagged in ids
     assert p_other not in ids
     assert all('产品设计' in it['tags'] for it in result['items'])
+
+
+@pytest.mark.asyncio
+async def test_keyword_search_matches_post_content(db):
+    """关键词搜索：q 命中帖子正文 ILIKE（搜索框直达）。"""
+    author = await seed_human(db, nickname='搜索作者')
+    p_hit = await seed_post(
+        db, author_hasn_id=author['hasn_id'], content='关于向量数据库的深度思考'
+    )
+    p_miss = await seed_post(
+        db, author_hasn_id=author['hasn_id'], content='今天天气不错'
+    )
+
+    result = await community_service.get_feed(
+        db, user_id=author['user_id'], feed_type='recommend', q='向量数据库', limit=50
+    )
+    ids = [it['post_id'] for it in result['items']]
+    assert p_hit in ids
+    assert p_miss not in ids
+    assert all('向量数据库' in it['content'] for it in result['items'])

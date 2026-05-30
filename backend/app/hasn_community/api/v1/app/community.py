@@ -59,6 +59,7 @@ async def get_feed(
     db: CurrentSession,
     feed_type: str = 'recommend',
     tag: str | None = None,
+    q: str | None = None,
     cursor: str | None = None,
     limit: int = 20,
 ) -> ResponseModel:
@@ -70,6 +71,7 @@ async def get_feed(
     **查询参数**:
     - type: 信息流类型（following/recommend/hot/articles）
     - tag: 话题标签过滤（可选，标签流）
+    - q: 关键词搜索（可选，帖子正文 ILIKE）
     - cursor: 分页游标
     - limit: 每页条数（1-50）
 
@@ -102,6 +104,7 @@ async def get_feed(
         user_id=user_id,
         feed_type=feed_type,
         tag=tag,
+        q=q,
         cursor=cursor,
         limit=limit,
     )

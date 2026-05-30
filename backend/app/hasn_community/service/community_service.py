@@ -181,6 +181,7 @@ class CommunityService:
         user_id: int | None = None,
         feed_type: str = 'recommend',
         tag: str | None = None,
+        q: str | None = None,
         cursor: str | None = None,
         limit: int = 20,
     ) -> dict[str, Any]:
@@ -191,6 +192,7 @@ class CommunityService:
         - recommend/articles：按 published_time 倒序
         - hot：按 like_count 倒序
         - tag：可叠加在任意 feed_type 上，仅返回 tags 数组包含该话题的内容（标签流）
+        - q：关键词搜索，命中帖子正文（ILIKE，可叠加在任意 feed_type 上）
         - 游标分页：keyset（按排序键 + post_id），返回真实 next_cursor
         - is_liked/is_collected：批量回填当前 viewer 的互动态
 
@@ -198,6 +200,7 @@ class CommunityService:
         :param user_id: 用户 ID（open scope 可为 None）
         :param feed_type: 信息流类型（following/recommend/hot/articles）
         :param tag: 话题标签过滤（可选，命中 tags 数组包含该 tag 的内容）
+        :param q: 关键词（可选，帖子正文 ILIKE 模糊匹配）
         :param cursor: 分页游标（格式 "{排序值}|{post_id}"）
         :param limit: 每页条数
         :return: 信息流数据 {items, next_cursor}
@@ -237,6 +240,10 @@ class CommunityService:
         # 用标量绑定避免 asyncpg 对数组参数的类型推断失败）
         if tag:
             stmt = stmt.where(HasnPosts.tags.any(tag))
+
+        # 关键词搜索：帖子正文 ILIKE（值经 bind 参数化，无注入风险）
+        if q and q.strip():
+            stmt = stmt.where(HasnPosts.content.ilike(f'%{q.strip()}%'))
 
         is_hot = feed_type == 'hot'
 
