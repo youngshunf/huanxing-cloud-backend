@@ -794,8 +794,13 @@ async def route_message(
     # 7. 投递
     await _push_message_to(to_id, payload)
     # Runtime 缺失/离线时，Human Owner 在线节点仍要能作为纯 IM 客户端收到发给自己 Agent 的消息。
+    # 但必须排除 Agent 实体所在节点（已通过上面的 entity 投递收到），否则 Agent 跑在
+    # 主人 daemon 上时同一节点会收两遍 → 镜像两次 + 派发 runtime 两次（发一条收两条回复）。
     if to_entity_type == 'agent' and target_info.get('owner_id') and target_info.get('owner_id') != to_id:
-        await _push_message_to(target_info['owner_id'], payload)
+        from backend.app.hasn.service.ws_router import ws_router
+        await ws_router.push_to_owner_excluding_agent_node(
+            target_info['owner_id'], to_id, payload
+        )
 
     return {
         'error': False,

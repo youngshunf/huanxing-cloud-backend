@@ -301,9 +301,29 @@ class WsRouterService:
         else:
             return await self._push_to_entity(target_hasn_id, payload_json)
 
-    async def _push_to_human(self, hasn_id: str, payload_json: str) -> bool:
-        """Human 消息 → 广播所有在线节点"""
+    async def push_to_owner_excluding_agent_node(
+        self, owner_id: str, agent_id: str, payload: dict
+    ) -> bool:
+        """Owner 透明 fanout：把「发给 Agent 的消息」也投给 Agent 主人的在线节点，
+        但**跳过 Agent 实体当前所在的节点**。
+
+        该节点已通过 `_push_to_entity(agent_id)` 收到本消息；而 Agent 通常就跑在
+        主人的 daemon 上（entity_node[agent] == user_nodes[owner] 中的同一节点），
+        若不排除，同一 daemon 会把同一条消息收到两遍 → 镜像两次、派发 runtime
+        两次（表现为「发一条、收两条回复」）。多端时主人的其它节点仍照常收到。
+        """
+        agent_node = await redis_client.hget(ENTITY_NODE_KEY, agent_id)
+        exclude = {agent_node} if agent_node else None
+        payload_json = json.dumps(payload, ensure_ascii=False)
+        return await self._push_to_human(owner_id, payload_json, exclude)
+
+    async def _push_to_human(
+        self, hasn_id: str, payload_json: str, exclude_nodes: set[str] | None = None
+    ) -> bool:
+        """Human 消息 → 广播所有在线节点（exclude_nodes 跳过已经由其它路由收到本消息的节点）"""
         node_ids = await redis_client.smembers(f'{USER_NODES_PREFIX}:{hasn_id}')
+        if exclude_nodes:
+            node_ids = {nid for nid in node_ids if nid not in exclude_nodes}
         pushed = False
 
         for nid in node_ids:
