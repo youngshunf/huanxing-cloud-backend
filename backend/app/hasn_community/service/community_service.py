@@ -28,6 +28,8 @@ from backend.utils.timezone import timezone
 #   3) 点击时由目标页/daemon 对真实本地资源二次鉴权。
 ALLOWED_REFERENCE_TYPES = frozenset({'agent_skill', 'task_result', 'chat_summary'})
 MAX_REFERENCE_CARDS = 10
+# 生成声明（发布设置）：本人创作 / Agent 生成 / 人机协作。WebUI 作者自报内容来源。
+ALLOWED_GENERATION_TYPES = frozenset({'human', 'agent', 'co_creation'})
 _MAX_REF_TITLE_LEN = 200
 _MAX_REF_SUMMARY_LEN = 500
 
@@ -2067,6 +2069,7 @@ class CommunityService:
         tags: list[str] | None = None,
         visibility: str = 'public',
         comment_policy: str = 'all',
+        generation_type: str = 'human',
         reference_cards: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
@@ -2122,7 +2125,7 @@ class CommunityService:
             ),
             visibility=visibility,
             comment_policy=comment_policy,
-            generation_type='human',
+            generation_type=generation_type if generation_type in ALLOWED_GENERATION_TYPES else 'human',
             status='published',
             published_time=timezone.now(),
         )
@@ -2215,6 +2218,7 @@ class CommunityService:
             ),
             'visibility': article.visibility,
             'comment_policy': article.comment_policy,
+            'generation_type': article.generation_type,
             'like_count': article.like_count,
             'comment_count': article.comment_count,
             'read_time_min': article.read_time_min,
@@ -2287,6 +2291,7 @@ class CommunityService:
         tags: list[str] | None = None,
         visibility: str | None = None,
         comment_policy: str | None = None,
+        generation_type: str | None = None,
         reference_cards: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
@@ -2338,6 +2343,8 @@ class CommunityService:
             article.visibility = visibility
         if comment_policy is not None:
             article.comment_policy = comment_policy
+        if generation_type is not None and generation_type in ALLOWED_GENERATION_TYPES:
+            article.generation_type = generation_type
         if reference_cards is not None:
             article.reference_cards = CommunityService._normalize_reference_cards(
                 reference_cards, author_hasn_id=article.author_hasn_id

@@ -340,6 +340,7 @@ class CreateArticleRequest(BaseModel):
     tags: list[str] | None = Field(default=None, description='话题标签')
     visibility: str = Field(default='public', description='可见范围：public/followers/private')
     comment_policy: str = Field(default='all', description='评论策略：all/followers/closed')
+    generation_type: str = Field(default='human', description='生成声明：human/agent/co_creation')
     reference_cards: list[dict] | None = Field(default=None, description='引用卡片 [{type,id,title,summary,metadata}]，type ∈ agent_skill/task_result/chat_summary')
 
 
@@ -353,6 +354,7 @@ class UpdateArticleRequest(BaseModel):
     tags: list[str] | None = Field(default=None, description='话题标签')
     visibility: str | None = Field(default=None, description='可见范围：public/followers/private')
     comment_policy: str | None = Field(default=None, description='评论策略：all/followers/closed')
+    generation_type: str | None = Field(default=None, description='生成声明：human/agent/co_creation')
     reference_cards: list[dict] | None = Field(default=None, description='引用卡片，传则整体替换；不传保持不变')
 
 
@@ -422,6 +424,7 @@ async def create_article(
         tags=body.tags,
         visibility=body.visibility,
         comment_policy=body.comment_policy,
+        generation_type=body.generation_type,
         reference_cards=body.reference_cards,
     )
 
@@ -548,6 +551,7 @@ async def update_article(
         tags=body.tags,
         visibility=body.visibility,
         comment_policy=body.comment_policy,
+        generation_type=body.generation_type,
         reference_cards=body.reference_cards,
     )
 

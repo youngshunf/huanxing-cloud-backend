@@ -136,6 +136,40 @@ async def test_post_reference_cards_author_can_jump(db):
 
 
 @pytest.mark.asyncio
+async def test_create_article_persists_generation_type(db):
+    author = await seed_human(db, nickname='生成声明作者')
+    created = await community_service.create_article(
+        db,
+        user_id=author['user_id'],
+        hasn_id=author['hasn_id'],
+        title='人机协作文章',
+        content='正文',
+        generation_type='co_creation',
+    )
+    detail = await community_service.get_article(
+        db, user_id=author['user_id'], hasn_id=author['hasn_id'], article_id=created['article_id']
+    )
+    assert detail['generation_type'] == 'co_creation'
+
+
+@pytest.mark.asyncio
+async def test_create_article_rejects_unknown_generation_type_falls_back_human(db):
+    author = await seed_human(db, nickname='非法声明作者')
+    created = await community_service.create_article(
+        db,
+        user_id=author['user_id'],
+        hasn_id=author['hasn_id'],
+        title='非法声明',
+        content='正文',
+        generation_type='evil_value',
+    )
+    detail = await community_service.get_article(
+        db, user_id=author['user_id'], hasn_id=author['hasn_id'], article_id=created['article_id']
+    )
+    assert detail['generation_type'] == 'human'
+
+
+@pytest.mark.asyncio
 async def test_update_article_replaces_reference_cards(db):
     author = await seed_human(db, nickname='更新作者')
     created = await community_service.create_article(
