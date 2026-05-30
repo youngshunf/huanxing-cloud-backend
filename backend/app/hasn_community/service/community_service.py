@@ -180,6 +180,7 @@ class CommunityService:
         *,
         user_id: int | None = None,
         feed_type: str = 'recommend',
+        tag: str | None = None,
         cursor: str | None = None,
         limit: int = 20,
     ) -> dict[str, Any]:
@@ -189,12 +190,14 @@ class CommunityService:
         - following：仅当前用户关注对象的内容（JOIN hasn_follows）；未登录返回空
         - recommend/articles：按 published_time 倒序
         - hot：按 like_count 倒序
+        - tag：可叠加在任意 feed_type 上，仅返回 tags 数组包含该话题的内容（标签流）
         - 游标分页：keyset（按排序键 + post_id），返回真实 next_cursor
         - is_liked/is_collected：批量回填当前 viewer 的互动态
 
         :param db: 数据库会话
         :param user_id: 用户 ID（open scope 可为 None）
         :param feed_type: 信息流类型（following/recommend/hot/articles）
+        :param tag: 话题标签过滤（可选，命中 tags 数组包含该 tag 的内容）
         :param cursor: 分页游标（格式 "{排序值}|{post_id}"）
         :param limit: 每页条数
         :return: 信息流数据 {items, next_cursor}
@@ -229,6 +232,11 @@ class CommunityService:
                 HasnFollows.follower_hasn_id == viewer_hasn_id
             )
             stmt = stmt.where(HasnPosts.author_hasn_id.in_(following_subq))
+
+        # 标签流：仅返回 tags 数组包含该话题的内容（PG `tag = ANY(tags)`，
+        # 用标量绑定避免 asyncpg 对数组参数的类型推断失败）
+        if tag:
+            stmt = stmt.where(HasnPosts.tags.any(tag))
 
         is_hot = feed_type == 'hot'
 
@@ -1634,6 +1642,66 @@ class CommunityService:
         return {
             'items': result_items,
             'next_cursor': str(items[-1].id) if has_more and items else None,
+        }
+
+    @staticmethod
+    async def get_collection_detail(
+        db: AsyncSession,
+        *,
+        viewer_hasn_id: str,
+        collection_id: str,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """
+        收藏夹详情（含 owner 信息 + 内容项），用于他人主页"公开收藏夹"直达。
+
+        access 控制：仅 owner 本人或 ``is_public`` 收藏夹可见；
+        私有且非本人 → 404（不泄露私有收藏夹是否存在）。
+        """
+        collection = (
+            await db.execute(
+                select(HasnCollections).where(HasnCollections.collection_id == collection_id)
+            )
+        ).scalar_one_or_none()
+        if not collection:
+            raise errors.NotFoundError(msg='收藏夹不存在')
+
+        is_owner = collection.owner_hasn_id == viewer_hasn_id
+        if not collection.is_public and not is_owner:
+            # 不泄露私有收藏夹的存在
+            raise errors.NotFoundError(msg='收藏夹不存在')
+
+        owner = (
+            await db.execute(
+                select(HasnHumans).where(HasnHumans.hasn_id == collection.owner_hasn_id)
+            )
+        ).scalar_one_or_none()
+
+        # 复用 owner-scoped 的内容项投影（access 已在上方校验）
+        items_page = await CommunityService.get_collection_items(
+            db,
+            owner_hasn_id=collection.owner_hasn_id,
+            collection_id=collection_id,
+            cursor=cursor,
+            limit=limit,
+        )
+
+        return {
+            'collection': {
+                'collection_id': collection.collection_id,
+                'name': collection.name,
+                'is_public': collection.is_public,
+                'item_count': collection.item_count,
+                'is_owner': is_owner,
+                'owner': {
+                    'hasn_id': collection.owner_hasn_id,
+                    'display_name': (owner.nickname if owner else collection.owner_hasn_id),
+                    'avatar': (owner.avatar if owner else None),
+                },
+            },
+            'items': items_page['items'],
+            'next_cursor': items_page['next_cursor'],
         }
 
     @staticmethod

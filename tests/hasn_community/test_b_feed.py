@@ -127,3 +127,23 @@ async def test_is_liked_and_is_collected_reflect_real_state(db):
     detail_other = await community_service.get_post(db, post_id=pid, user_id=other['user_id'])
     assert detail_other['is_liked'] is False
     assert detail_other['is_collected'] is False
+
+
+@pytest.mark.asyncio
+async def test_tag_feed_filters_by_topic(db):
+    """标签流：tag 仅返回 tags 数组包含该话题的内容（热门话题→标签流直达）。"""
+    author = await seed_human(db, nickname='话题作者')
+    p_tagged = await seed_post(
+        db, author_hasn_id=author['hasn_id'], content='带话题的帖子', tags=['产品设计', 'Agent主页']
+    )
+    p_other = await seed_post(
+        db, author_hasn_id=author['hasn_id'], content='无关话题的帖子', tags=['代码']
+    )
+
+    result = await community_service.get_feed(
+        db, user_id=author['user_id'], feed_type='recommend', tag='产品设计', limit=50
+    )
+    ids = [it['post_id'] for it in result['items']]
+    assert p_tagged in ids
+    assert p_other not in ids
+    assert all('产品设计' in it['tags'] for it in result['items'])

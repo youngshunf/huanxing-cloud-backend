@@ -58,6 +58,7 @@ async def get_feed(
     request: Request,
     db: CurrentSession,
     feed_type: str = 'recommend',
+    tag: str | None = None,
     cursor: str | None = None,
     limit: int = 20,
 ) -> ResponseModel:
@@ -68,6 +69,7 @@ async def get_feed(
 
     **查询参数**:
     - type: 信息流类型（following/recommend/hot/articles）
+    - tag: 话题标签过滤（可选，标签流）
     - cursor: 分页游标
     - limit: 每页条数（1-50）
 
@@ -99,6 +101,7 @@ async def get_feed(
         db,
         user_id=user_id,
         feed_type=feed_type,
+        tag=tag,
         cursor=cursor,
         limit=limit,
     )
@@ -1231,6 +1234,32 @@ async def delete_collection(
     hasn_id = await _require_human_hasn_id(db, request.user.id)
     await community_service.delete_collection(db, owner_hasn_id=hasn_id, collection_id=collection_id)
     return response_base.success()
+
+
+@router.get(
+    '/collections/{collection_id}',
+    summary='获取收藏夹详情',
+    description='查看指定收藏夹（owner 本人或公开收藏夹），含 owner 与首屏内容项；私有且非本人返回 404',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_collection_detail(
+    request: Request,
+    db: CurrentSession,
+    collection_id: str,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> ResponseModel:
+    """公开收藏夹详情（access 控制：owner 本人或公开）"""
+    viewer_hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.get_collection_detail(
+        db,
+        viewer_hasn_id=viewer_hasn_id,
+        collection_id=collection_id,
+        cursor=cursor,
+        limit=limit,
+    )
+    return response_base.success(data=result)
 
 
 @router.get(

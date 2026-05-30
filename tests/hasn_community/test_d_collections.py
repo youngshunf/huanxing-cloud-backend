@@ -121,3 +121,61 @@ async def test_delete_others_collection_forbidden(db):
         await community_service.delete_collection(
             db, owner_hasn_id=other['hasn_id'], collection_id=created['collection_id']
         )
+
+
+@pytest.mark.asyncio
+async def test_collection_detail_public_visible_to_others(db):
+    """公开收藏夹：非本人也能看详情（owner 信息 + 内容项），is_owner=False。"""
+    owner = await seed_human(db, nickname='收藏夹主人')
+    viewer = await seed_human(db, nickname='访客')
+    author = await seed_human(db, nickname='作者')
+    pid = await seed_post(db, author_hasn_id=author['hasn_id'], content='公开收藏的内容')
+
+    col = await community_service.create_collection(
+        db, owner_hasn_id=owner['hasn_id'], name='公开夹', is_public=True
+    )
+    await community_service.collect(
+        db,
+        owner_hasn_id=owner['hasn_id'],
+        target_type='post',
+        target_id=pid,
+        collection_id=col['collection_id'],
+    )
+
+    detail = await community_service.get_collection_detail(
+        db, viewer_hasn_id=viewer['hasn_id'], collection_id=col['collection_id']
+    )
+    assert detail['collection']['name'] == '公开夹'
+    assert detail['collection']['is_owner'] is False
+    assert detail['collection']['owner']['hasn_id'] == owner['hasn_id']
+    assert any(it['target_id'] == pid for it in detail['items'])
+
+
+@pytest.mark.asyncio
+async def test_collection_detail_private_hidden_from_others(db):
+    """私有收藏夹：非本人访问 → 404（不泄露存在）。"""
+    owner = await seed_human(db, nickname='收藏夹主人')
+    viewer = await seed_human(db, nickname='访客')
+    col = await community_service.create_collection(
+        db, owner_hasn_id=owner['hasn_id'], name='私密夹', is_public=False
+    )
+    from backend.common.exception import errors
+
+    with pytest.raises(errors.NotFoundError):
+        await community_service.get_collection_detail(
+            db, viewer_hasn_id=viewer['hasn_id'], collection_id=col['collection_id']
+        )
+
+
+@pytest.mark.asyncio
+async def test_collection_detail_private_visible_to_owner(db):
+    """私有收藏夹：本人可见，is_owner=True。"""
+    owner = await seed_human(db, nickname='收藏夹主人')
+    col = await community_service.create_collection(
+        db, owner_hasn_id=owner['hasn_id'], name='私密夹', is_public=False
+    )
+    detail = await community_service.get_collection_detail(
+        db, viewer_hasn_id=owner['hasn_id'], collection_id=col['collection_id']
+    )
+    assert detail['collection']['is_owner'] is True
+    assert detail['collection']['name'] == '私密夹'
