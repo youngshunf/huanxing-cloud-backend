@@ -96,6 +96,36 @@ class CommunityService:
         return normalized
 
     @staticmethod
+    def _present_reference_cards(
+        stored: Any,
+        viewer_hasn_id: str | None,
+    ) -> list[dict[str, Any]]:
+        """
+        序列化引用卡片供展示。仅当 viewer ∈ access.readable_by（即作者本人）时下发可跳转 action；
+        其他 viewer 只得到静态卡片，且 uri 完全不下发——实现「发布者可跳转、其他人只看卡片」。
+        """
+        if not stored or not isinstance(stored, list):
+            return []
+        presented: list[dict[str, Any]] = []
+        for card in stored:
+            if not isinstance(card, dict):
+                continue
+            access = card.get('access') or {}
+            readable_by = access.get('readable_by') or []
+            can_open = bool(viewer_hasn_id) and viewer_hasn_id in readable_by
+            item: dict[str, Any] = {
+                'type': card.get('type'),
+                'id': card.get('id'),
+                'title': card.get('title') or '',
+                'summary': card.get('summary') or '',
+                'metadata': card.get('metadata') or {},
+            }
+            if can_open and card.get('uri'):
+                item['action'] = {'kind': 'open_uri', 'uri': card['uri']}
+            presented.append(item)
+        return presented
+
+    @staticmethod
     async def _resolve_human_hasn_id(db: AsyncSession, user_id: int | None) -> str | None:
         """由 user_id 解析当前操作者的 human hasn_id（open scope 无身份时返回 None）。"""
         if user_id is None:
@@ -276,6 +306,9 @@ class CommunityService:
                 'author': author_info,
                 'content': post.content,
                 'tags': post.tags or [],
+                'reference_cards': CommunityService._present_reference_cards(
+                    post.reference_cards, viewer_hasn_id
+                ),
                 'like_count': post.like_count,
                 'comment_count': post.comment_count,
                 'published_time': post.published_time.isoformat() if post.published_time else None,
@@ -543,6 +576,9 @@ class CommunityService:
             'author': author_info,
             'content': post.content,
             'tags': post.tags or [],
+            'reference_cards': CommunityService._present_reference_cards(
+                post.reference_cards, viewer_hasn_id
+            ),
             'like_count': post.like_count,
             'comment_count': post.comment_count,
             'collect_count': post.collect_count,
@@ -2174,6 +2210,9 @@ class CommunityService:
             'content': article.content,
             'author': author_info,
             'tags': article.tags or [],
+            'reference_cards': CommunityService._present_reference_cards(
+                article.reference_cards, hasn_id
+            ),
             'visibility': article.visibility,
             'comment_policy': article.comment_policy,
             'like_count': article.like_count,
@@ -2408,6 +2447,7 @@ class CommunityService:
             'content': article.content,
             'author': author_info,
             'tags': article.tags or [],
+            'reference_cards': CommunityService._present_reference_cards(article.reference_cards, None),
             'visibility': article.visibility,
             'comment_policy': article.comment_policy,
             'like_count': article.like_count,
@@ -2612,6 +2652,7 @@ class CommunityService:
             'author': {'hasn_id': article.author_hasn_id, 'type': article.author_type},
             'owner_hasn_id': article.owner_hasn_id,
             'tags': article.tags or [],
+            'reference_cards': CommunityService._present_reference_cards(article.reference_cards, None),
             'visibility': article.visibility,
             'status': article.status,
             'like_count': article.like_count,
