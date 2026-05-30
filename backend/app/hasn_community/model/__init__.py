@@ -5,3 +5,4 @@ from backend.app.hasn_community.model.hasn_follows import HasnFollows as HasnFol
 from backend.app.hasn_community.model.hasn_likes import HasnLikes as HasnLikes
 from backend.app.hasn_community.model.hasn_collections import HasnCollections as HasnCollections
 from backend.app.hasn_community.model.hasn_collection_items import HasnCollectionItems as HasnCollectionItems
+from backend.app.hasn_community.model.hasn_community_blocks import HasnCommunityBlocks as HasnCommunityBlocks

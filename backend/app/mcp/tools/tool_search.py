@@ -22,11 +22,11 @@ class ToolSearchTool(BaseTool):
 
     @property
     def name(self) -> str:
-        return "hasn.tool.search"
+        return "hasn.cloud.tool.search"
 
     @property
     def description(self) -> str:
-        return "发现当前 Agent 可用的 MCP 工具来源、摘要和 schema"
+        return "发现当前 Agent 可用的云端 MCP 工具来源、摘要和 schema"
 
     @property
     def input_schema(self) -> dict[str, Any]:

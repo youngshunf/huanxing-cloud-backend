@@ -10,9 +10,9 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Any
 
 import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -65,7 +65,7 @@ def isolate_dynamic_app_tools():
 class TestMcpAuthentication:
     """测试 MCP 认证"""
 
-    def test_missing_authorization_header(self):
+    def test_missing_authorization_header(self) -> None:
         """测试缺少 Authorization header"""
         app = make_test_app()
         client = TestClient(app)
@@ -77,7 +77,7 @@ class TestMcpAuthentication:
 
         assert response.status_code == 422  # Missing required header
 
-    def test_invalid_authorization_format(self):
+    def test_invalid_authorization_format(self) -> None:
         """测试无效的 Authorization 格式"""
         app = make_test_app()
         client = TestClient(app)
@@ -96,7 +96,7 @@ class TestMcpAuthentication:
         assert "msg" in json_response
         assert "Invalid authorization header" in json_response["msg"]
 
-    def test_expired_token(self, test_agent_expired_token):
+    def test_expired_token(self, test_agent_expired_token) -> None:
         """测试过期的 token"""
         app = make_test_app()
         client = TestClient(app)
@@ -111,7 +111,7 @@ class TestMcpAuthentication:
 
         assert response.status_code == 401
 
-    def test_agent_id_mismatch(self, test_agent_token):
+    def test_agent_id_mismatch(self, test_agent_token) -> None:
         """测试 Agent ID 不匹配"""
         app = make_test_app()
         client = TestClient(app)
@@ -138,7 +138,7 @@ class TestMcpToolsList:
     @patch("backend.app.mcp.auth.async_db_session")
     def test_list_tools_success(
         self, mock_db_session, test_agent_token
-    ):
+    ) -> None:
         """测试成功获取工具列表"""
         mock_agent = MagicMock()
         mock_agent.status = "active"
@@ -172,12 +172,12 @@ class TestMcpToolsList:
 
         # 验证内置工具存在
         tool_names = [tool["name"] for tool in data["tools"]]
-        assert tool_names == ["hasn.tool.search"]
+        assert tool_names == ["hasn.cloud.tool.search"]
 
     @patch("backend.app.mcp.auth.async_db_session")
     def test_list_tools_with_namespace_filter_stays_bootstrap(
         self, mock_db_session, test_agent_token
-    ):
+    ) -> None:
         """测试 namespace 参数不会绕过 bootstrap 暴露"""
         mock_agent = MagicMock()
         mock_agent.status = "active"
@@ -210,12 +210,12 @@ class TestMcpToolsList:
 
         # 验证仍然只返回 bootstrap 工具
         tool_names = [tool["name"] for tool in tools]
-        assert tool_names == ["hasn.tool.search"]
+        assert tool_names == ["hasn.cloud.tool.search"]
 
     @patch("backend.app.mcp.auth.async_db_session")
     def test_list_tools_inactive_agent(
         self, mock_db_session, test_agent_token
-    ):
+    ) -> None:
         """测试非活跃 Agent 无法获取工具列表"""
         mock_agent = MagicMock()
         mock_agent.status = "inactive"
@@ -254,7 +254,7 @@ class TestMcpToolsCall:
         self,
         mock_db_session,
         test_agent_token,
-    ):
+    ) -> None:
         """测试成功调用工具"""
         mock_agent = MagicMock()
         mock_agent.status = "active"
@@ -308,7 +308,7 @@ class TestMcpToolsCall:
     @patch("backend.app.mcp.auth.async_db_session")
     def test_call_tool_not_found(
         self, mock_db_session, test_agent_token
-    ):
+    ) -> None:
         """测试调用不存在的工具"""
         mock_agent = MagicMock()
         mock_agent.status = "active"
@@ -339,12 +339,15 @@ class TestMcpToolsCall:
             )
 
         assert response.status_code == 404
-        assert "Tool not found" in response.json()["msg"]
+        message = response.json()["msg"]
+        assert "Tool not found" in message
+        # P2: unknown tool carries the stable MCP_9209 code, not a silent miss.
+        assert "MCP_9209" in message
 
     @patch("backend.app.mcp.auth.async_db_session")
     def test_call_tool_permission_denied(
         self, mock_db_session, test_agent_readonly_token
-    ):
+    ) -> None:
         """测试权限不足"""
         mock_agent = MagicMock()
         mock_agent.status = "active"
@@ -383,7 +386,7 @@ class TestMcpToolsCall:
     @patch("backend.app.mcp.auth.async_db_session")
     def test_call_tool_invalid_arguments(
         self, mock_db_session, test_agent_token
-    ):
+    ) -> None:
         """测试无效的工具参数"""
         mock_agent = MagicMock()
         mock_agent.status = "active"
@@ -420,10 +423,10 @@ class TestMcpToolsCall:
 class TestMcpToolRegistry:
     """测试工具注册表"""
 
-    def test_tool_registration(self):
+    def test_tool_registration(self) -> None:
         """测试工具注册"""
-        from backend.app.mcp.tools.registry import ToolRegistry
         from backend.app.mcp.tools.base import BaseTool
+        from backend.app.mcp.tools.registry import ToolRegistry
 
         class TestTool(BaseTool):
             @property
@@ -448,10 +451,10 @@ class TestMcpToolRegistry:
         assert registry.get_tool("test.tool") is not None
         assert len(registry.get_all_tools()) == 1
 
-    def test_namespace_filtering(self):
+    def test_namespace_filtering(self) -> None:
         """测试命名空间过滤"""
-        from backend.app.mcp.tools.registry import ToolRegistry
         from backend.app.mcp.tools.base import BaseTool
+        from backend.app.mcp.tools.registry import ToolRegistry
 
         class Tool1(BaseTool):
             @property

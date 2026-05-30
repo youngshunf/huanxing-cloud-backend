@@ -8,7 +8,7 @@ from typing import Annotated
 
 import sqlalchemy as sa
 
-from fastapi import APIRouter, Path, Request
+from fastapi import APIRouter, Depends, Path, Request
 from pydantic import BaseModel, Field
 
 from backend.app.hasn.model import HasnAgents, HasnHumans
@@ -28,6 +28,9 @@ from backend.app.hasn.schema.hasn_agents import (
     UpdateHasnAgentsParam,
 )
 from backend.app.hasn.service.hasn_agents_service import agent_profile_service, hasn_agents_service
+from backend.app.hasn.service.hasn_auth import hasn_auth
+from backend.app.hasn.service.message_router import check_relation_permission
+from backend.app.hasn.service.ws_router import ws_router
 from backend.common.exception import errors
 from backend.common.pagination import DependsPagination, PageData
 from backend.common.response.response_schema import ResponseModel, ResponseSchemaModel, response_base
@@ -54,6 +57,63 @@ async def sync_my_hasn_agents(
         user_id=request.user.id,
     )
     return response_base.success(data=result)
+
+
+class AgentReachabilityResponse(BaseModel):
+    """某 Agent 对「当前请求 owner」的可达性快照。
+
+    供 daemon 发送前预检：写入本地 `remote_agent_reachability` 镜像后，
+    daemon `evaluate_remote` 据此判定是否放行跨 owner 发送。字段与该镜像
+    一一对应。
+    """
+
+    agent_id: str
+    owner_id: str = Field(description='Agent 归属人 hasn_id')
+    social_exposure: str = Field(description='对当前请求方的社交可达性: hasn_social_enabled / owner_only')
+    online_status: str = Field(description='online / offline')
+    binding_active: bool = Field(description='Agent 运行时是否在线挂载')
+    runtime_type: str | None = None
+    node_id: str | None = None
+
+
+@router.get(
+    '/{agent_id}/reachability',
+    summary='查询某 Agent 对当前 owner 的可达性（跨 owner 发送前预检）',
+    dependencies=[DependsJwtAuth],
+)
+async def get_agent_reachability(
+    agent_id: Annotated[str, Path(description='目标 Agent hasn_id')],
+    db: CurrentSession,
+    auth: Annotated[dict, Depends(hasn_auth)],
+) -> ResponseSchemaModel[AgentReachabilityResponse]:
+    """复用权威关系门控 `check_relation_permission` 派生 `social_exposure`，叠加
+    presence（ws_router）与运行时挂载，返回 daemon 镜像所需字段。
+
+    与 `route_message` 的发送门控判定完全一致（同一函数），避免可达策略在两处
+    维护而漂移；不可达时 daemon 仍 fail-closed 拒发。
+    """
+    requester_id = auth.get('effective_id', auth['hasn_id'])
+    agent = (
+        await db.execute(sa.select(HasnAgents).where(HasnAgents.hasn_id == agent_id))
+    ).scalar_one_or_none()
+    if agent is None:
+        raise errors.NotFoundError(msg='Agent 不存在')
+
+    perm = await check_relation_permission(db, requester_id, agent_id, 'message')
+    online = await ws_router.is_agent_online(agent_id)
+    runtime_summary = agent.runtime_summary_json or {}
+
+    return response_base.success(
+        data=AgentReachabilityResponse(
+            agent_id=agent_id,
+            owner_id=agent.owner_id,
+            social_exposure='hasn_social_enabled' if perm.get('allowed') else 'owner_only',
+            online_status='online' if online else 'offline',
+            binding_active=bool(online),
+            runtime_type=runtime_summary.get('runtime_type'),
+            node_id=agent.node_id,
+        )
+    )
 
 
 @router.post(

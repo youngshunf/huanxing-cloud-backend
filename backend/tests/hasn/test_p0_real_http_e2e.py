@@ -18,7 +18,7 @@ from backend.app.hasn.api.v1.app import hasn_skill_bundle as skill_bundle_api
 from backend.app.hasn.api.v1.app import hasn_task as task_api
 from backend.app.hasn.api.v1.app import hasn_task_run as task_run_api
 from backend.app.hasn.api.v1.app import hasn_task_sessions as task_sessions_api
-from backend.app.hasn.api.v1.app import community as community_api
+from backend.app.hasn_community.api.v1.app import community as community_api
 from backend.app.hasn.api.v1.app import workspace as workspace_api
 from backend.app.hasn.api.v1 import sync as sync_api
 from backend.app.mcp.routes import mcp_router
@@ -1020,7 +1020,7 @@ def make_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app.include_router(task_api.router, prefix='/api/v1/hasn/app/hasn/tasks')
     app.include_router(task_run_api.router, prefix='/api/v1/hasn/app/hasn/task/runs')
     app.include_router(task_sessions_api.router, prefix='/api/v1/hasn/app')
-    app.include_router(community_api.router, prefix='/api/v1/hasn/app/community')
+    app.include_router(community_api.router, prefix='/api/v1/community/app')
     app.include_router(task_sessions_api.work_sessions_router, prefix='/api/v1/hasn')
     app.include_router(sync_api.router, prefix='/api/v1/hasn')
     app.include_router(message_hub_api.router, prefix='/api/v1/hasn')

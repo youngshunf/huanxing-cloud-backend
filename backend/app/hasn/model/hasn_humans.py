@@ -24,3 +24,4 @@ class HasnHumans(Base):
     timezone: Mapped[str | None] = mapped_column(sa.String(50), default=None, comment='时区')
     tags: Mapped[list | None] = mapped_column(postgresql.ARRAY(sa.Text()), default=None, comment='个人标签')
     stats: Mapped[dict] = mapped_column(postgresql.JSONB(), default_factory=dict, comment='统计信息 (JSONB)')
+    community_settings: Mapped[dict] = mapped_column(postgresql.JSONB(), default_factory=dict, comment='社区个人设置 (JSONB)：公开边界/默认评论策略/通知开关')

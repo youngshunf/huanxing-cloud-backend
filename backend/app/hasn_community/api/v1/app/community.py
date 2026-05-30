@@ -31,7 +31,6 @@ class CreatePostRequest(BaseModel):
     skill_tags: list[str] | None = Field(default=None, description='技能标签')
     visibility: str = Field(default='public', description='可见范围：public/followers/private/circle')
     comment_policy: str = Field(default='all', description='评论策略：all/followers/closed')
-    as_agent_hasn_id: str | None = Field(default=None, description='以 Agent 身份发布时的 Agent hasn_id')
 
 
 class PublishPostRequest(BaseModel):
@@ -129,10 +128,12 @@ async def create_post(
       "content": "今天想分享一个关于 Agent 主页设计的思考……",
       "tags": ["产品设计", "Agent主页"],
       "visibility": "public",
-      "comment_policy": "all",
-      "as_agent_hasn_id": "a_xxx"
+      "comment_policy": "all"
     }
     ```
+
+    **身份模型**: 作者恒为当前 Owner JWT 对应的 human（见 13-社区设计补丁 §1.5）。
+    Agent 自主发帖请走 `/api/v1/community/agent/posts`（Agent JWT）。
 
     **响应**:
     ```json
@@ -166,7 +167,6 @@ async def create_post(
         skill_tags=body.skill_tags,
         visibility=body.visibility,
         comment_policy=body.comment_policy,
-        as_agent_hasn_id=body.as_agent_hasn_id,
     )
 
     return response_base.success(data=result)
@@ -338,7 +338,6 @@ class CreateArticleRequest(BaseModel):
     tags: list[str] | None = Field(default=None, description='话题标签')
     visibility: str = Field(default='public', description='可见范围：public/followers/private')
     comment_policy: str = Field(default='all', description='评论策略：all/followers/closed')
-    as_agent_hasn_id: str | None = Field(default=None, description='以 Agent 身份发布时的 Agent hasn_id')
 
 
 class UpdateArticleRequest(BaseModel):
@@ -379,10 +378,12 @@ async def create_article(
       "content": "# 标题\\n\\n正文内容...",
       "tags": ["产品设计", "Agent主页"],
       "visibility": "public",
-      "comment_policy": "all",
-      "as_agent_hasn_id": "a_xxx"
+      "comment_policy": "all"
     }
     ```
+
+    **身份模型**: 作者恒为当前 Owner JWT 对应的 human（见 13-社区设计补丁 §1.5）。
+    Agent 自主发文请走 `/api/v1/community/agent/articles`（Agent JWT）。
 
     **响应**:
     ```json
@@ -417,7 +418,6 @@ async def create_article(
         tags=body.tags,
         visibility=body.visibility,
         comment_policy=body.comment_policy,
-        as_agent_hasn_id=body.as_agent_hasn_id,
     )
 
     return response_base.success(data=result)
@@ -456,7 +456,7 @@ async def get_article(
         "comment_policy": "all",
         "like_count": 24,
         "comment_count": 6,
-        "view_count": 120,
+        "read_time_min": 3,
         "published_time": "2026-05-22T10:00:00Z",
         "updated_time": "2026-05-22T11:00:00Z"
       }
@@ -1082,14 +1082,22 @@ async def get_trending_topics(
 async def get_recommended_agents(
     request: Request,
     db: CurrentSession,
+    category: str | None = None,
+    sort: str = 'relevance',
+    capability: str | None = None,
+    cursor: str | None = None,
     limit: int = 3,
 ) -> ResponseModel:
-    """获取推荐 Agent"""
+    """获取推荐/广场 Agent（支持 category/sort/capability 筛选 + 游标分页）"""
     user_id = request.user.id
 
     result = await community_service.get_recommended_agents(
         db,
         viewer_user_id=user_id,
+        category=category,
+        sort=sort,
+        capability=capability,
+        cursor=cursor,
         limit=limit,
     )
 
@@ -1131,4 +1139,345 @@ async def get_pending_drafts(
         limit=limit,
     )
 
+    return response_base.success(data=result)
+
+
+# ==================== 收藏夹与收藏动作 ====================
+
+
+async def _require_human_hasn_id(db, user_id: int) -> str:
+    """解析当前 Owner 的 human hasn_id（不存在则 404）。"""
+    from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
+    from backend.common.exception import errors
+
+    human = await hasn_humans_dao.get_by_user_id(db, user_id)
+    if not human:
+        raise errors.NotFoundError(msg='用户 HASN 身份不存在')
+    return human.hasn_id
+
+
+class CreateCollectionRequest(BaseModel):
+    """创建收藏夹请求"""
+
+    name: str = Field(description='收藏夹名称', min_length=1, max_length=100)
+    is_public: bool = Field(default=False, description='是否公开')
+
+
+class CollectRequest(BaseModel):
+    """收藏请求"""
+
+    target_type: str = Field(description='目标类型：post/article')
+    target_id: str = Field(description='目标 ID')
+    collection_id: str | None = Field(default=None, description='收藏夹 ID（缺省进默认收藏夹）')
+
+
+@router.get(
+    '/collections',
+    summary='获取收藏夹列表',
+    description='获取当前用户的收藏夹列表（含 item_count）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def list_collections(request: Request, db: CurrentSession) -> ResponseModel:
+    """收藏夹列表"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.list_collections(db, owner_hasn_id=hasn_id)
+    return response_base.success(data=result)
+
+
+@router.post(
+    '/collections',
+    summary='创建收藏夹',
+    description='创建一个新的收藏夹',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def create_collection(
+    request: Request,
+    db: CurrentSessionTransaction,
+    body: CreateCollectionRequest,
+) -> ResponseModel:
+    """创建收藏夹"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.create_collection(
+        db, owner_hasn_id=hasn_id, name=body.name, is_public=body.is_public
+    )
+    return response_base.success(data=result)
+
+
+@router.delete(
+    '/collections/{collection_id}',
+    summary='删除收藏夹',
+    description='删除指定收藏夹及其收藏项',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def delete_collection(
+    request: Request,
+    db: CurrentSessionTransaction,
+    collection_id: str,
+) -> ResponseModel:
+    """删除收藏夹"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    await community_service.delete_collection(db, owner_hasn_id=hasn_id, collection_id=collection_id)
+    return response_base.success()
+
+
+@router.get(
+    '/collections/{collection_id}/items',
+    summary='获取收藏夹内容',
+    description='获取指定收藏夹内的收藏项（含内容摘要，游标分页）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_collection_items(
+    request: Request,
+    db: CurrentSession,
+    collection_id: str,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> ResponseModel:
+    """收藏夹内容列表"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.get_collection_items(
+        db, owner_hasn_id=hasn_id, collection_id=collection_id, cursor=cursor, limit=limit
+    )
+    return response_base.success(data=result)
+
+
+@router.post(
+    '/collect',
+    summary='收藏内容',
+    description='收藏帖子/文章（缺省进默认收藏夹，首次自动创建）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def collect(
+    request: Request,
+    db: CurrentSessionTransaction,
+    body: CollectRequest,
+) -> ResponseModel:
+    """收藏内容"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.collect(
+        db,
+        owner_hasn_id=hasn_id,
+        target_type=body.target_type,
+        target_id=body.target_id,
+        collection_id=body.collection_id,
+    )
+    return response_base.success(data=result)
+
+
+@router.delete(
+    '/collect',
+    summary='取消收藏',
+    description='取消收藏（query：target_type + target_id）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def uncollect(
+    request: Request,
+    db: CurrentSessionTransaction,
+    target_type: str,
+    target_id: str,
+) -> ResponseModel:
+    """取消收藏"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.uncollect(
+        db, owner_hasn_id=hasn_id, target_type=target_type, target_id=target_id
+    )
+    return response_base.success(data=result)
+
+
+# ==================== 通知 ====================
+
+
+@router.get(
+    '/notifications',
+    summary='获取通知列表',
+    description='获取当前用户通知（type/unread_only 过滤 + 游标分页 + 读时聚合）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def list_notifications(
+    request: Request,
+    db: CurrentSession,
+    type: str | None = None,
+    unread_only: bool = False,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> ResponseModel:
+    """通知列表"""
+    from backend.app.hasn_community.service.notification_service import notification_service
+
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    types = [t.strip() for t in type.split(',') if t.strip()] if type else None
+    result = await notification_service.list_notifications(
+        db, recipient_hasn_id=hasn_id, types=types, unread_only=unread_only, cursor=cursor, limit=limit
+    )
+    return response_base.success(data=result)
+
+
+@router.get(
+    '/notifications/unread-count',
+    summary='获取未读通知数',
+    description='获取当前用户未读通知数（含按类型分组）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def notifications_unread_count(request: Request, db: CurrentSession) -> ResponseModel:
+    """未读通知数"""
+    from backend.app.hasn_community.service.notification_service import notification_service
+
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await notification_service.unread_count(db, recipient_hasn_id=hasn_id)
+    return response_base.success(data=result)
+
+
+@router.put(
+    '/notifications/read-all',
+    summary='全部已读',
+    description='将通知全部标记为已读（可按 type 过滤）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def notifications_read_all(
+    request: Request,
+    db: CurrentSessionTransaction,
+    type: str | None = None,
+) -> ResponseModel:
+    """全部已读"""
+    from backend.app.hasn_community.service.notification_service import notification_service
+
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    types = [t.strip() for t in type.split(',') if t.strip()] if type else None
+    affected = await notification_service.mark_all_read(db, recipient_hasn_id=hasn_id, types=types)
+    return response_base.success(data={'affected': affected})
+
+
+@router.put(
+    '/notifications/{notification_id}/read',
+    summary='标记单条已读',
+    description='将单条通知标记为已读',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def notification_mark_read(
+    request: Request,
+    db: CurrentSessionTransaction,
+    notification_id: int,
+) -> ResponseModel:
+    """标记单条已读"""
+    from backend.app.hasn_community.service.notification_service import notification_service
+
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    await notification_service.mark_read(db, recipient_hasn_id=hasn_id, notification_id=notification_id)
+    return response_base.success()
+
+
+# ==================== 个人社区设置 + 黑名单 ====================
+
+
+class UpdateCommunitySettingsRequest(BaseModel):
+    """更新个人社区设置请求（部分字段 patch）"""
+
+    show_profile: bool | None = Field(default=None, description='是否公开个人主页')
+    searchable: bool | None = Field(default=None, description='是否可被搜索')
+    allow_follow: bool | None = Field(default=None, description='是否允许被关注')
+    default_comment_policy: str | None = Field(default=None, description='默认评论策略 all/followers/closed')
+    notify: dict | None = Field(default=None, description='通知开关 {like,comment,follow,collect}')
+
+
+class AddBlockRequest(BaseModel):
+    """拉黑请求"""
+
+    blocked_hasn_id: str = Field(description='被拉黑对象 hasn_id')
+    blocked_type: str = Field(default='human', description='被拉黑对象类型 human/agent')
+    reason: str | None = Field(default=None, description='拉黑原因（可选）', max_length=200)
+
+
+@router.get(
+    '/settings/profile',
+    summary='读取个人社区设置',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_community_settings(request: Request, db: CurrentSession) -> ResponseModel:
+    """读取个人社区设置"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.get_community_settings(db, hasn_id=hasn_id)
+    return response_base.success(data=result)
+
+
+@router.put(
+    '/settings/profile',
+    summary='更新个人社区设置',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def update_community_settings(
+    request: Request,
+    db: CurrentSessionTransaction,
+    body: UpdateCommunitySettingsRequest,
+) -> ResponseModel:
+    """更新个人社区设置（部分 patch）"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    patch = body.model_dump(exclude_none=True)
+    result = await community_service.update_community_settings(db, hasn_id=hasn_id, patch=patch)
+    return response_base.success(data=result)
+
+
+@router.get(
+    '/settings/blocks',
+    summary='黑名单列表',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def list_blocks(request: Request, db: CurrentSession) -> ResponseModel:
+    """黑名单列表"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.list_blocks(db, blocker_hasn_id=hasn_id)
+    return response_base.success(data=result)
+
+
+@router.post(
+    '/settings/blocks',
+    summary='拉黑',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def add_block(
+    request: Request,
+    db: CurrentSessionTransaction,
+    body: AddBlockRequest,
+) -> ResponseModel:
+    """拉黑"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.add_block(
+        db,
+        blocker_hasn_id=hasn_id,
+        blocked_hasn_id=body.blocked_hasn_id,
+        blocked_type=body.blocked_type,
+        reason=body.reason,
+    )
+    return response_base.success(data=result)
+
+
+@router.delete(
+    '/settings/blocks/{blocked_hasn_id}',
+    summary='解除拉黑',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def remove_block(
+    request: Request,
+    db: CurrentSessionTransaction,
+    blocked_hasn_id: str,
+) -> ResponseModel:
+    """解除拉黑"""
+    hasn_id = await _require_human_hasn_id(db, request.user.id)
+    result = await community_service.remove_block(
+        db, blocker_hasn_id=hasn_id, blocked_hasn_id=blocked_hasn_id
+    )
     return response_base.success(data=result)
