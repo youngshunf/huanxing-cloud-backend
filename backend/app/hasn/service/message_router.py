@@ -691,10 +691,14 @@ async def route_message(
 
     # 为发送方写入 message.sent 事件
     if from_id.startswith('a_'):
-        # Agent 发送的消息，需要查询 agent 的 owner_id
-        from backend.app.hasn.service.hasn_agents_service import get_agent_by_hasn_id
-        sender_agent = await get_agent_by_hasn_id(db, from_id)
-        sender_owner_id = sender_agent.owner_id if sender_agent else None
+        # Agent 发送的消息，查 agent 的 owner_id。直接查表，避免依赖
+        # hasn_agents_service 里并不存在的 get_agent_by_hasn_id —— 该错误导入
+        # 会在 commit 之后、投递之前抛 ImportError，导致 Agent 回复持久化成功
+        # 却从不推送给收件人（跨 owner「人收 Agent 回复」永远收不到）。
+        _sender_owner_row = await db.execute(
+            select(HasnAgents.owner_id).where(HasnAgents.hasn_id == from_id)
+        )
+        sender_owner_id = _sender_owner_row.scalar_one_or_none()
     else:
         # Human 发送的消息，from_id 就是 owner_id
         sender_owner_id = from_id
