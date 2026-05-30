@@ -153,7 +153,11 @@ class GitHubAppSyncService:
         # 创建 Agent 时云端据此物化进 hasn_agents.{soul_md,agents_md,user_md}。
         soul_md = self._read_optional_text(template_dir / 'SOUL.md')
         agents_md = self._read_optional_text(template_dir / 'AGENTS.md')
-        user_md = self._read_optional_text(template_dir / 'USER.md')
+        # USER.md 是 owner 维度（描述主人，与 agent persona 无关），全模板共用一份权威源
+        # templates/USER.md；若某模板自带 USER.md 则按模板覆盖（当前约定无 per-template）。
+        user_md = self._read_optional_text(template_dir / 'USER.md') or self._read_optional_text(
+            Path(self.local_path) / 'templates' / 'USER.md'
+        )
 
         return {
             'template_id': template_id,
