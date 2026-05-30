@@ -101,8 +101,11 @@ async def get_agent_reachability(
 
     perm = await check_relation_permission(db, requester_id, agent_id, 'message')
     online = await ws_router.is_agent_online(agent_id)
-    runtime_summary = agent.runtime_summary_json or {}
 
+    # runtime_type（hermes 等运行时适配器类型）：hasn_agents.runtime_summary_json
+    # 列虽存在，但当前无任何写入方（实库恒为 {}），且该字段不参与 evaluate_remote
+    # 门控（仅 social_exposure + online + binding）。故留空 None，由 daemon 镜像从
+    # 本地 binding 按需补真实 runtime_type；不在此 fabricate。
     return response_base.success(
         data=AgentReachabilityResponse(
             agent_id=agent_id,
@@ -110,7 +113,7 @@ async def get_agent_reachability(
             social_exposure='hasn_social_enabled' if perm.get('allowed') else 'owner_only',
             online_status='online' if online else 'offline',
             binding_active=bool(online),
-            runtime_type=runtime_summary.get('runtime_type'),
+            runtime_type=None,
             node_id=agent.node_id,
         )
     )
