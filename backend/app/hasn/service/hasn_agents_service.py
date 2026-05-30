@@ -58,20 +58,60 @@ class SqlAlchemyAgentProfileGateway:
         return result.scalar_one_or_none() is not None
 
     async def get_template(self, db: AsyncSession, *, template_id: str) -> Any | None:
+        """读取 Agent 创建模板（权威源 = 活表 marketplace_template）。
+
+        marketplace_template 由 github_app_sync_service 从 huanxing-hub 同步，含
+        SOUL/AGENTS/USER 内容（P1 新增列）与 skill_dependencies。这里返回一个归一化
+        适配对象，使 _merge_agent_create_payload 与具体模板表解耦（不再读空表
+        hasn_agent_templates）。
+        """
+        from types import SimpleNamespace
+
         import sqlalchemy as sa
 
-        from backend.app.hasn.model import HasnAgentTemplates
+        from backend.app.marketplace.model.marketplace_template import MarketplaceTemplate
+        from backend.app.marketplace.model.marketplace_template_version import MarketplaceTemplateVersion
 
-        result = await db.execute(
-            sa
-            .select(HasnAgentTemplates)
-            .where(
-                HasnAgentTemplates.template_id == template_id,
-                HasnAgentTemplates.status == 'active',
+        tpl = (
+            await db.execute(
+                sa
+                .select(MarketplaceTemplate)
+                .where(
+                    MarketplaceTemplate.template_id == template_id,
+                    MarketplaceTemplate.status == 'published',
+                )
+                .limit(1)
             )
-            .limit(1)
+        ).scalar_one_or_none()
+        if tpl is None:
+            return None
+
+        version = (
+            await db.execute(
+                sa
+                .select(MarketplaceTemplateVersion.version)
+                .where(
+                    MarketplaceTemplateVersion.template_id == template_id,
+                    MarketplaceTemplateVersion.is_latest.is_(True),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+        skill_ids = [s.strip() for s in (tpl.skill_dependencies or '').split(',') if s.strip()]
+
+        return SimpleNamespace(
+            template_id=tpl.template_id,
+            template_version=version,
+            agent_name=tpl.slug,
+            avatar=tpl.icon_url,
+            default_description=tpl.description,
+            default_skills=skill_ids,
+            default_soul_md=tpl.soul_md,
+            default_agents_md=tpl.agents_md,
+            default_user_md=tpl.user_md,
+            default_runtime_type='hermes',
         )
-        return result.scalar_one_or_none()
 
     async def create_agent(self, db: AsyncSession, payload: dict[str, Any]) -> tuple[Any, str | None, bool]:
         from backend.app.hasn.service.hasn_auth import register_hasn_agent
@@ -89,14 +129,19 @@ class SqlAlchemyAgentProfileGateway:
             created_via='client',
             avatar=payload.get('avatar'),
             template_id=payload.get('template_id'),
+            template_version=payload.get('template_version'),
             skills=payload.get('skills'),
             soul_md=payload.get('soul_md'),
+            agents_md=payload.get('agents_md'),
             user_md=payload.get('user_md'),
+            memory_md=payload.get('memory_md'),
         )
         agent = result['agent']
-        for attr in ('template_id', 'skills', 'soul_md', 'user_md'):
-            if hasattr(agent, attr):
-                setattr(agent, attr, payload.get(attr))
+        # 只用非 None 值覆盖，避免幂等命中已有 Agent 时把已存的 profile 字段清空。
+        for attr in ('template_id', 'template_version', 'skills', 'soul_md', 'agents_md', 'user_md', 'memory_md'):
+            value = payload.get(attr)
+            if value is not None and hasattr(agent, attr):
+                setattr(agent, attr, value)
         if hasattr(agent, 'profile_source'):
             agent.profile_source = 'cloud'
         if not getattr(agent, 'profile_revision', None):
@@ -227,9 +272,7 @@ class HasnAgentProfileService:
 
         if 'status' in provided and provided['status'] is not None:
             if provided['status'] not in _ALLOWED_STATUS_VALUES:
-                raise errors.RequestError(
-                    msg=f'ERR_HASN_AGENT_STATUS_INVALID:{provided["status"]}'
-                )
+                raise errors.RequestError(msg=f'ERR_HASN_AGENT_STATUS_INVALID:{provided["status"]}')
 
         if 'star_id' in provided and provided['star_id'] is not None:
             new_star_id = provided['star_id']
@@ -302,24 +345,22 @@ class HasnAgentProfileService:
         user_id: int | None = None,
     ) -> AgentSnapshot:
         import sqlalchemy as sa
+
         from backend.utils.timezone import timezone as tz
 
-        result = await db.execute(
-            sa.select(HasnAgents).where(HasnAgents.hasn_id == hasn_id).limit(1)
-        )
+        result = await db.execute(sa.select(HasnAgents).where(HasnAgents.hasn_id == hasn_id).limit(1))
         agent = result.scalar_one_or_none()
         if agent is None:
             raise errors.NotFoundError(msg=f'agent {hasn_id} not found')
         if user_id is not None and not await self.gateway.owns_owner(db, owner_id=agent.owner_id, user_id=user_id):
             raise errors.AuthorizationError(msg='ERR_HASN_OWNER_ACCESS_DENIED')
         if request.binding_status not in _ALLOWED_BINDING_STATUS_VALUES:
-            raise errors.RequestError(
-                msg=f'ERR_HASN_AGENT_BINDING_STATUS_INVALID:{request.binding_status}'
-            )
+            raise errors.RequestError(msg=f'ERR_HASN_AGENT_BINDING_STATUS_INVALID:{request.binding_status}')
 
         now_unix = int(tz.now().timestamp())
         await db.execute(
-            sa.update(HasnAgents)
+            sa
+            .update(HasnAgents)
             .where(HasnAgents.hasn_id == hasn_id)
             .values(
                 binding_node_id=request.binding_node_id,
@@ -339,14 +380,13 @@ class HasnAgentProfileService:
         user_id: int | None = None,
     ) -> 'AgentHeartbeatResponse':
         """更新 agent 心跳状态。"""
-        import sqlalchemy as sa
         from datetime import datetime
+
+        import sqlalchemy as sa
 
         from backend.app.hasn.schema.hasn_agents import AgentHeartbeatResponse
 
-        result = await db.execute(
-            sa.select(HasnAgents).where(HasnAgents.hasn_id == hasn_id).limit(1)
-        )
+        result = await db.execute(sa.select(HasnAgents).where(HasnAgents.hasn_id == hasn_id).limit(1))
         agent = result.scalar_one_or_none()
         if agent is None:
             raise errors.NotFoundError(msg=f'agent {hasn_id} not found')
@@ -355,7 +395,8 @@ class HasnAgentProfileService:
 
         # 更新在线状态和心跳时间
         await db.execute(
-            sa.update(HasnAgents)
+            sa
+            .update(HasnAgents)
             .where(HasnAgents.hasn_id == hasn_id)
             .values(
                 binding_node_id=request.node_id,
@@ -373,19 +414,47 @@ class HasnAgentProfileService:
             raise errors.AuthorizationError(msg='ERR_HASN_OWNER_ACCESS_DENIED')
 
 
+# 云端公共技能默认项：每个 Agent 创建时默认追加进技能清单的 skill_id。
+# 留空＝不注入（零 fake，不臆造 skill_id）；canonical 公共技能列表在 P3 接入。
+_DEFAULT_COMMON_SKILLS: list[str] = []
+
+
+def _with_common_skills(skills: Any) -> Any:
+    """把公共技能默认项并入技能清单（保序去重）。仅处理 list[str] 形态。"""
+    if not _DEFAULT_COMMON_SKILLS:
+        return skills
+    if skills is None:
+        return list(_DEFAULT_COMMON_SKILLS)
+    if isinstance(skills, list):
+        merged = list(skills)
+        for sid in _DEFAULT_COMMON_SKILLS:
+            if sid not in merged:
+                merged.append(sid)
+        return merged
+    return skills
+
+
 def _merge_agent_create_payload(request: CloudCreateAgentRequest, template: Any | None) -> dict[str, Any]:
+    template_skills = getattr(template, 'default_skills', None)
+    skills = request.skills if request.skills is not None else template_skills
     return {
         'owner_id': request.owner_id,
         'template_id': request.template_id,
+        'template_version': getattr(template, 'template_version', None),
         'agent_name': _resolve_agent_slug(request, template),
         'display_name': request.display_name,
         'description': request.description
         or getattr(template, 'default_description', None)
         or getattr(template, 'description', None),
         'avatar': request.avatar or getattr(template, 'avatar', None),
-        'skills': request.skills if request.skills is not None else getattr(template, 'default_skills', None),
+        'skills': _with_common_skills(skills),
         'soul_md': request.soul_md if request.soul_md is not None else getattr(template, 'default_soul_md', None),
+        'agents_md': (
+            request.agents_md if request.agents_md is not None else getattr(template, 'default_agents_md', None)
+        ),
         'user_md': request.user_md if request.user_md is not None else getattr(template, 'default_user_md', None),
+        # MEMORY.md 不由模板种子：Agent 自我演化时回写，创建时为空。
+        'memory_md': None,
         'runtime_type': request.runtime_type or getattr(template, 'default_runtime_type', None) or 'hermes',
         'node_id': request.node_id,
         'agent_type': request.agent_type,
@@ -397,12 +466,8 @@ def _merge_agent_create_payload(request: CloudCreateAgentRequest, template: Any 
 _SLUG_RE = re.compile(r'^[a-z][a-z0-9_-]{0,63}$')
 
 # 云端 hasn_agents.status 的允许值集合：业务态 + 生命周期态合并落同一列。
-_ALLOWED_STATUS_VALUES: frozenset[str] = frozenset(
-    {'active', 'disabled', 'revoked', 'archived', 'deleted'}
-)
-_ALLOWED_BINDING_STATUS_VALUES: frozenset[str] = frozenset(
-    {'unbound', 'binding', 'bound', 'failed'}
-)
+_ALLOWED_STATUS_VALUES: frozenset[str] = frozenset({'active', 'disabled', 'revoked', 'archived', 'deleted'})
+_ALLOWED_BINDING_STATUS_VALUES: frozenset[str] = frozenset({'unbound', 'binding', 'bound', 'failed'})
 
 
 def _resolve_agent_slug(request: CloudCreateAgentRequest, template: Any | None) -> str:
@@ -423,10 +488,7 @@ def _resolve_agent_slug(request: CloudCreateAgentRequest, template: Any | None) 
 
 def _agent_snapshot(agent: Any) -> AgentSnapshot:
     raw_tags = getattr(agent, 'tags', None)
-    if isinstance(raw_tags, list):
-        tags = [str(item) for item in raw_tags if item is not None]
-    else:
-        tags = []
+    tags = [str(item) for item in raw_tags if item is not None] if isinstance(raw_tags, list) else []
     return AgentSnapshot(
         hasn_id=agent.hasn_id,
         star_id=getattr(agent, 'star_id', ''),
@@ -443,9 +505,12 @@ def _agent_snapshot(agent: Any) -> AgentSnapshot:
         persona_ref=getattr(agent, 'persona_ref', None),
         tags=tags,
         template_id=getattr(agent, 'template_id', None),
+        template_version=getattr(agent, 'template_version', None),
         skills=getattr(agent, 'skills', None),
         soul_md=getattr(agent, 'soul_md', None),
+        agents_md=getattr(agent, 'agents_md', None),
         user_md=getattr(agent, 'user_md', None),
+        memory_md=getattr(agent, 'memory_md', None),
         profile_revision=int(getattr(agent, 'profile_revision', 1) or 1),
         status=getattr(agent, 'status', 'active') or 'active',
         social_enabled=bool(getattr(agent, 'social_enabled', False)),

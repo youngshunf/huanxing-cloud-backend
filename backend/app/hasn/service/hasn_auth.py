@@ -430,9 +430,12 @@ async def register_hasn_agent(
     created_via: str = 'client',
     avatar: str | None = None,
     template_id: str | None = None,
+    template_version: str | None = None,
     skills: dict | list | None = None,
     soul_md: str | None = None,
+    agents_md: str | None = None,
     user_md: str | None = None,
+    memory_md: str | None = None,
 ) -> dict[str, Any]:
     """
     为已有 Human 注册新 Agent 的 HASN 身份
@@ -482,9 +485,12 @@ async def register_hasn_agent(
             'description': description,
             'capabilities': capabilities,
             'template_id': template_id,
+            'template_version': template_version,
             'skills': skills,
             'soul_md': soul_md,
+            'agents_md': agents_md,
             'user_md': user_md,
+            'memory_md': memory_md,
         }.items():
             if value is not None and hasattr(existing_agent, attr) and getattr(existing_agent, attr) != value:
                 setattr(existing_agent, attr, value)
@@ -516,9 +522,12 @@ async def register_hasn_agent(
         description=description,
         capabilities=capabilities,
         template_id=template_id,
+        template_version=template_version,
         skills=skills,
         soul_md=soul_md,
+        agents_md=agents_md,
         user_md=user_md,
+        memory_md=memory_md,
         profile_source='cloud',
         profile_revision=1,
         avatar=avatar,

@@ -1,4 +1,5 @@
 """GitHub sync service for marketplace templates."""
+
 from __future__ import annotations
 
 import os
@@ -71,8 +72,8 @@ class GitHubAppSyncService:
                     synced_count += 1
                 except Exception as exc:  # noqa: PERF203
                     failed_count += 1
-                    errors.append(f"{template_data.get('template_id', 'unknown')}: {exc}")
-                    log.error(f"Failed to sync template {template_data.get('template_id')}: {exc}")
+                    errors.append(f'{template_data.get("template_id", "unknown")}: {exc}')
+                    log.error(f'Failed to sync template {template_data.get("template_id")}: {exc}')
 
             await marketplace_sync_log_dao.update(
                 db,
@@ -90,7 +91,7 @@ class GitHubAppSyncService:
 
             return {'success': True, 'synced': synced_count, 'failed': failed_count, 'errors': errors}  # noqa: TRY300
         except Exception as exc:
-            log.error(f"GitHub template sync failed: {exc}")
+            log.error(f'GitHub template sync failed: {exc}')
             if sync_log_id:
                 await marketplace_sync_log_dao.update(
                     db,
@@ -117,26 +118,26 @@ class GitHubAppSyncService:
         templates = []
         templates_root = Path(self.local_path) / 'templates'
         if not templates_root.exists():
-            log.warning(f"Templates directory not found: {templates_root}")
+            log.warning(f'Templates directory not found: {templates_root}')
             return templates
 
         for template_yaml in templates_root.glob('*/*/template.yaml'):
             try:
                 templates.append(await self._parse_template_yaml(template_yaml))
             except Exception as exc:  # noqa: PERF203
-                log.error(f"Failed to parse {template_yaml}: {exc}")
+                log.error(f'Failed to parse {template_yaml}: {exc}')
         return templates
 
     async def _parse_template_yaml(self, template_path: Path) -> dict[str, Any]:
         relative = template_path.parent.relative_to(Path(self.local_path))
         parts = relative.parts
         if len(parts) != 3 or parts[0] != 'templates':
-            raise ValueError(f"Unexpected template path: {relative}")
+            raise ValueError(f'Unexpected template path: {relative}')
 
         _, category, slug = parts
         data = yaml.safe_load(template_path.read_text(encoding='utf-8')) or {}  # noqa: ASYNC240
         if not isinstance(data, dict):
-            raise TypeError(f"template.yaml must be a mapping: {template_path}")
+            raise TypeError(f'template.yaml must be a mapping: {template_path}')
 
         display_name = data.get('display_name') or data.get('name') or slug
         description = data.get('description') or ''
@@ -146,7 +147,13 @@ class GitHubAppSyncService:
         skill_deps = data.get('skills') or data.get('skill_dependencies') or []
         sop_deps = data.get('sops') or data.get('sop_dependencies') or []
         tags = normalize_tags(data.get('tags'))
-        icon_path = self._find_local_icon(template_path.parent)
+        template_dir = template_path.parent
+        icon_path = self._find_local_icon(template_dir)
+        # Agent Profile 内容（云端权威化）：把模板目录里的三份文档抽取入库，
+        # 创建 Agent 时云端据此物化进 hasn_agents.{soul_md,agents_md,user_md}。
+        soul_md = self._read_optional_text(template_dir / 'SOUL.md')
+        agents_md = self._read_optional_text(template_dir / 'AGENTS.md')
+        user_md = self._read_optional_text(template_dir / 'USER.md')
 
         return {
             'template_id': template_id,
@@ -175,6 +182,9 @@ class GitHubAppSyncService:
             'source_repo_path': f'templates/{category}/{slug}',
             'skill_dependencies': ','.join(skill_deps) if isinstance(skill_deps, list) else str(skill_deps),
             'sop_dependencies': ','.join(sop_deps) if isinstance(sop_deps, list) else str(sop_deps),
+            'soul_md': soul_md,
+            'agents_md': agents_md,
+            'user_md': user_md,
             'repo_path': f'templates/{category}/{slug}',
             'git_commit_hash': self.repo.head.commit.hexsha if self.repo else None,
             'synced_at': timezone.now(),
@@ -192,6 +202,13 @@ class GitHubAppSyncService:
             if icon_path.exists():
                 return icon_path
         return None
+
+    @staticmethod
+    def _read_optional_text(path: Path) -> str | None:
+        """读取模板目录下的可选文本文件（SOUL/AGENTS/USER.md），缺失返回 None。"""
+        if not path.exists():
+            return None
+        return path.read_text(encoding='utf-8')
 
     async def _sync_template(self, db: AsyncSession, template_data: dict[str, Any]) -> None:
         template_id = template_data['template_id']

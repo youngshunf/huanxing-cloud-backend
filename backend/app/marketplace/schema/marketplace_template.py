@@ -8,6 +8,7 @@ from backend.common.schema import SchemaBase
 
 class MarketplaceTemplateSchemaBase(SchemaBase):
     """技能市场模板表（Agent模板/技能包/SOP包）基础模型"""
+
     template_id: str = Field(description='模板唯一标识')
     namespace: str | None = Field(None, description='命名空间（如 huanxing/clawhub）')
     slug: str | None = Field(None, description='模板标识符')
@@ -50,6 +51,9 @@ class MarketplaceTemplateSchemaBase(SchemaBase):
     source_repo_path: str | None = Field(None, description='仓库内路径')
     skill_dependencies: str | None = Field(None, description='依赖的技能ID列表，逗号分隔')
     sop_dependencies: str | None = Field(None, description='依赖的SOP ID列表，逗号分隔')
+    soul_md: str | None = Field(None, description='模板 SOUL.md 内容（Agent 身份档案）')
+    agents_md: str | None = Field(None, description='模板 AGENTS.md 内容（Agent 行为指南）')
+    user_md: str | None = Field(None, description='模板 USER.md 内容（主人信息种子）')
     repo_path: str | None = Field(None, description='在 huanxing-hub 中的路径')
     git_commit_hash: str | None = Field(None, description='最新同步的 commit hash')
     synced_at: datetime | None = Field(None, description='最后同步时间')

@@ -1,0 +1,151 @@
+"""HASN Agent Profile - Agent 端 API（云端权威化）
+
+认证方式: DependsAgentJwtAuth（Agent JWT）
+身份: **恒取自 JWT**（agent.agent_hasn_id），绝不从请求体/路径读取身份字段。
+
+Runtime（huanxing-hermes-runtime）用 agent JWT 直连这里拉取自己 Agent 的 Profile，
+物化为本地 SOUL.md/AGENTS.md/USER.md/MEMORY.md + 按 skills 清单下载技能包。
+见 decisions/architecture/2026-05-30-agent-profile-cloud-authoritative.md §5.2。
+"""
+
+from typing import Annotated, Any
+
+import sqlalchemy as sa
+
+from fastapi import APIRouter
+
+from backend.app.hasn.model import HasnAgents
+from backend.app.hasn.schema.hasn_agents import (
+    AgentProfileResponse,
+    AgentProfileRevisionResponse,
+    MemoryContributeRequest,
+    MemoryContributeResponse,
+    OwnerMemoryResponse,
+)
+from backend.app.hasn.service.owner_memory_service import owner_memory_service
+from backend.common.dataclasses import AgentTokenPayload
+from backend.common.exception import errors
+from backend.common.log import log
+from backend.common.response.response_schema import ResponseSchemaModel, response_base
+from backend.common.security.agent_jwt_auth import DependsAgentJwtAuth
+from backend.database.db import CurrentSession, CurrentSessionTransaction
+
+router = APIRouter()
+
+
+def _normalize_skill_ids(skills: Any) -> list[str]:
+    """把 hasn_agents.skills（JSONB）归一化为 skill_id 字符串清单。
+
+    兼容三种历史形态：list[str] / list[{skill_id|id}] / {skill_id: version}。
+    """
+    if skills is None:
+        return []
+    if isinstance(skills, list):
+        out: list[str] = []
+        for item in skills:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip())
+            elif isinstance(item, dict):
+                sid = item.get('skill_id') or item.get('id')
+                if sid:
+                    out.append(str(sid))
+        return out
+    if isinstance(skills, dict):
+        return [str(key) for key in skills if key]
+    return []
+
+
+@router.get(
+    '/profile',
+    summary='Agent 直连拉取自己的 Profile（云端权威）',
+)
+async def get_agent_profile(
+    agent: Annotated[AgentTokenPayload, DependsAgentJwtAuth],
+    db: CurrentSession,
+) -> ResponseSchemaModel[AgentProfileResponse]:
+    row = (
+        await db.execute(sa.select(HasnAgents).where(HasnAgents.hasn_id == agent.agent_hasn_id).limit(1))
+    ).scalar_one_or_none()
+    if row is None:
+        raise errors.NotFoundError(msg='ERR_HASN_AGENT_NOT_FOUND')
+
+    return response_base.success(
+        data=AgentProfileResponse(
+            hasn_id=row.hasn_id,
+            display_name=row.display_name,
+            soul_md=row.soul_md,
+            agents_md=getattr(row, 'agents_md', None),
+            user_md=row.user_md,
+            memory_md=getattr(row, 'memory_md', None),
+            skills=_normalize_skill_ids(getattr(row, 'skills', None)),
+            template_id=row.template_id,
+            template_version=getattr(row, 'template_version', None),
+            profile_revision=int(getattr(row, 'profile_revision', 1) or 1),
+        )
+    )
+
+
+@router.get(
+    '/profile/revision',
+    summary='Agent 轮询自己的 Profile 修订号（轻量，用于记忆下发检测）',
+)
+async def get_agent_profile_revision(
+    agent: Annotated[AgentTokenPayload, DependsAgentJwtAuth],
+    db: CurrentSession,
+) -> ResponseSchemaModel[AgentProfileRevisionResponse]:
+    rev = (
+        await db.execute(
+            sa.select(HasnAgents.profile_revision).where(HasnAgents.hasn_id == agent.agent_hasn_id).limit(1)
+        )
+    ).scalar_one_or_none()
+    if rev is None:
+        raise errors.NotFoundError(msg='ERR_HASN_AGENT_NOT_FOUND')
+    return response_base.success(data=AgentProfileRevisionResponse(profile_revision=int(rev or 1)))
+
+
+@router.post(
+    '/memory/contribute',
+    summary='Agent 上传 owner 记忆观察（触发云端合并下发）',
+)
+async def contribute_owner_memory(
+    agent: Annotated[AgentTokenPayload, DependsAgentJwtAuth],
+    db: CurrentSessionTransaction,
+    body: MemoryContributeRequest,
+) -> ResponseSchemaModel[MemoryContributeResponse]:
+    """Agent 把本地 USER.md 观察上传为 contribution，并尽力触发一次合并下发。
+
+    owner/agent 身份恒取自 agent JWT（owner_hasn_id / agent_hasn_id），不读 body。
+    合并失败不影响贡献入库：contribution 留待下次合并（零 fake，不产生假合并）。
+    """
+    accepted = await owner_memory_service.contribute(
+        db,
+        owner_id=agent.owner_hasn_id,
+        agent_hasn_id=agent.agent_hasn_id,
+        content=body.content,
+    )
+    merged = False
+    version: int | None = None
+    if accepted.get('accepted'):
+        try:
+            outcome = await owner_memory_service.merge_owner_memory(db, owner_id=agent.owner_hasn_id)
+            merged = bool(outcome.get('merged'))
+            version = outcome.get('version')
+        except Exception as exc:
+            log.warning(f'owner memory merge deferred for {agent.owner_hasn_id}: {exc}')
+    return response_base.success(
+        data=MemoryContributeResponse(accepted=bool(accepted.get('accepted')), merged=merged, version=version)
+    )
+
+
+@router.get(
+    '/memory',
+    summary='Agent 拉取当前 owner 记忆（下发的 USER.md）',
+)
+async def get_owner_memory(
+    agent: Annotated[AgentTokenPayload, DependsAgentJwtAuth],
+    db: CurrentSession,
+) -> ResponseSchemaModel[OwnerMemoryResponse]:
+    memory = await owner_memory_service.get_owner_memory(db, owner_id=agent.owner_hasn_id)
+    return response_base.success(
+        data=OwnerMemoryResponse(content=memory.get('content'), version=int(memory.get('version') or 0))
+    )
