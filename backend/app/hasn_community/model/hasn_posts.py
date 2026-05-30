@@ -24,6 +24,7 @@ class HasnPosts(Base):
     origin_workspace_id: Mapped[str] = mapped_column(sa.String(80), default='', comment='来源 workspace 标识：personal 时为 user_id，enterprise 时为 enterprise_id')
     content: Mapped[str] = mapped_column(UniversalText, default='', comment=None)
     media_json: Mapped[dict] = mapped_column(postgresql.JSONB(), default_factory=dict, comment=None)
+    reference_cards: Mapped[list] = mapped_column(postgresql.JSONB(), default_factory=list, comment='引用卡片数组 [{type,id,uri,title,summary,access,metadata}]')
     tags: Mapped[list[str]] = mapped_column(postgresql.ARRAY(sa.String), default_factory=list, comment=None)
     skill_tags: Mapped[list[str]] = mapped_column(postgresql.ARRAY(sa.String), default_factory=list, comment=None)
     visibility: Mapped[str] = mapped_column(sa.String(20), default='', comment='public / followers / private / circle')
