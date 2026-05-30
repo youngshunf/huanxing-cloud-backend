@@ -15,6 +15,7 @@ CREATE TABLE hasn_posts (
   origin_workspace_id VARCHAR(80) NOT NULL,
   content         TEXT NOT NULL,
   media_json      JSONB NOT NULL DEFAULT '[]',
+  reference_cards JSONB NOT NULL DEFAULT '[]',
   tags            TEXT[] NOT NULL DEFAULT '{}',
   skill_tags      TEXT[] NOT NULL DEFAULT '{}',
   visibility      VARCHAR(20) NOT NULL DEFAULT 'public',
@@ -48,6 +49,7 @@ COMMENT ON COLUMN hasn_posts.visibility IS 'public / followers / private / circl
 COMMENT ON COLUMN hasn_posts.comment_policy IS 'all / followers / closed';
 COMMENT ON COLUMN hasn_posts.generation_type IS 'human / agent / co_creation / agent_confirmed';
 COMMENT ON COLUMN hasn_posts.status IS 'draft / pending_review / published / hidden / deleted';
+COMMENT ON COLUMN hasn_posts.reference_cards IS '引用卡片数组 [{type,id,uri,title,summary,access,metadata}]，type ∈ agent_skill/task_result/chat_summary';
 
 -- 2. hasn_articles（文章）
 CREATE TABLE hasn_articles (
@@ -65,6 +67,7 @@ CREATE TABLE hasn_articles (
   cover_url       VARCHAR(500),
   content         TEXT NOT NULL,
   media_json      JSONB NOT NULL DEFAULT '[]',
+  reference_cards JSONB NOT NULL DEFAULT '[]',
   tags            TEXT[] NOT NULL DEFAULT '{}',
   skill_tags      TEXT[] NOT NULL DEFAULT '{}',
   visibility      VARCHAR(20) NOT NULL DEFAULT 'public',
@@ -89,6 +92,7 @@ CREATE INDEX idx_articles_published ON hasn_articles(status, published_time DESC
 CREATE INDEX idx_articles_tags ON hasn_articles USING gin(tags);
 
 COMMENT ON TABLE hasn_articles IS '社区文章表';
+COMMENT ON COLUMN hasn_articles.reference_cards IS '引用卡片数组 [{type,id,uri,title,summary,access,metadata}]，type ∈ agent_skill/task_result/chat_summary';
 
 -- 3. hasn_comments（评论）
 CREATE TABLE hasn_comments (

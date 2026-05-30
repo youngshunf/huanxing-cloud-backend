@@ -20,8 +20,112 @@ from backend.database.db import uuid4_str
 from backend.utils.timezone import timezone
 
 
+# ==================== 引用卡片（reference_cards）====================
+# 社区文章/帖子可引用 Agent 技能 / 任务结果 / 聊天摘要，沿用 IM 卡片消息 HasnCardResource 形状。
+# 被引用资源是「本地 daemon 资源」（本地 ULID id），云端不持有也无法对该 id 做归属查表，
+# 故云端只能 authoritative 把控以下三件事，归属由三层保证：
+#   1) 选择器只列出本人资源；2) 序列化时非作者不下发跳转 action（见 _present_reference_cards）；
+#   3) 点击时由目标页/daemon 对真实本地资源二次鉴权。
+ALLOWED_REFERENCE_TYPES = frozenset({'agent_skill', 'task_result', 'chat_summary'})
+MAX_REFERENCE_CARDS = 10
+# 生成声明（发布设置）：本人创作 / Agent 生成 / 人机协作。WebUI 作者自报内容来源。
+ALLOWED_GENERATION_TYPES = frozenset({'human', 'agent', 'co_creation'})
+_MAX_REF_TITLE_LEN = 200
+_MAX_REF_SUMMARY_LEN = 500
+
+
 class CommunityService:
     """社区服务类"""
+
+    @staticmethod
+    def _build_reference_uri(card_type: str, resource_id: str, metadata: dict[str, Any]) -> str | None:
+        """服务端按 (type, id, metadata) 派生 hasn:// 跳转 URI（不信任客户端 uri，杜绝注入）。"""
+        if card_type == 'task_result':
+            return f'hasn://webui/tasks/sessions/{resource_id}'
+        if card_type == 'chat_summary':
+            base = f'hasn://webui/messages/c/{resource_id}'
+            message_id = metadata.get('message_id')
+            return f'{base}#{message_id}' if message_id else base
+        if card_type == 'agent_skill':
+            agent_hasn_id = metadata.get('agent_hasn_id')
+            if not agent_hasn_id:
+                return None
+            return f'hasn://webui/agents/{agent_hasn_id}/skills?skill={resource_id}'
+        return None
+
+    @staticmethod
+    def _normalize_reference_cards(
+        raw: Any,
+        *,
+        author_hasn_id: str,
+    ) -> list[dict[str, Any]]:
+        """
+        规范化并校验引用卡片，存储为 HasnCardResource 形状。
+
+        - 校验 type ∈ 允许集合、id 非空；超过 MAX_REFERENCE_CARDS 截断
+        - URI 由服务端派生（_build_reference_uri），忽略客户端传入的 uri
+        - access 由服务端盖章：跳转恒 author_only，readable_by = [作者]
+        - title/summary 为展示用注解，长度截断（XSS 由前端渲染层转义）
+        """
+        if not raw:
+            return []
+        if not isinstance(raw, list):
+            raise errors.RequestError(msg='reference_cards 必须是数组')
+
+        normalized: list[dict[str, Any]] = []
+        for item in raw[:MAX_REFERENCE_CARDS]:
+            if not isinstance(item, dict):
+                raise errors.RequestError(msg='引用卡片必须是对象')
+            card_type = item.get('type')
+            resource_id = item.get('id')
+            if card_type not in ALLOWED_REFERENCE_TYPES:
+                raise errors.RequestError(msg=f'非法引用卡片类型：{card_type}')
+            if not resource_id or not isinstance(resource_id, str):
+                raise errors.RequestError(msg='引用卡片缺少 id')
+            metadata = item.get('metadata') if isinstance(item.get('metadata'), dict) else {}
+            uri = CommunityService._build_reference_uri(card_type, resource_id, metadata)
+            if not uri:
+                raise errors.RequestError(msg=f'引用卡片缺少必要字段（{card_type} 需 metadata.agent_hasn_id）')
+            normalized.append({
+                'type': card_type,
+                'id': resource_id,
+                'uri': uri,
+                'title': str(item.get('title') or '')[:_MAX_REF_TITLE_LEN],
+                'summary': str(item.get('summary') or '')[:_MAX_REF_SUMMARY_LEN],
+                'access': {'visibility': 'author_only', 'readable_by': [author_hasn_id]},
+                'metadata': metadata,
+            })
+        return normalized
+
+    @staticmethod
+    def _present_reference_cards(
+        stored: Any,
+        viewer_hasn_id: str | None,
+    ) -> list[dict[str, Any]]:
+        """
+        序列化引用卡片供展示。仅当 viewer ∈ access.readable_by（即作者本人）时下发可跳转 action；
+        其他 viewer 只得到静态卡片，且 uri 完全不下发——实现「发布者可跳转、其他人只看卡片」。
+        """
+        if not stored or not isinstance(stored, list):
+            return []
+        presented: list[dict[str, Any]] = []
+        for card in stored:
+            if not isinstance(card, dict):
+                continue
+            access = card.get('access') or {}
+            readable_by = access.get('readable_by') or []
+            can_open = bool(viewer_hasn_id) and viewer_hasn_id in readable_by
+            item: dict[str, Any] = {
+                'type': card.get('type'),
+                'id': card.get('id'),
+                'title': card.get('title') or '',
+                'summary': card.get('summary') or '',
+                'metadata': card.get('metadata') or {},
+            }
+            if can_open and card.get('uri'):
+                item['action'] = {'kind': 'open_uri', 'uri': card['uri']}
+            presented.append(item)
+        return presented
 
     @staticmethod
     async def _resolve_human_hasn_id(db: AsyncSession, user_id: int | None) -> str | None:
@@ -204,6 +308,9 @@ class CommunityService:
                 'author': author_info,
                 'content': post.content,
                 'tags': post.tags or [],
+                'reference_cards': CommunityService._present_reference_cards(
+                    post.reference_cards, viewer_hasn_id
+                ),
                 'like_count': post.like_count,
                 'comment_count': post.comment_count,
                 'published_time': post.published_time.isoformat() if post.published_time else None,
@@ -236,6 +343,7 @@ class CommunityService:
         skill_tags: list[str] | None = None,
         visibility: str = 'public',
         comment_policy: str = 'all',
+        reference_cards: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
         创建帖子（WebUI Owner JWT 通道：作者恒为操作者本人 human）
@@ -279,6 +387,9 @@ class CommunityService:
             content=content,
             tags=tags or [],
             skill_tags=skill_tags or [],
+            reference_cards=CommunityService._normalize_reference_cards(
+                reference_cards, author_hasn_id=author_hasn_id
+            ),
             visibility=visibility,
             comment_policy=comment_policy,
             generation_type='human',
@@ -467,6 +578,9 @@ class CommunityService:
             'author': author_info,
             'content': post.content,
             'tags': post.tags or [],
+            'reference_cards': CommunityService._present_reference_cards(
+                post.reference_cards, viewer_hasn_id
+            ),
             'like_count': post.like_count,
             'comment_count': post.comment_count,
             'collect_count': post.collect_count,
@@ -1955,6 +2069,8 @@ class CommunityService:
         tags: list[str] | None = None,
         visibility: str = 'public',
         comment_policy: str = 'all',
+        generation_type: str = 'human',
+        reference_cards: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
         创建文章（WebUI Owner JWT 通道：作者恒为操作者本人 human）
@@ -2004,9 +2120,12 @@ class CommunityService:
             cover_url=cover_url,
             content=content,
             tags=tags or [],
+            reference_cards=CommunityService._normalize_reference_cards(
+                reference_cards, author_hasn_id=author_hasn_id
+            ),
             visibility=visibility,
             comment_policy=comment_policy,
-            generation_type='human',
+            generation_type=generation_type if generation_type in ALLOWED_GENERATION_TYPES else 'human',
             status='published',
             published_time=timezone.now(),
         )
@@ -2094,8 +2213,12 @@ class CommunityService:
             'content': article.content,
             'author': author_info,
             'tags': article.tags or [],
+            'reference_cards': CommunityService._present_reference_cards(
+                article.reference_cards, hasn_id
+            ),
             'visibility': article.visibility,
             'comment_policy': article.comment_policy,
+            'generation_type': article.generation_type,
             'like_count': article.like_count,
             'comment_count': article.comment_count,
             'read_time_min': article.read_time_min,
@@ -2168,6 +2291,8 @@ class CommunityService:
         tags: list[str] | None = None,
         visibility: str | None = None,
         comment_policy: str | None = None,
+        generation_type: str | None = None,
+        reference_cards: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
         更新文章
@@ -2218,6 +2343,12 @@ class CommunityService:
             article.visibility = visibility
         if comment_policy is not None:
             article.comment_policy = comment_policy
+        if generation_type is not None and generation_type in ALLOWED_GENERATION_TYPES:
+            article.generation_type = generation_type
+        if reference_cards is not None:
+            article.reference_cards = CommunityService._normalize_reference_cards(
+                reference_cards, author_hasn_id=article.author_hasn_id
+            )
 
         article.updated_time = timezone.now()
 
@@ -2323,6 +2454,7 @@ class CommunityService:
             'content': article.content,
             'author': author_info,
             'tags': article.tags or [],
+            'reference_cards': CommunityService._present_reference_cards(article.reference_cards, None),
             'visibility': article.visibility,
             'comment_policy': article.comment_policy,
             'like_count': article.like_count,
@@ -2527,6 +2659,7 @@ class CommunityService:
             'author': {'hasn_id': article.author_hasn_id, 'type': article.author_type},
             'owner_hasn_id': article.owner_hasn_id,
             'tags': article.tags or [],
+            'reference_cards': CommunityService._present_reference_cards(article.reference_cards, None),
             'visibility': article.visibility,
             'status': article.status,
             'like_count': article.like_count,

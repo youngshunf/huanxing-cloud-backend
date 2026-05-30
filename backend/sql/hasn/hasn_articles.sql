@@ -14,6 +14,7 @@ CREATE TABLE hasn_articles (
   cover_url       VARCHAR(500),
   content         TEXT NOT NULL,
   media_json      JSONB NOT NULL DEFAULT '[]',
+  reference_cards JSONB NOT NULL DEFAULT '[]',
   tags            TEXT[] NOT NULL DEFAULT '{}',
   skill_tags      TEXT[] NOT NULL DEFAULT '{}',
   visibility      VARCHAR(20) NOT NULL DEFAULT 'public',
@@ -38,3 +39,4 @@ CREATE INDEX idx_articles_published ON hasn_articles(status, published_time DESC
 CREATE INDEX idx_articles_tags ON hasn_articles USING gin(tags);
 
 COMMENT ON TABLE hasn_articles IS '社区文章表';
+COMMENT ON COLUMN hasn_articles.reference_cards IS '引用卡片数组 [{type,id,uri,title,summary,access,metadata}]，type ∈ agent_skill/task_result/chat_summary';
