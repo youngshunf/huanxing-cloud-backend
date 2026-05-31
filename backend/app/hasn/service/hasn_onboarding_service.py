@@ -37,6 +37,8 @@ from backend.app.hasn.schema.hasn_onboarding import (
 from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
 from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
 from backend.app.hasn.service import hasn_auth as hasn_auth_service
+from backend.app.marketplace.crud.crud_marketplace_template import marketplace_template_dao
+from backend.app.marketplace.crud.crud_marketplace_template_version import marketplace_template_version_dao
 from backend.app.hasn.service.hasn_node_bindings_service import hasn_node_bindings_service
 from backend.common.exception import errors
 from backend.common.log import log
@@ -54,8 +56,15 @@ SMS_CODE_EXPIRE = 1800
 SMS_RATE_PREFIX = 'sms_rate'
 SMS_RATE_EXPIRE = 60
 
+# 默认 Agent 采用 huanxing-hub 的 `assistant`（星诺 💎 首席特助）权威模板：
+# onboarding 创建时读 marketplace_template 把 SOUL/AGENTS/USER + 技能物化进
+# hasn_agents，与「WebUI 手动创建 assistant」完全等价。模板缺失（云端尚未
+# sync）时回退到下方兜底常量，绝不让 onboarding 因模板缺失而失败。
+DEFAULT_AGENT_TEMPLATE_ID = 'huanxing/agent/assistant'
+# agent_name 是 slug 槽位（→ star_id `<owner>#assistant`），daemon 镜像依赖，保持不变。
 DEFAULT_AGENT_NAME = 'assistant'
-DEFAULT_AGENT_DISPLAY_NAME = '唤星默认 Agent'
+# 模板缺失时的兜底 display_name / description（正常路径用模板的 name/description）。
+DEFAULT_AGENT_DISPLAY_NAME = '星诺'
 DEFAULT_AGENT_DESCRIPTION = 'HASN onboarding 默认 Agent，用于承接首次登录后的基础会话与 pending intent。'
 DEFAULT_AGENT_TEMPLATE: dict[str, Any] = {
     'template_id': 'hasn_default_agent_v1',
@@ -269,17 +278,55 @@ class SqlAlchemyOnboardingGateway:
         )
 
     async def ensure_default_agent(self, db: AsyncSession, owner_id: str, node_id: str | None) -> tuple[Any, bool]:
+        # 采用 hub `assistant` 模板（云端权威源 marketplace_template，由 github_app_sync
+        # 同步）。把 SOUL/AGENTS/USER + 技能物化进 hasn_agents——与「WebUI 手动建 assistant」
+        # 等价。register_hasn_agent 的幂等分支会在这些值非 None 且变化时回填存量空壳默认
+        # Agent 并 bump profile_revision，故无需迁移脚本。
+        tpl = await marketplace_template_dao.get_by_id(db, DEFAULT_AGENT_TEMPLATE_ID)
+        display_name = DEFAULT_AGENT_DISPLAY_NAME
+        description = DEFAULT_AGENT_DESCRIPTION
+        template_id: str | None = None
+        template_version: str | None = None
+        soul_md: str | None = None
+        agents_md: str | None = None
+        user_md: str | None = None
+        skills: dict[str, Any] | None = None
+        if tpl is not None:
+            template_id = DEFAULT_AGENT_TEMPLATE_ID
+            display_name = tpl.name or DEFAULT_AGENT_DISPLAY_NAME
+            description = tpl.description or DEFAULT_AGENT_DESCRIPTION
+            soul_md = tpl.soul_md
+            agents_md = tpl.agents_md
+            user_md = tpl.user_md
+            enabled_skills = [s.strip() for s in (tpl.skill_dependencies or '').split(',') if s.strip()]
+            if enabled_skills:
+                skills = {'enabled': enabled_skills}
+            version = await marketplace_template_version_dao.get_latest_by_template(db, DEFAULT_AGENT_TEMPLATE_ID)
+            template_version = getattr(version, 'version', None)
+        else:
+            # IM-first / 零 fake：模板尚未 sync 时不阻断 onboarding，退回纯身份创建。
+            log.warning(
+                'default agent template %s not found in marketplace_template; '
+                'creating default agent without persona (run github_app_sync)',
+                DEFAULT_AGENT_TEMPLATE_ID,
+            )
         result = await hasn_auth_service.register_hasn_agent(
             db=db,
             owner_hasn_id=owner_id,
             agent_name=DEFAULT_AGENT_NAME,
-            display_name=DEFAULT_AGENT_DISPLAY_NAME,
+            display_name=display_name,
             agent_type='cloud',
             node_id=node_id,
             role='primary',
-            description=DEFAULT_AGENT_DESCRIPTION,
+            description=description,
             capabilities=[DEFAULT_AGENT_TEMPLATE],
             created_via='onboarding',
+            template_id=template_id,
+            template_version=template_version,
+            skills=skills,
+            soul_md=soul_md,
+            agents_md=agents_md,
+            user_md=user_md,
         )
         return result['agent'], not result.get('already_exists', False)
 
