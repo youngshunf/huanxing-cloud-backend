@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 import pytest_asyncio
 
@@ -210,3 +212,126 @@ async def test_verify_unknown_key_rejected(db: AsyncSession) -> None:
         await hasn_agent_mcp_keys_service.verify(db, presented_key=f'{KEY_PREFIX}_bogusbogusbogus')
     with pytest.raises(errors.AuthorizationError):
         await hasn_agent_mcp_keys_service.verify(db, presented_key='')
+
+
+# ============================================================================
+# P2：云端 MCP 双路鉴权（streamable.py 前缀分流 + key→AgentContext）
+# 把 _authenticate_with_key 内部的 async_db_session 重定向到本测试的事务隔离
+# session（同一真库、同一事务，绝非 fake），用例结束随 fixture 回滚不留痕。
+# ============================================================================
+
+from backend.app.mcp.streamable import HasnMcpStreamableServer  # noqa: E402
+
+
+def _headers(token: str, *, node_id: str | None = None, agent_id: str | None = None) -> dict[bytes, bytes]:
+    h: dict[bytes, bytes] = {b'authorization': f'Bearer {token}'.encode()}
+    if node_id is not None:
+        h[b'x-node-id'] = node_id.encode()
+    if agent_id is not None:
+        h[b'x-hasn-agent-id'] = agent_id.encode()
+    return h
+
+
+@pytest.fixture
+def server(db: AsyncSession, monkeypatch) -> HasnMcpStreamableServer:
+    """鉴权方法内部的 async_db_session() 重定向到测试事务 session。"""
+
+    @contextlib.asynccontextmanager
+    async def _yield_test_session():
+        yield db  # 不 commit / 不 close —— 由 db fixture 统一回滚
+
+    monkeypatch.setattr('backend.app.mcp.streamable.async_db_session', lambda: _yield_test_session())
+    return HasnMcpStreamableServer()
+
+
+@pytest.mark.asyncio
+async def test_key_auth_self_identifies_without_agent_id_header(
+    db: AsyncSession, server: HasnMcpStreamableServer
+) -> None:
+    """key 自识别身份：无 X-HASN-Agent-ID 也能解析出正确 AgentContext + 合成稳定 session_uuid。"""
+    owner_id, uid = await _seed_human(db)
+    agent_id = await _seed_agent(db, owner_id=owner_id, display_name='星诺')
+    issued = await hasn_agent_mcp_keys_service.issue(
+        db,
+        obj=IssueAgentMcpKeyParam(agent_hasn_id=agent_id, scopes=['hasn.memory.read', 'hasn.memory.write']),
+        owner_hasn_id=owner_id,
+        owner_user_id=uid,
+    )
+
+    ctx = await server._authenticate_from_headers(_headers(issued.key))
+
+    assert ctx.hasn_id == agent_id
+    assert ctx.owner_hasn_id == owner_id
+    assert ctx.owner_id == uid
+    assert ctx.scopes == ['hasn.memory.read', 'hasn.memory.write']
+    assert ctx.agent_status == 'active'
+    # 合成稳定标识：amk_<key_id>，与 JWT 会话可区分
+    assert ctx.session_uuid == f'amk_{issued.id}'
+    # to_token_payload() 不再因缺 session_uuid 抛错（设计 §11 解法生效）
+    payload = ctx.to_token_payload()
+    assert payload.session_uuid == f'amk_{issued.id}'
+    assert payload.agent_hasn_id == agent_id
+    assert payload.owner_user_id == uid
+
+
+@pytest.mark.asyncio
+async def test_key_auth_rejects_after_revoke(db: AsyncSession, server: HasnMcpStreamableServer) -> None:
+    """吊销后用 key 连云端 MCP 鉴权被拒（转 ValueError→401）。"""
+    owner_id, uid = await _seed_human(db)
+    agent_id = await _seed_agent(db, owner_id=owner_id)
+    issued = await hasn_agent_mcp_keys_service.issue(
+        db, obj=IssueAgentMcpKeyParam(agent_hasn_id=agent_id), owner_hasn_id=owner_id, owner_user_id=uid
+    )
+    await hasn_agent_mcp_keys_service.revoke(db, pk=issued.id, owner_hasn_id=owner_id)
+
+    with pytest.raises(ValueError):
+        await server._authenticate_from_headers(_headers(issued.key))
+
+
+@pytest.mark.asyncio
+async def test_key_auth_node_binding(db: AsyncSession, server: HasnMcpStreamableServer) -> None:
+    """node 绑定：错 X-Node-Id 拒、对 X-Node-Id 通过。"""
+    owner_id, uid = await _seed_human(db)
+    agent_id = await _seed_agent(db, owner_id=owner_id)
+    issued = await hasn_agent_mcp_keys_service.issue(
+        db,
+        obj=IssueAgentMcpKeyParam(agent_hasn_id=agent_id, node_id='node-X'),
+        owner_hasn_id=owner_id,
+        owner_user_id=uid,
+    )
+
+    with pytest.raises(ValueError):
+        await server._authenticate_from_headers(_headers(issued.key, node_id='node-Y'))
+
+    ctx = await server._authenticate_from_headers(_headers(issued.key, node_id='node-X'))
+    assert ctx.hasn_id == agent_id
+
+
+@pytest.mark.asyncio
+async def test_key_auth_defensive_agent_id_mismatch(
+    db: AsyncSession, server: HasnMcpStreamableServer
+) -> None:
+    """带了 X-HASN-Agent-ID 时做防御性一致性核对：不一致拒。"""
+    owner_id, uid = await _seed_human(db)
+    agent_id = await _seed_agent(db, owner_id=owner_id)
+    issued = await hasn_agent_mcp_keys_service.issue(
+        db, obj=IssueAgentMcpKeyParam(agent_hasn_id=agent_id), owner_hasn_id=owner_id, owner_user_id=uid
+    )
+
+    with pytest.raises(ValueError):
+        await server._authenticate_from_headers(_headers(issued.key, agent_id='a_someone_else'))
+
+    # 一致则放行
+    ctx = await server._authenticate_from_headers(_headers(issued.key, agent_id=agent_id))
+    assert ctx.hasn_id == agent_id
+
+
+@pytest.mark.asyncio
+async def test_non_key_token_routes_to_jwt_path(db: AsyncSession, server: HasnMcpStreamableServer) -> None:
+    """非 hasn_amk_ 前缀 token 路由到 JWT 兼容路：缺 X-HASN-Agent-ID 报缺头，带了则 JWT 校验失败。"""
+    # 无 agent-id 头 → JWT 路要求该头
+    with pytest.raises(ValueError, match='X-HASN-Agent-ID'):
+        await server._authenticate_from_headers(_headers('eyJ.bogus.jwt'))
+    # 带 agent-id 头 → 进 verify_agent_token，假 token 校验失败
+    with pytest.raises(ValueError):
+        await server._authenticate_from_headers(_headers('eyJ.bogus.jwt', agent_id='a_x'))
