@@ -319,6 +319,101 @@ class HasnAgentProfileService:
 
         return UpdateAgentProfileResponse(agent=_agent_snapshot(agent))
 
+    async def _get_owned_agent(self, db: AsyncSession, *, owner_id: str, hasn_id: str) -> Any:
+        """按 (hasn_id, owner_id) 取 Agent；不存在或不归属则 404。"""
+        import sqlalchemy as sa
+
+        agent = (
+            await db.execute(
+                sa.select(HasnAgents).where(
+                    HasnAgents.hasn_id == hasn_id,
+                    HasnAgents.owner_id == owner_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if agent is None:
+            raise errors.NotFoundError(msg='ERR_HASN_AGENT_NOT_FOUND')
+        return agent
+
+    async def attach_skill_cloud_first(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        hasn_id: str,
+        skill_id: str,
+        user_id: int | None = None,
+    ) -> UpdateAgentProfileResponse:
+        """为 Agent 装配技能（云端权威）。
+
+        校验：owner 归属 + Agent 存在 + 技能 published/public（命名空间化 ID）。
+        写入：把 skill_id 并入 hasn_agents.skills（归一 list[str] 保序去重）→ bump
+        profile_revision → append `agent.updated` 同步事件。技能包的实际下载与物化由
+        daemon 触发 re-provision、runtime 据权威清单下载完成——云端只持有权威 skill_id 清单。
+        幂等：已在清单中则不改动、不 bump、不发事件，直接回快照。
+        """
+        from backend.app.marketplace.crud.crud_marketplace_skill import marketplace_skill_dao
+        from backend.app.marketplace.service.resource_id import parse_resource_id
+
+        await self._assert_owner_access(db, owner_id=owner_id, user_id=user_id)
+        agent = await self._get_owned_agent(db, owner_id=owner_id, hasn_id=hasn_id)
+
+        namespace, slug = parse_resource_id(skill_id)
+        skill = await marketplace_skill_dao.get_by_namespace_slug_public(db, namespace, slug)
+        if skill is None:
+            raise errors.NotFoundError(msg='ERR_MARKETPLACE_SKILL_NOT_FOUND')
+        # 用规范化资源 ID 入库，避免前后导斜杠等差异造成清单内重复项。
+        canonical_id = f'{namespace}/{slug}'
+
+        current = _normalize_skill_ids(agent.skills)
+        if canonical_id not in current:
+            agent.skills = [*current, canonical_id]
+            agent.profile_revision = (agent.profile_revision or 1) + 1
+            await db.flush()
+            await self.gateway.append_agent_sync_event(
+                db,
+                owner_id=owner_id,
+                agent=agent,
+                event_type='agent.updated',
+            )
+
+        return UpdateAgentProfileResponse(agent=_agent_snapshot(agent))
+
+    async def detach_skill_cloud_first(
+        self,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        hasn_id: str,
+        skill_id: str,
+        user_id: int | None = None,
+    ) -> UpdateAgentProfileResponse:
+        """卸载 Agent 技能（云端权威）。从 skills 清单移除 → bump revision → 同步事件。
+
+        不校验技能是否仍在市场（已下架技能也允许卸载）。幂等：不在清单中则不改动。
+        """
+        from backend.app.marketplace.service.resource_id import parse_resource_id
+
+        await self._assert_owner_access(db, owner_id=owner_id, user_id=user_id)
+        agent = await self._get_owned_agent(db, owner_id=owner_id, hasn_id=hasn_id)
+
+        namespace, slug = parse_resource_id(skill_id)
+        canonical_id = f'{namespace}/{slug}'
+
+        current = _normalize_skill_ids(agent.skills)
+        if canonical_id in current:
+            agent.skills = [sid for sid in current if sid != canonical_id]
+            agent.profile_revision = (agent.profile_revision or 1) + 1
+            await db.flush()
+            await self.gateway.append_agent_sync_event(
+                db,
+                owner_id=owner_id,
+                agent=agent,
+                event_type='agent.updated',
+            )
+
+        return UpdateAgentProfileResponse(agent=_agent_snapshot(agent))
+
     async def sync_agents(
         self, db: AsyncSession, request: AgentSyncRequest, *, user_id: int | None = None
     ) -> AgentSyncResponse:
@@ -417,6 +512,31 @@ class HasnAgentProfileService:
 # 云端公共技能默认项：每个 Agent 创建时默认追加进技能清单的 skill_id。
 # 留空＝不注入（零 fake，不臆造 skill_id）；canonical 公共技能列表在 P3 接入。
 _DEFAULT_COMMON_SKILLS: list[str] = []
+
+
+def _normalize_skill_ids(skills: Any) -> list[str]:
+    """把 hasn_agents.skills（JSONB）归一化为 skill_id 字符串清单（保序去重）。
+
+    兼容三种历史形态：list[str] / list[{skill_id|id}] / {skill_id: version}。
+    与 `app/hasn/api/v1/agent/hasn_agent_profile.py` 的同名 helper 逻辑一致——
+    service 层不反向依赖 api 层，故此处独立实现，二者均为纯归一化无状态函数。
+    """
+    out: list[str] = []
+    if isinstance(skills, list):
+        for item in skills:
+            sid: str | None = None
+            if isinstance(item, str) and item.strip():
+                sid = item.strip()
+            elif isinstance(item, dict):
+                raw = item.get('skill_id') or item.get('id')
+                sid = str(raw) if raw else None
+            if sid and sid not in out:
+                out.append(sid)
+    elif isinstance(skills, dict):
+        for key in skills:
+            if key and str(key) not in out:
+                out.append(str(key))
+    return out
 
 
 def _with_common_skills(skills: Any) -> Any:

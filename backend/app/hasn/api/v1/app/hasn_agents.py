@@ -15,6 +15,8 @@ from backend.app.hasn.model import HasnAgents, HasnHumans
 from backend.app.hasn.schema.hasn_agents import (
     AgentHeartbeatRequest,
     AgentHeartbeatResponse,
+    AgentSkillInstallRequest,
+    AgentSkillUninstallRequest,
     AgentSnapshot,
     AgentSyncRequest,
     AgentSyncResponse,
@@ -93,9 +95,7 @@ async def get_agent_reachability(
     维护而漂移；不可达时 daemon 仍 fail-closed 拒发。
     """
     requester_id = auth.get('effective_id', auth['hasn_id'])
-    agent = (
-        await db.execute(sa.select(HasnAgents).where(HasnAgents.hasn_id == agent_id))
-    ).scalar_one_or_none()
+    agent = (await db.execute(sa.select(HasnAgents).where(HasnAgents.hasn_id == agent_id))).scalar_one_or_none()
     if agent is None:
         raise errors.NotFoundError(msg='Agent 不存在')
 
@@ -225,6 +225,64 @@ async def update_my_hasn_agent_profile(
         owner_id=owner,
         hasn_id=hasn_id,
         request=body,
+        user_id=user_id,
+    )
+    return response_base.success(data=result)
+
+
+@router.post(
+    '/by-hasn-id/{hasn_id}/skills/install',
+    summary='daemon 端为 Agent 装配市场技能（云端权威）',
+    dependencies=[DependsJwtAuth],
+)
+async def install_agent_skill(
+    request: Request,
+    db: CurrentSessionTransaction,
+    hasn_id: Annotated[str, Path(description='Agent HASN ID, 如 a_xxx')],
+    body: AgentSkillInstallRequest,
+) -> ResponseSchemaModel[UpdateAgentProfileResponse]:
+    """把市场技能 skill_id 并入该 Agent 的权威技能清单（hasn_agents.skills）。
+
+    云端校验：当前用户拥有该 owner + Agent 归属 + 技能 published/public。落库后 bump
+    profile_revision 并 append 同步事件；daemon 据返回快照触发 re-provision，由 runtime
+    下载技能包完成物化（云端只持有权威清单，不在此 push 文件）。
+    """
+    user_id = request.user.id
+    owner = (await db.execute(sa.select(HasnHumans.hasn_id).where(HasnHumans.user_id == user_id))).scalar_one_or_none()
+    if not owner:
+        raise errors.ForbiddenError(msg='当前用户未注册 HASN 身份')
+    result = await agent_profile_service.attach_skill_cloud_first(
+        db,
+        owner_id=owner,
+        hasn_id=hasn_id,
+        skill_id=body.skill_id,
+        user_id=user_id,
+    )
+    return response_base.success(data=result)
+
+
+@router.post(
+    '/by-hasn-id/{hasn_id}/skills/uninstall',
+    summary='daemon 端卸载 Agent 技能（云端权威）',
+    dependencies=[DependsJwtAuth],
+)
+async def uninstall_agent_skill(
+    request: Request,
+    db: CurrentSessionTransaction,
+    hasn_id: Annotated[str, Path(description='Agent HASN ID, 如 a_xxx')],
+    body: AgentSkillUninstallRequest,
+) -> ResponseSchemaModel[UpdateAgentProfileResponse]:
+    """从该 Agent 的权威技能清单移除 skill_id。落库后 bump revision + 同步事件，
+    daemon 据返回快照触发 re-provision。已下架技能也允许卸载。"""
+    user_id = request.user.id
+    owner = (await db.execute(sa.select(HasnHumans.hasn_id).where(HasnHumans.user_id == user_id))).scalar_one_or_none()
+    if not owner:
+        raise errors.ForbiddenError(msg='当前用户未注册 HASN 身份')
+    result = await agent_profile_service.detach_skill_cloud_first(
+        db,
+        owner_id=owner,
+        hasn_id=hasn_id,
+        skill_id=body.skill_id,
         user_id=user_id,
     )
     return response_base.success(data=result)

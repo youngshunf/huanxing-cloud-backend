@@ -160,6 +160,24 @@ class UpdateAgentProfileResponse(SchemaBase):
     agent: AgentSnapshot = Field(description='更新后的 Agent 快照（云端权威）')
 
 
+class AgentSkillInstallRequest(SchemaBase):
+    """daemon 发起的「为 Agent 装配技能」请求（云端权威）。
+
+    skill_id 为命名空间化资源 ID（{namespace}/{slug}）。云端校验技能已 published/public 后，
+    把 skill_id 并入 hasn_agents.skills 清单（list[str] 保序去重）、bump profile_revision，
+    返回最新 AgentSnapshot。version 仅记录意图，物化由 daemon/runtime 在 re-provision 时下载对应包。
+    """
+
+    skill_id: str = Field(min_length=1, max_length=255, description='技能资源 ID（{namespace}/{slug}）')
+    version: str | None = Field(None, max_length=50, description='期望版本（可选，缺省取最新）')
+
+
+class AgentSkillUninstallRequest(SchemaBase):
+    """daemon 发起的「卸载 Agent 技能」请求（云端权威）。"""
+
+    skill_id: str = Field(min_length=1, max_length=255, description='技能资源 ID（{namespace}/{slug}）')
+
+
 class AgentSyncRequest(SchemaBase):
     owner_id: str = Field(description='Owner HASN ID')
     after_revision: int | None = Field(None, ge=0, description='仅返回大于该 Profile revision 的 Agent')
