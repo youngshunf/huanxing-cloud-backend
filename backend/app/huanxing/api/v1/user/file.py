@@ -35,9 +35,9 @@ async def user_upload_s3_files(
     if not file or not file.filename:
         raise errors.RequestError(msg='上传文件不能为空')
 
-    date_str = datetime.now().strftime('%Y-%m-%d')
+    date_str = datetime.now().strftime('%Y/%m/%d')
     original_filename = file.filename
-    # 设置存储路径: UUID/date_str/filename，加上前缀防止冲突
+    # 存储路径: agent_uploads/{user_id}/年/月/日/filename（年/月/日层级目录，加前缀防冲突）
     file.filename = f'agent_uploads/{user_id}/{date_str}/{original_filename}'
 
     await write_file(s3_storage, file)
