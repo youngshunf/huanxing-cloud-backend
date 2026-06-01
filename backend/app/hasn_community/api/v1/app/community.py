@@ -438,6 +438,34 @@ async def create_article(
 
 
 @router.get(
+    '/articles/recommended',
+    summary='获取推荐文章',
+    description='获取推荐的文章列表（推荐页右侧栏，轻量字段）',
+    dependencies=[DependsJwtAuth],
+    response_model=ResponseModel,
+)
+async def get_recommended_articles(
+    request: Request,
+    db: CurrentSession,
+    limit: int = 5,
+) -> ResponseModel:
+    """获取推荐文章（近 N 篇已发布、非私密文章，按发布时间倒序）
+
+    注意：本路由必须声明在 `/articles/{article_id}` 之前，否则 `recommended`
+    会被当作 article_id 命中详情路由。
+    """
+    user_id = request.user.id
+
+    result = await community_service.get_recommended_articles(
+        db,
+        viewer_user_id=user_id,
+        limit=limit,
+    )
+
+    return response_base.success(data=result)
+
+
+@router.get(
     '/articles/{article_id}',
     summary='获取文章详情',
     description='获取单篇文章的详细信息',

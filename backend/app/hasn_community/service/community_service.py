@@ -211,6 +211,18 @@ class CommunityService:
 
         viewer_hasn_id = await CommunityService._resolve_human_hasn_id(db, user_id)
 
+        # 文章流单独取数：文章存于 hasn_articles（与 hasn_posts 独立），item 形态不同
+        # （article_id/title/summary/cover_url），以 content_type='article' 下发。
+        if feed_type == 'articles':
+            return await CommunityService._get_articles_feed(
+                db,
+                viewer_hasn_id=viewer_hasn_id,
+                tag=tag,
+                q=q,
+                cursor=cursor,
+                limit=limit,
+            )
+
         stmt = (
             select(
                 HasnPosts,
@@ -346,6 +358,202 @@ class CommunityService:
             'items': items,
             'next_cursor': next_cursor,
         }
+
+    @staticmethod
+    async def _get_articles_feed(
+        db: AsyncSession,
+        *,
+        viewer_hasn_id: str | None,
+        tag: str | None = None,
+        q: str | None = None,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """
+        文章信息流（hasn_articles）
+
+        - 仅 status='published' 且 visibility != 'private'（私密文章不进公共流）
+        - 按 published_time 倒序，keyset 游标 "{published_time}|{article_id}"
+        - tag：tags 数组包含该话题；q：标题/摘要/正文 ILIKE
+        - is_liked/is_collected：按 target_type='article' 批量回填
+        - item 携带 content_type='article'，便于前端与帖子区分渲染与跳转
+        """
+        AuthorHuman = aliased(HasnHumans)
+        AuthorAgent = aliased(HasnAgents)
+        OwnerHuman = aliased(HasnHumans)
+
+        stmt = (
+            select(
+                HasnArticles,
+                AuthorHuman.nickname.label('human_nickname'),
+                AuthorHuman.avatar.label('human_avatar'),
+                AuthorAgent.display_name.label('agent_display_name'),
+                AuthorAgent.avatar.label('agent_avatar'),
+                OwnerHuman.hasn_id.label('owner_hasn_id'),
+                OwnerHuman.nickname.label('owner_nickname'),
+            )
+            .outerjoin(AuthorHuman, (HasnArticles.author_type == 'human') & (HasnArticles.author_hasn_id == AuthorHuman.hasn_id))
+            .outerjoin(AuthorAgent, (HasnArticles.author_type == 'agent') & (HasnArticles.author_hasn_id == AuthorAgent.hasn_id))
+            .outerjoin(OwnerHuman, (HasnArticles.author_type == 'agent') & (AuthorAgent.owner_id == OwnerHuman.hasn_id))
+            .where(
+                HasnArticles.status == 'published',
+                HasnArticles.visibility != 'private',
+            )
+        )
+
+        # 标签流
+        if tag:
+            stmt = stmt.where(HasnArticles.tags.any(tag))
+
+        # 关键词搜索：标题/摘要/正文 ILIKE（参数化，无注入风险）
+        if q and q.strip():
+            kw = f'%{q.strip()}%'
+            stmt = stmt.where(
+                or_(
+                    HasnArticles.title.ilike(kw),
+                    HasnArticles.summary.ilike(kw),
+                    HasnArticles.content.ilike(kw),
+                )
+            )
+
+        # keyset 游标（published_time 倒序 + article_id 兜底）
+        if cursor:
+            try:
+                sort_val, cur_id = cursor.split('|', 1)
+            except ValueError:
+                sort_val, cur_id = None, None
+            if sort_val is not None:
+                cv = datetime.fromisoformat(sort_val)
+                stmt = stmt.where(
+                    or_(
+                        HasnArticles.published_time < cv,
+                        and_(HasnArticles.published_time == cv, HasnArticles.article_id < cur_id),
+                    )
+                )
+
+        stmt = stmt.order_by(HasnArticles.published_time.desc(), HasnArticles.article_id.desc())
+        stmt = stmt.limit(limit + 1)
+
+        result = await db.execute(stmt)
+        rows = result.all()
+
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+
+        article_ids = [row.HasnArticles.article_id for row in rows]
+        liked_ids, collected_ids = await CommunityService._batch_reactions(
+            db, viewer_hasn_id, 'article', article_ids
+        )
+
+        items = []
+        for row in rows:
+            article = row.HasnArticles
+
+            author_info = {
+                'hasn_id': article.author_hasn_id,
+                'type': article.author_type,
+            }
+            if article.author_type == 'human':
+                author_info['display_name'] = row.human_nickname or article.author_hasn_id
+                author_info['avatar'] = row.human_avatar
+            else:  # agent
+                author_info['display_name'] = row.agent_display_name or article.author_hasn_id
+                author_info['avatar'] = row.agent_avatar
+                if row.owner_hasn_id:
+                    author_info['owner'] = {
+                        'hasn_id': row.owner_hasn_id,
+                        'display_name': row.owner_nickname or row.owner_hasn_id,
+                    }
+
+            items.append({
+                'content_type': 'article',
+                'article_id': article.article_id,
+                'author': author_info,
+                'title': article.title,
+                'summary': article.summary,
+                'cover_url': article.cover_url,
+                'tags': article.tags or [],
+                'reference_cards': CommunityService._present_reference_cards(
+                    article.reference_cards, viewer_hasn_id
+                ),
+                'like_count': article.like_count,
+                'comment_count': article.comment_count,
+                'read_time_min': article.read_time_min,
+                'published_time': article.published_time.isoformat() if article.published_time else None,
+                'is_liked': article.article_id in liked_ids,
+                'is_collected': article.article_id in collected_ids,
+            })
+
+        next_cursor = None
+        if has_more and rows:
+            last = rows[-1].HasnArticles
+            if last.published_time:
+                next_cursor = f'{last.published_time.isoformat()}|{last.article_id}'
+
+        return {
+            'items': items,
+            'next_cursor': next_cursor,
+        }
+
+    @staticmethod
+    async def get_recommended_articles(
+        db: AsyncSession,
+        *,
+        viewer_user_id: int | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """
+        推荐文章（推荐页右侧栏）
+
+        近 N 篇已发布、非私密文章，按发布时间倒序的轻量列表；点击进入文章详情。
+        返回轻量字段（article_id/title/summary/cover_url/author/计数/时间）。
+        """
+        AuthorHuman = aliased(HasnHumans)
+        AuthorAgent = aliased(HasnAgents)
+
+        stmt = (
+            select(
+                HasnArticles,
+                AuthorHuman.nickname.label('human_nickname'),
+                AuthorAgent.display_name.label('agent_display_name'),
+            )
+            .outerjoin(AuthorHuman, (HasnArticles.author_type == 'human') & (HasnArticles.author_hasn_id == AuthorHuman.hasn_id))
+            .outerjoin(AuthorAgent, (HasnArticles.author_type == 'agent') & (HasnArticles.author_hasn_id == AuthorAgent.hasn_id))
+            .where(
+                HasnArticles.status == 'published',
+                HasnArticles.visibility != 'private',
+            )
+            .order_by(HasnArticles.published_time.desc(), HasnArticles.article_id.desc())
+            .limit(limit)
+        )
+
+        result = await db.execute(stmt)
+        rows = result.all()
+
+        items = []
+        for row in rows:
+            article = row.HasnArticles
+            if article.author_type == 'human':
+                author_name = row.human_nickname or article.author_hasn_id
+            else:
+                author_name = row.agent_display_name or article.author_hasn_id
+            items.append({
+                'article_id': article.article_id,
+                'title': article.title,
+                'summary': article.summary,
+                'cover_url': article.cover_url,
+                'author': {
+                    'hasn_id': article.author_hasn_id,
+                    'type': article.author_type,
+                    'display_name': author_name,
+                },
+                'like_count': article.like_count,
+                'comment_count': article.comment_count,
+                'read_time_min': article.read_time_min,
+                'published_time': article.published_time.isoformat() if article.published_time else None,
+            })
+
+        return items
 
     @staticmethod
     async def create_post(

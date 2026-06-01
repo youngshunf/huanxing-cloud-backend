@@ -149,6 +149,67 @@ async def seed_post(
     return post_id
 
 
+async def seed_article(
+    db: AsyncSession,
+    *,
+    author_hasn_id: str,
+    author_type: str = 'human',
+    owner_hasn_id: str | None = None,
+    title: str = '测试文章',
+    summary: str | None = '测试摘要',
+    cover_url: str | None = None,
+    content: str = '# 测试文章\n\n正文内容。',
+    status: str = 'published',
+    visibility: str = 'public',
+    published_time=None,
+    like_count: int = 0,
+    read_time_min: int = 1,
+    tags: list[str] | None = None,
+) -> str:
+    """插入一个 hasn_articles 行，返回 article_id。published_time 可传 datetime 控制游标顺序。"""
+    from backend.utils.timezone import timezone as _tz
+
+    article_id = f'a_{uuid4_str()[:12]}'
+    pt = published_time if published_time is not None else _tz.now()
+    tag_literal = (
+        'ARRAY[' + ','.join(f"'{t}'" for t in tags) + ']::varchar[]'
+        if tags
+        else 'ARRAY[]::varchar[]'
+    )
+    await db.execute(
+        text(
+            'INSERT INTO hasn_articles (article_id, author_type, author_hasn_id, owner_hasn_id, '
+            'origin_workspace_kind, origin_workspace_id, title, summary, cover_url, content, '
+            'media_json, reference_cards, tags, skill_tags, visibility, comment_policy, '
+            'generation_type, status, like_count, comment_count, collect_count, share_count, '
+            'word_count, read_time_min, created_time, updated_time, published_time) '
+            "VALUES (:article_id, :author_type, :author_hasn_id, :owner_hasn_id, 'personal', '0', "
+            ":title, :summary, :cover_url, :content, '{}'::jsonb, '[]'::jsonb, "
+            f'{tag_literal}, ARRAY[]::varchar[], :visibility, '
+            "'all', :gen, :status, :like_count, 0, 0, 0, 0, :read_time_min, now(), now(), "
+            ':published_time)'
+        ),
+        {
+            'article_id': article_id,
+            'author_type': author_type,
+            'author_hasn_id': author_hasn_id,
+            'owner_hasn_id': owner_hasn_id or author_hasn_id,
+            'title': title,
+            'summary': summary,
+            'cover_url': cover_url,
+            'content': content,
+            'visibility': visibility,
+            'gen': 'human' if author_type == 'human' else 'agent',
+            'status': status,
+            'like_count': like_count,
+            'read_time_min': read_time_min,
+            'published_time': pt,
+        },
+    )
+    await db.flush()
+    return article_id
+
+
 async def seed_collection_item(
     db: AsyncSession,
     *,
