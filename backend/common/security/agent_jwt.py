@@ -10,8 +10,10 @@ Token Type: agent (通过 payload.token_type 区分)
 @author Ysf
 @date 2026-05-13
 """
+
 import json
 import uuid
+
 from datetime import timedelta
 from typing import Any
 
@@ -24,16 +26,26 @@ from backend.core.conf import settings
 from backend.database.redis import redis_client
 from backend.utils.timezone import timezone
 
-
-# 默认 Agent Scopes（只读权限）
+# 默认 Agent Scopes（统一 domain:action 冒号词表，P1 词表迁移）
+# 注：三态授权（P2/P3）落地后，default_mode='allow' 才是判定真相；
+# 本数组保留做审计 / 回滚 / 兼容老消费点。
 DEFAULT_AGENT_SCOPES = [
-    "community.read",
-    "message.read",
-    "contact.read",
-    "task.execute",
-    "knowledge.read",
-    "profile.read",
+    'community:read',
+    'message:read',
+    'contact:read',
+    'task:execute',
+    'knowledge:read',
+    'profile:read',
 ]
+
+
+def normalize_scope(scope: str) -> str:
+    """归一 scope 词表（过渡期兜底）：把点号 / 冒号统一成冒号。
+
+    迁移窗口内防回归：``message.read`` 与 ``message:read`` 视为等价。
+    # TODO(P5后): 全栈迁移完成后移除归一兜底，统一只认冒号。
+    """
+    return scope.replace('.', ':')
 
 
 def jwt_encode_agent(payload: dict[str, Any]) -> str:
@@ -78,7 +90,7 @@ def jwt_decode_agent(token: str) -> AgentTokenPayload:
 
         return AgentTokenPayload(
             agent_hasn_id=agent_hasn_id,
-            agent_name=agent_name or "",
+            agent_name=agent_name or '',
             owner_hasn_id=owner_hasn_id,
             owner_user_id=int(owner_user_id),
             scopes=scopes,
@@ -89,7 +101,7 @@ def jwt_decode_agent(token: str) -> AgentTokenPayload:
     except errors.TokenError:
         raise
     except Exception as e:
-        raise errors.TokenError(msg=f'Agent Token 解析失败: {str(e)}')
+        raise errors.TokenError(msg=f'Agent Token 解析失败: {e!s}')
 
 
 async def create_agent_access_token(
@@ -172,9 +184,7 @@ async def verify_agent_token(token: str) -> AgentTokenPayload:
     token_payload = jwt_decode_agent(token)
 
     # 检查 Redis 中是否存在（支持主动吊销）
-    redis_token = await redis_client.get(
-        f'agent_token:{token_payload.agent_hasn_id}:{token_payload.session_uuid}'
-    )
+    redis_token = await redis_client.get(f'agent_token:{token_payload.agent_hasn_id}:{token_payload.session_uuid}')
 
     if not redis_token:
         raise errors.TokenError(msg='Agent Token 已过期或已被吊销')
@@ -193,7 +203,7 @@ async def get_agent_scopes_from_db(db: AsyncSession, agent_hasn_id: str) -> dict
     :param agent_hasn_id: Agent 的 HASN ID
     :return: {"scopes": [...], "post_needs_review": bool}
     """
-    from sqlalchemy import select, text
+    from sqlalchemy import text
 
     # 查询 hasn_agent_scopes 表
     result = await db.execute(
@@ -202,20 +212,20 @@ async def get_agent_scopes_from_db(db: AsyncSession, agent_hasn_id: str) -> dict
             FROM hasn_agent_scopes
             WHERE agent_hasn_id = :agent_hasn_id
         """),
-        {"agent_hasn_id": agent_hasn_id}
+        {'agent_hasn_id': agent_hasn_id},
     )
     row = result.fetchone()
 
     if not row:
         # 如果没有记录，返回默认权限
         return {
-            "scopes": DEFAULT_AGENT_SCOPES,
-            "post_needs_review": True,
+            'scopes': DEFAULT_AGENT_SCOPES,
+            'post_needs_review': True,
         }
 
     return {
-        "scopes": list(row[0]) if row[0] else DEFAULT_AGENT_SCOPES,
-        "post_needs_review": row[1],
+        'scopes': list(row[0]) if row[0] else DEFAULT_AGENT_SCOPES,
+        'post_needs_review': row[1],
     }
 
 
@@ -275,11 +285,11 @@ async def create_default_agent_scopes(db: AsyncSession, agent_hasn_id: str, owne
             ON CONFLICT (agent_hasn_id) DO NOTHING
         """),
         {
-            "agent_hasn_id": agent_hasn_id,
-            "owner_hasn_id": owner_hasn_id,
-            "scopes": DEFAULT_AGENT_SCOPES,
-            "post_needs_review": True,
-        }
+            'agent_hasn_id': agent_hasn_id,
+            'owner_hasn_id': owner_hasn_id,
+            'scopes': DEFAULT_AGENT_SCOPES,
+            'post_needs_review': True,
+        },
     )
     await db.commit()
 
@@ -314,11 +324,11 @@ async def update_agent_scopes(
             WHERE agent_hasn_id = :agent_hasn_id
         """),
         {
-            "agent_hasn_id": agent_hasn_id,
-            "scopes": scopes,
-            "post_needs_review": post_needs_review,
-            "granted_by": granted_by,
-        }
+            'agent_hasn_id': agent_hasn_id,
+            'scopes': scopes,
+            'post_needs_review': post_needs_review,
+            'granted_by': granted_by,
+        },
     )
     await db.commit()
 

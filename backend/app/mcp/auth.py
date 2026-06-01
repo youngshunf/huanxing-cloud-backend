@@ -3,15 +3,15 @@ MCP 认证中间件
 
 使用 FastAPI Depends 机制验证 Agent JWT 并注入 AgentContext
 """
+
 from typing import Annotated
 
-from fastapi import Header, HTTPException, status, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Depends, HTTPException, Header, status
 
-from backend.common.dataclasses import AgentTokenPayload
-from backend.common.security.agent_jwt import verify_agent_token
-from backend.common.exception import errors
 from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
+from backend.common.dataclasses import AgentTokenPayload
+from backend.common.exception import errors
+from backend.common.security.agent_jwt import normalize_scope, verify_agent_token
 from backend.database.db import async_db_session
 from backend.utils.timezone import timezone
 
@@ -26,11 +26,11 @@ class AgentContext:
         scopes: list[str],
         agent_status: str,
         metadata: dict,
-        agent_name: str = "",
+        agent_name: str = '',
         owner_hasn_id: str | None = None,
         session_uuid: str | None = None,
         token_payload: AgentTokenPayload | None = None,
-    ):
+    ) -> None:
         self.hasn_id = hasn_id
         self.owner_id = owner_id
         self.scopes = scopes
@@ -48,7 +48,7 @@ class AgentContext:
         *,
         agent_status: str,
         metadata: dict | None = None,
-    ) -> "AgentContext":
+    ) -> 'AgentContext':
         return cls(
             hasn_id=payload.agent_hasn_id,
             owner_id=payload.owner_user_id,
@@ -85,22 +85,24 @@ class AgentContext:
         return self.owner_id
 
     def has_scope(self, scope: str) -> bool:
-        """检查是否有指定权限"""
-        return scope in self.scopes
+        """检查是否有指定权限（过渡期归一兜底：点号/冒号等价）"""
+        # TODO(P5后): 迁移完成移除归一兜底
+        owned = {normalize_scope(s) for s in self.scopes}
+        return normalize_scope(scope) in owned
 
     def require_scopes(self, *required_scopes: str) -> None:
-        """要求必须有指定权限"""
-        missing = [s for s in required_scopes if s not in self.scopes]
+        """要求必须有指定权限（过渡期归一兜底：点号/冒号等价）"""
+        # TODO(P5后): 迁移完成移除归一兜底
+        owned = {normalize_scope(s) for s in self.scopes}
+        missing = [s for s in required_scopes if normalize_scope(s) not in owned]
         if missing:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Missing required scopes: {', '.join(missing)}"
+                status_code=status.HTTP_403_FORBIDDEN, detail=f'Missing required scopes: {", ".join(missing)}'
             )
 
 
 async def get_agent_context(
-    authorization: Annotated[str, Header()],
-    x_hasn_agent_id: Annotated[str, Header(alias="X-HASN-Agent-ID")]
+    authorization: Annotated[str, Header()], x_hasn_agent_id: Annotated[str, Header(alias='X-HASN-Agent-ID')]
 ) -> AgentContext:
     """
     验证 Agent JWT 并返回执行上下文
@@ -118,11 +120,8 @@ async def get_agent_context(
         HTTPException: 认证失败
     """
     # 提取 token
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header"
-        )
+    if not authorization.startswith('Bearer '):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid authorization header')
 
     token = authorization[7:]  # 移除 "Bearer " 前缀
 
@@ -130,39 +129,24 @@ async def get_agent_context(
     try:
         payload = await verify_agent_token(token)
     except errors.TokenError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f'Invalid token: {e!s}')
 
     # 验证 hasn_id 匹配
     if payload.agent_hasn_id != x_hasn_agent_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Agent ID mismatch"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Agent ID mismatch')
 
     # 加载 Agent 信息验证状态
     async with async_db_session() as db:
         agent = await hasn_agents_dao.get_by_hasn_id(db, hasn_id=x_hasn_agent_id)
 
         if not agent:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Agent not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Agent not found')
 
         # 检查 Agent 状态
         if agent.status != 'active':
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Agent is {agent.status}"
-            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f'Agent is {agent.status}')
 
     return AgentContext.from_token_payload(payload, agent_status=agent.status)
 
