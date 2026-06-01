@@ -17,6 +17,7 @@ from backend.app.mcp.tools.contact import ContactListTool
 from backend.app.mcp.tools.message import MessageListTool, MessageSendTool
 from backend.app.mcp.tools.registry import ToolRegistry
 from backend.app.mcp.tools.tool_search import ToolSearchTool
+from backend.app.mcp.tools.user import UserSearchTool
 from backend.common.security.scope_policy import MODE_DENY
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ _DISCOVERY_TOOL_NAMES = frozenset({'hasn.cloud.tool.search', 'hasn.tool.search'}
 _SUMMARY_AUDIT_SAMPLE_RATE = 10
 
 
-async def load_app_tools_for_agent(agent_id: str, owner_id: str) -> list[BaseTool]:
+async def load_app_tools_for_agent(agent_id: str, owner_id: str) -> list[BaseTool]:  # noqa: RUF029
     """Agent 维度的 App 工具（P4-B）。
 
     当前 AI-Native App 的可见性按 workspace 已发布 manifest 投影（见
@@ -66,6 +67,9 @@ class HasnCloudMcpServer:
         # 迁移别名：hasn.tool.search → hasn.cloud.tool.search（03 §3）。
         self.tool_registry.register_alias('hasn.tool.search', 'hasn.cloud.tool.search')
 
+        # 用户搜索工具（平台 user 域）
+        self.tool_registry.register(UserSearchTool())
+
         # 消息工具
         self.tool_registry.register(MessageSendTool())
         self.tool_registry.register(MessageListTool())
@@ -93,13 +97,12 @@ class HasnCloudMcpServer:
             # `namespace` is accepted for compatibility, but it must not widen
             # the exposed set beyond the bootstrap projection.
             available_tools = self.tool_directory.list_bootstrap_tools(agent_context)
-
-            logger.info(f'Agent {agent_context.hasn_id} listed {len(available_tools)} tools')
-
-            return available_tools
         except Exception as e:
             logger.error(f'Error listing tools: {e!s}', exc_info=True)
             raise
+        else:
+            logger.info(f'Agent {agent_context.hasn_id} listed {len(available_tools)} tools')
+            return available_tools
 
     async def call_tool(self, agent_context: AgentContext, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """
@@ -135,8 +138,6 @@ class HasnCloudMcpServer:
             # 普通 summary 发现查询可降采样（trace_id 仍全量返回，保留聚合能力）。
             if self._should_audit_call(tool_name, arguments, success=True):
                 await self._log_tool_call(agent_context, tool_name, arguments, result, success=True)
-
-            return result
         except Exception as e:
             logger.error(f'Tool {tool_name} execution failed: {e!s}', exc_info=True)
 
@@ -147,6 +148,8 @@ class HasnCloudMcpServer:
                 logger.exception('Failed to record tool-call denial audit')
 
             raise
+        else:
+            return result
 
     def _should_audit_call(
         self,
@@ -222,6 +225,7 @@ class HasnCloudMcpServer:
         tool_name: str,
         arguments: dict[str, Any],
         result: Any,
+        *,
         success: bool,
         error: str | None = None,
     ) -> None:
