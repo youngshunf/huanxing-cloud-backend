@@ -450,10 +450,20 @@ async def _handle_send(
         content = {'text': content}
     elif isinstance(content, dict):
         ct = content.get('content_type', 'text')
-        if ct == 'text':
-            content_type = 1
-        elif ct == 'image':
-            content_type = 2
+        # 完整映射 content_type 字符串 -> 整数码。此前只认 text/image，
+        # 卡片(card)/文件/语音/json 全部落到默认 1(文本)，导致跨 owner 分享的
+        # 卡片在 wire 上被当文本投递，收件端存成文本、渲染空气泡。
+        if isinstance(ct, int):
+            content_type = ct
+        else:
+            content_type = {
+                'text': 1,
+                'image': 2,
+                'file': 3,
+                'voice': 4,
+                'card': 5,
+                'json': 6,
+            }.get(str(ct), 1)
         # 提取 body
         if 'body' in content:
             content = content['body']
