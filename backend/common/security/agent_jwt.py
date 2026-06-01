@@ -195,20 +195,42 @@ async def verify_agent_token(token: str) -> AgentTokenPayload:
     return token_payload
 
 
+def _ensure_policy_defaults(config: dict[str, Any]) -> dict[str, Any]:
+    """补齐三态字段默认值（兼容 P2 前写入的旧缓存/旧行）。
+
+    三态判定真相是 default_mode + capability_modes（P2/P3）；scopes/post_needs_review
+    保留兼容。default_mode 缺失/非法→'allow'（默认全开）。
+    """
+    config.setdefault('scopes', DEFAULT_AGENT_SCOPES)
+    config.setdefault('post_needs_review', True)
+    default_mode = config.get('default_mode')
+    if default_mode not in ('allow', 'ask', 'deny'):
+        default_mode = 'allow'
+    config['default_mode'] = default_mode
+    caps = config.get('capability_modes')
+    if isinstance(caps, str):
+        try:
+            caps = json.loads(caps or '{}')
+        except (ValueError, TypeError):
+            caps = {}
+    config['capability_modes'] = caps if isinstance(caps, dict) else {}
+    return config
+
+
 async def get_agent_scopes_from_db(db: AsyncSession, agent_hasn_id: str) -> dict[str, Any]:
     """
-    从数据库查询 Agent 的权限配置
+    从数据库查询 Agent 的权限配置（含三态 default_mode/capability_modes）
 
     :param db: 数据库会话
     :param agent_hasn_id: Agent 的 HASN ID
-    :return: {"scopes": [...], "post_needs_review": bool}
+    :return: {"scopes": [...], "post_needs_review": bool, "default_mode": str, "capability_modes": dict}
     """
     from sqlalchemy import text
 
     # 查询 hasn_agent_scopes 表
     result = await db.execute(
         text("""
-            SELECT scopes, post_needs_review
+            SELECT scopes, post_needs_review, default_mode, capability_modes
             FROM hasn_agent_scopes
             WHERE agent_hasn_id = :agent_hasn_id
         """),
@@ -217,32 +239,31 @@ async def get_agent_scopes_from_db(db: AsyncSession, agent_hasn_id: str) -> dict
     row = result.fetchone()
 
     if not row:
-        # 如果没有记录，返回默认权限
-        return {
-            'scopes': DEFAULT_AGENT_SCOPES,
-            'post_needs_review': True,
-        }
+        # 无记录：默认全开（default_mode='allow'），与新建 Agent 一致（Q3/D1）
+        return _ensure_policy_defaults({})
 
-    return {
+    return _ensure_policy_defaults({
         'scopes': list(row[0]) if row[0] else DEFAULT_AGENT_SCOPES,
         'post_needs_review': row[1],
-    }
+        'default_mode': row[2],
+        'capability_modes': row[3],
+    })
 
 
 async def get_agent_scopes_cached(agent_hasn_id: str, db: AsyncSession) -> dict[str, Any]:
     """
-    获取 Agent 权限配置（带缓存）
+    获取 Agent 权限配置（带缓存，含三态字段）
 
     :param agent_hasn_id: Agent 的 HASN ID
     :param db: 数据库会话
-    :return: {"scopes": [...], "post_needs_review": bool}
+    :return: {"scopes": [...], "post_needs_review": bool, "default_mode": str, "capability_modes": dict}
     """
     cache_key = f'agent_scopes:{agent_hasn_id}'
 
-    # 尝试从 Redis 获取
+    # 尝试从 Redis 获取（旧缓存可能缺三态字段，统一补默认）
     cached = await redis_client.get(cache_key)
     if cached:
-        return json.loads(cached)
+        return _ensure_policy_defaults(json.loads(cached))
 
     # 从数据库查询
     scopes_config = await get_agent_scopes_from_db(db, agent_hasn_id)
@@ -280,8 +301,10 @@ async def create_default_agent_scopes(db: AsyncSession, agent_hasn_id: str, owne
 
     await db.execute(
         text("""
-            INSERT INTO hasn_agent_scopes (agent_hasn_id, owner_hasn_id, scopes, post_needs_review)
-            VALUES (:agent_hasn_id, :owner_hasn_id, :scopes, :post_needs_review)
+            INSERT INTO hasn_agent_scopes
+                (agent_hasn_id, owner_hasn_id, scopes, post_needs_review, default_mode, capability_modes)
+            VALUES
+                (:agent_hasn_id, :owner_hasn_id, :scopes, :post_needs_review, 'allow', '{}'::jsonb)
             ON CONFLICT (agent_hasn_id) DO NOTHING
         """),
         {
