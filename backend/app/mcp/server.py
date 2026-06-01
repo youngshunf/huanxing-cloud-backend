@@ -29,13 +29,25 @@ _SUMMARY_AUDIT_SAMPLE_RATE = 10
 
 
 async def load_app_tools_for_agent(agent_id: str, owner_id: str) -> list[BaseTool]:
-    """Compatibility hook for legacy app-tool tests and extensions."""
+    """Agent 维度的 App 工具（P4-B）。
+
+    当前 AI-Native App 的可见性按 workspace 已发布 manifest 投影（见
+    load_app_tools_for_owner）；per-agent 安装层后续细化。此处返回空避免重复，
+    workspace 可见集合由 owner 维度加载。零 fake：不造假。
+    """
     return []
 
 
 async def load_app_tools_for_owner(owner_id: str) -> list[BaseTool]:
-    """Compatibility hook for legacy app-tool tests and extensions."""
-    return []
+    """Owner/workspace 维度的 App 工具（P4-B，Q1）：
+
+    把已发布 AI-Native manifest（builtin community/knowledge + DB published）的
+    capability 投影成 app-source 工具，闭合「App manifest 从未进 tool.search」的 GAP。
+    零 fake：无已发布 manifest → 空 list。
+    """
+    from backend.app.mcp.tools.app_tool_loader import load_published_app_tools
+
+    return await load_published_app_tools()
 
 
 class HasnCloudMcpServer:
