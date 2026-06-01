@@ -235,7 +235,7 @@ async def upload_user_avatar(
     上传用户头像到 S3 存储
 
     支持的图片格式: jpg, jpeg, png, gif, webp
-    最大文件大小: 5MB
+    最大文件大小: 10MB
     """
     # 验证文件类型
     allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -244,8 +244,8 @@ async def upload_user_avatar(
 
     # 验证文件大小
     content = await file.read()
-    if len(content) > 5 * 1024 * 1024:  # 5MB
-        raise errors.RequestError(msg='文件大小不能超过 5MB')
+    if len(content) > 10 * 1024 * 1024:  # 10MB
+        raise errors.RequestError(msg='文件大小不能超过 10MB')
 
     # 获取 S3 存储配置
     storages = await s3_storage_dao.get_all(db)
