@@ -3,6 +3,7 @@ HASN 云端 MCP Server
 
 提供云端工具给 Agent Runtime
 """
+
 import hashlib
 import logging
 
@@ -16,24 +17,38 @@ from backend.app.mcp.tools.contact import ContactListTool
 from backend.app.mcp.tools.message import MessageListTool, MessageSendTool
 from backend.app.mcp.tools.registry import ToolRegistry
 from backend.app.mcp.tools.tool_search import ToolSearchTool
+from backend.app.mcp.tools.user import UserSearchTool
+from backend.common.security.scope_policy import MODE_ASK, MODE_DENY
 
 logger = logging.getLogger(__name__)
 
 # 发现工具名（含迁移别名）。其 summary 级查询属"普通查询"，可降采样（04 §6）。
-_DISCOVERY_TOOL_NAMES = frozenset({"hasn.cloud.tool.search", "hasn.tool.search"})
+_DISCOVERY_TOOL_NAMES = frozenset({'hasn.cloud.tool.search', 'hasn.tool.search'})
 
 # 普通 summary/sources/apps 发现查询的审计采样率：约 1/N 落库，trace_id 仍全量保留聚合能力。
 _SUMMARY_AUDIT_SAMPLE_RATE = 10
 
 
-async def load_app_tools_for_agent(agent_id: str, owner_id: str) -> list[BaseTool]:
-    """Compatibility hook for legacy app-tool tests and extensions."""
+async def load_app_tools_for_agent(agent_id: str, owner_id: str) -> list[BaseTool]:  # noqa: RUF029
+    """Agent 维度的 App 工具（P4-B）。
+
+    当前 AI-Native App 的可见性按 workspace 已发布 manifest 投影（见
+    load_app_tools_for_owner）；per-agent 安装层后续细化。此处返回空避免重复，
+    workspace 可见集合由 owner 维度加载。零 fake：不造假。
+    """
     return []
 
 
 async def load_app_tools_for_owner(owner_id: str) -> list[BaseTool]:
-    """Compatibility hook for legacy app-tool tests and extensions."""
-    return []
+    """Owner/workspace 维度的 App 工具（P4-B，Q1）：
+
+    把已发布 AI-Native manifest（builtin community/knowledge + DB published）的
+    capability 投影成 app-source 工具，闭合「App manifest 从未进 tool.search」的 GAP。
+    零 fake：无已发布 manifest → 空 list。
+    """
+    from backend.app.mcp.tools.app_tool_loader import load_published_app_tools
+
+    return await load_published_app_tools()
 
 
 class HasnCloudMcpServer:
@@ -50,7 +65,10 @@ class HasnCloudMcpServer:
         """注册内置工具"""
         self.tool_registry.register(ToolSearchTool(self.tool_directory))
         # 迁移别名：hasn.tool.search → hasn.cloud.tool.search（03 §3）。
-        self.tool_registry.register_alias("hasn.tool.search", "hasn.cloud.tool.search")
+        self.tool_registry.register_alias('hasn.tool.search', 'hasn.cloud.tool.search')
+
+        # 用户搜索工具（平台 user 域）
+        self.tool_registry.register(UserSearchTool())
 
         # 消息工具
         self.tool_registry.register(MessageSendTool())
@@ -59,13 +77,9 @@ class HasnCloudMcpServer:
         # 联系人工具
         self.tool_registry.register(ContactListTool())
 
-        logger.info(f"Registered {len(self.tool_registry.get_all_tools())} builtin tools")
+        logger.info(f'Registered {len(self.tool_registry.get_all_tools())} builtin tools')
 
-    async def list_tools(
-        self,
-        agent_context: AgentContext,
-        namespace: str | None = None
-    ) -> list[dict[str, Any]]:
+    async def list_tools(self, agent_context: AgentContext, namespace: str | None = None) -> list[dict[str, Any]]:
         """
         列出可用工具
 
@@ -83,22 +97,14 @@ class HasnCloudMcpServer:
             # `namespace` is accepted for compatibility, but it must not widen
             # the exposed set beyond the bootstrap projection.
             available_tools = self.tool_directory.list_bootstrap_tools(agent_context)
-
-            logger.info(
-                f"Agent {agent_context.hasn_id} listed {len(available_tools)} tools"
-            )
-
-            return available_tools
         except Exception as e:
-            logger.error(f"Error listing tools: {e!s}", exc_info=True)
+            logger.error(f'Error listing tools: {e!s}', exc_info=True)
             raise
+        else:
+            logger.info(f'Agent {agent_context.hasn_id} listed {len(available_tools)} tools')
+            return available_tools
 
-    async def call_tool(
-        self,
-        agent_context: AgentContext,
-        tool_name: str,
-        arguments: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def call_tool(self, agent_context: AgentContext, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """
         调用工具
 
@@ -111,20 +117,23 @@ class HasnCloudMcpServer:
             工具执行结果
         """
         try:
-            logger.info(
-                f"Agent {agent_context.hasn_id} calling tool: {tool_name}"
-            )
+            logger.info(f'Agent {agent_context.hasn_id} calling tool: {tool_name}')
 
             await self._load_app_tools(agent_context)
 
             # 解析工具并确定 source（P2）。未注册 → MCP_9209。
             tool, source = self._resolve_tool(tool_name)
 
-            # 检查权限
-            if not self._check_tool_permission(agent_context, tool):
-                raise PermissionError(
-                    f"Missing required scopes: {', '.join(tool.required_scopes)}"
-                )
+            # 维度① 能力授权（D3 活取三态）：deny→拒；ask→挂起主人批准（P6）；allow→执行。
+            # 维度② 对象可达性由社交工具 execute 内部 check_relation_permission 返回，与此正交。
+            mode = agent_context.tool_mode(tool)
+            if mode == MODE_DENY:
+                raise PermissionError(f'Capability denied by owner for tool: {tool_name}')
+            if mode == MODE_ASK:
+                # D4：仅 owner 主动设 ask 才挂起；不按 risk 强制。批准→继续；拒绝/超时→raise。
+                from backend.app.mcp.ask_gate import ask_approval_gate
+
+                await ask_approval_gate.gate(agent_context, tool_name=tool_name, arguments=arguments)
 
             # 按 source 分发执行
             result = await self._dispatch_by_source(agent_context, tool, source, arguments)
@@ -132,27 +141,19 @@ class HasnCloudMcpServer:
             # 记录审计日志（04 §6）：真实工具调用 / schema 查询必审计；
             # 普通 summary 发现查询可降采样（trace_id 仍全量返回，保留聚合能力）。
             if self._should_audit_call(tool_name, arguments, success=True):
-                await self._log_tool_call(
-                    agent_context, tool_name, arguments, result, success=True
-                )
-
-            return result
+                await self._log_tool_call(agent_context, tool_name, arguments, result, success=True)
         except Exception as e:
-            logger.error(
-                f"Tool {tool_name} execution failed: {e!s}",
-                exc_info=True
-            )
+            logger.error(f'Tool {tool_name} execution failed: {e!s}', exc_info=True)
 
             # 失败 / 拒绝一律审计（04 §6：Tool 拒绝 + scope/role 拒绝必审计）。
             try:
-                await self._log_tool_call(
-                    agent_context, tool_name, arguments, None,
-                    success=False, error=str(e)
-                )
+                await self._log_tool_call(agent_context, tool_name, arguments, None, success=False, error=str(e))
             except Exception:
-                logger.exception("Failed to record tool-call denial audit")
+                logger.exception('Failed to record tool-call denial audit')
 
             raise
+        else:
+            return result
 
     def _should_audit_call(
         self,
@@ -171,30 +172,23 @@ class HasnCloudMcpServer:
             return True
         if tool_name not in _DISCOVERY_TOOL_NAMES:
             return True
-        detail = str((arguments or {}).get("detail", "summary"))
-        if detail == "schema":
+        detail = str((arguments or {}).get('detail', 'summary'))
+        if detail == 'schema':
             return True
-        query = str((arguments or {}).get("query", ""))
-        digest = hashlib.sha256(f"{tool_name}|{query}".encode()).hexdigest()
+        query = str((arguments or {}).get('query', ''))
+        digest = hashlib.sha256(f'{tool_name}|{query}'.encode()).hexdigest()
         return int(digest[:8], 16) % _SUMMARY_AUDIT_SAMPLE_RATE == 0
 
-    def _check_tool_permission(
-        self,
-        agent_context: AgentContext,
-        tool: BaseTool
-    ) -> bool:
-        """检查 Agent 是否有权限调用该工具"""
-        return all(
-            scope in agent_context.scopes
-            for scope in tool.required_scopes
-        )
+    def _check_tool_permission(self, agent_context: AgentContext, tool: BaseTool) -> bool:
+        """检查 Agent 是否有权限调用该工具（维度① 三态：deny→False，allow/ask→True）。"""
+        return not agent_context.is_tool_denied(tool)
 
     def _resolve_tool(self, tool_name: str) -> tuple[BaseTool, str]:
         """解析工具名到 (tool, source)，未注册抛 MCP_9209（P2）。"""
         tool = self.tool_registry.get_tool(tool_name)
         if tool is None:
-            raise McpToolError(McpErrorCode.TOOL_NOT_FOUND, f"Tool not found: {tool_name}")
-        return tool, getattr(tool, "source", "platform")
+            raise McpToolError(McpErrorCode.TOOL_NOT_FOUND, f'Tool not found: {tool_name}')
+        return tool, getattr(tool, 'source', 'platform')
 
     async def _dispatch_by_source(
         self,
@@ -208,10 +202,10 @@ class HasnCloudMcpServer:
         platform / app 在云端 server 内由各自 BaseTool.execute 自路由其 handler
         （app → ai_native_runtime_gateway）。external 在 P7 前云端无承接。
         """
-        if source == "external":
+        if source == 'external':
             raise McpToolError(
                 McpErrorCode.TOOL_NOT_FOUND,
-                "external MCP tools are not enabled on the cloud server (P7)",
+                'external MCP tools are not enabled on the cloud server (P7)',
             )
         return await tool.execute(agent_context, arguments)
 
@@ -227,7 +221,7 @@ class HasnCloudMcpServer:
                     continue
                 self.tool_registry.register(tool)
         except Exception as e:
-            logger.error(f"Failed to load app tools: {e}", exc_info=True)
+            logger.error(f'Failed to load app tools: {e}', exc_info=True)
 
     async def _log_tool_call(
         self,
@@ -235,8 +229,9 @@ class HasnCloudMcpServer:
         tool_name: str,
         arguments: dict[str, Any],
         result: Any,
+        *,
         success: bool,
-        error: str | None = None
+        error: str | None = None,
     ) -> None:
         """记录工具调用审计日志"""
         try:
@@ -247,21 +242,21 @@ class HasnCloudMcpServer:
                 audit_service = HasnAuditLogService()
                 await audit_service.append(
                     db=db,
-                    actor_type="agent",
+                    actor_type='agent',
                     actor_id=agent_context.hasn_id,
-                    action="mcp_tool_call",
-                    target_type="tool",
+                    action='mcp_tool_call',
+                    target_type='tool',
                     target_id=tool_name,
                     details={
-                        "tool_name": tool_name,
-                        "arguments": arguments,
-                        "result": result if success else None,
-                        "error": error,
-                        "success": success
-                    }
+                        'tool_name': tool_name,
+                        'arguments': arguments,
+                        'result': result if success else None,
+                        'error': error,
+                        'success': success,
+                    },
                 )
         except Exception as e:
-            logger.error(f"Failed to log tool call: {e!s}")
+            logger.error(f'Failed to log tool call: {e!s}')
 
 
 # 全局 MCP Server 实例

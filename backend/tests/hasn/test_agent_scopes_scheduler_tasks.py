@@ -28,6 +28,7 @@ class FakeRedis:
 
 @pytest.mark.asyncio
 async def test_agent_scopes_service_get_update_and_authorization(monkeypatch: pytest.MonkeyPatch) -> None:
+    """三态服务（D3）：get 透出 default_mode/capability_modes；update 走 update_agent_modes（不重签 JWT）。"""
     from backend.app.hasn.service import agent_scopes_service as module
 
     agent = SimpleNamespace(owner_id='h_owner', display_name='Agent One', agent_name='agent_one')
@@ -36,39 +37,54 @@ async def test_agent_scopes_service_get_update_and_authorization(monkeypatch: py
         assert hasn_id == 'a_agent'
         return agent
 
+    state: dict[str, object] = {
+        'scopes': ['message:read'],
+        'post_needs_review': True,
+        'default_mode': 'allow',
+        'capability_modes': {},
+    }
+
     async def get_cached(agent_hasn_id: str, db: object) -> dict[str, object]:  # noqa: RUF029
         assert agent_hasn_id == 'a_agent'
-        return {'scopes': ['message.read'], 'post_needs_review': True}
+        return dict(state)
 
     updated: dict[str, object] = {}
 
-    async def update_scopes(**kwargs: object) -> None:  # noqa: RUF029
+    async def update_modes(**kwargs: object) -> None:  # noqa: RUF029
         updated.update(kwargs)
-
-    async def create_token(**kwargs: object) -> SimpleNamespace:  # noqa: RUF029
-        return SimpleNamespace(access_token='agent-jwt', scopes=kwargs['scopes'])
+        # 模拟写库后缓存最新值（D3：失效后下次现查）
+        state['default_mode'] = kwargs['default_mode']
+        state['capability_modes'] = kwargs['capability_modes']
+        if kwargs.get('post_needs_review') is not None:
+            state['post_needs_review'] = kwargs['post_needs_review']
 
     monkeypatch.setattr(module.hasn_agents_dao, 'get_by_hasn_id', get_by_hasn_id)
     monkeypatch.setattr(module, 'get_agent_scopes_cached', get_cached)
-    monkeypatch.setattr(module, 'update_agent_scopes', update_scopes)
-    monkeypatch.setattr(module, 'create_agent_access_token', create_token)
+    monkeypatch.setattr(module, 'update_agent_modes', update_modes)
 
     service = module.AgentScopesService()
     config = await service.get_agent_scopes(object(), 'a_agent', 'h_owner')
-    assert config.scopes == ['message.read']
+    assert config.scopes == ['message:read']
     assert config.post_needs_review is True
+    assert config.default_mode == 'allow'
+    assert config.capability_modes == {}
 
     response = await service.update_agent_scopes(
         object(),
         'a_agent',
         'h_owner',
-        7,
-        UpdateAgentScopesRequest(scopes=['knowledge.read'], post_needs_review=False),
+        UpdateAgentScopesRequest(
+            default_mode='ask',
+            capability_modes={'message:send': 'deny'},
+            post_needs_review=False,
+        ),
     )
-    assert updated['scopes'] == ['knowledge.read']
-    assert updated['granted_by'] == 'h_owner'
-    assert response.agent_token.access_token == 'agent-jwt'
-    assert response.agent_token.scopes == ['knowledge.read']
+    # D3：写表参数命中 update_agent_modes，不签发 JWT。
+    assert updated['default_mode'] == 'ask'
+    assert updated['capability_modes'] == {'message:send': 'deny'}
+    assert response.config.default_mode == 'ask'
+    assert response.config.capability_modes == {'message:send': 'deny'}
+    assert not hasattr(response, 'agent_token')
 
     with pytest.raises(Exception) as forbidden:
         await service.get_agent_scopes(object(), 'a_agent', 'h_other')
@@ -103,9 +119,14 @@ async def test_agent_scopes_api_resolves_owner_and_delegates(monkeypatch: pytest
         captured.append(('update', kwargs))
         return 'updated'
 
+    async def get_catalog(**kwargs: object) -> str:  # noqa: RUF029
+        captured.append(('catalog', kwargs))
+        return 'catalog'
+
     monkeypatch.setattr('backend.app.hasn.api.agent_scopes.hasn_humans_dao.get_by_user_id', get_by_user_id)
     monkeypatch.setattr(module.agent_scopes_service, 'get_agent_scopes', get_scopes)
     monkeypatch.setattr(module.agent_scopes_service, 'update_agent_scopes', update_scopes)
+    monkeypatch.setattr(module.agent_scopes_service, 'get_scope_catalog', get_catalog)
 
     request = SimpleNamespace(user=SimpleNamespace(id=7))
     assert await module.get_agent_scopes(request, 'a_agent', object()) == 'config'
@@ -113,14 +134,18 @@ async def test_agent_scopes_api_resolves_owner_and_delegates(monkeypatch: pytest
         await module.update_agent_scopes(
             request,
             'a_agent',
-            UpdateAgentScopesRequest(scopes=['message.read'], post_needs_review=True),
+            UpdateAgentScopesRequest(default_mode='deny', capability_modes={}),
             object(),
         )
         == 'updated'
     )
+    assert await module.get_scope_catalog(request, 'a_agent', object()) == 'catalog'
 
+    # 身份从 Owner JWT 解析为 owner_hasn_id；D3 后不再透传 owner_user_id。
     assert captured[0][1]['owner_hasn_id'] == 'h_owner'
-    assert captured[1][1]['owner_user_id'] == 7
+    assert 'owner_user_id' not in captured[1][1]
+    assert captured[1][1]['owner_hasn_id'] == 'h_owner'
+    assert captured[2][1]['owner_hasn_id'] == 'h_owner'
 
     async def missing_human(db: object, user_id: int) -> None:  # noqa: RUF029
         return None

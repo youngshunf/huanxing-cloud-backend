@@ -3,15 +3,20 @@ MCP 认证中间件
 
 使用 FastAPI Depends 机制验证 Agent JWT 并注入 AgentContext
 """
+
 from typing import Annotated
 
-from fastapi import Header, HTTPException, status, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Depends, HTTPException, Header, status
 
-from backend.common.dataclasses import AgentTokenPayload
-from backend.common.security.agent_jwt import verify_agent_token
-from backend.common.exception import errors
 from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
+from backend.common.dataclasses import AgentTokenPayload
+from backend.common.exception import errors
+from backend.common.security.agent_jwt import (
+    get_agent_scopes_cached,
+    normalize_scope,
+    verify_agent_token,
+)
+from backend.common.security.scope_policy import MODE_DENY, resolve_tool_mode
 from backend.database.db import async_db_session
 from backend.utils.timezone import timezone
 
@@ -26,11 +31,13 @@ class AgentContext:
         scopes: list[str],
         agent_status: str,
         metadata: dict,
-        agent_name: str = "",
+        agent_name: str = '',
         owner_hasn_id: str | None = None,
         session_uuid: str | None = None,
         token_payload: AgentTokenPayload | None = None,
-    ):
+        default_mode: str = 'allow',
+        capability_modes: dict | None = None,
+    ) -> None:
         self.hasn_id = hasn_id
         self.owner_id = owner_id
         self.scopes = scopes
@@ -40,6 +47,10 @@ class AgentContext:
         self.owner_hasn_id = owner_hasn_id
         self.session_uuid = session_uuid
         self._token_payload = token_payload
+        # 维度① 三态能力授权（D3：消费时活取，凭证不再承载授权权威）。
+        # 默认全开（allow）；streamable 鉴权后用 get_agent_scopes_cached 现查覆盖。
+        self.default_mode = default_mode
+        self.capability_modes = capability_modes or {}
 
     @classmethod
     def from_token_payload(
@@ -48,7 +59,9 @@ class AgentContext:
         *,
         agent_status: str,
         metadata: dict | None = None,
-    ) -> "AgentContext":
+        default_mode: str = 'allow',
+        capability_modes: dict | None = None,
+    ) -> 'AgentContext':
         return cls(
             hasn_id=payload.agent_hasn_id,
             owner_id=payload.owner_user_id,
@@ -59,7 +72,28 @@ class AgentContext:
             owner_hasn_id=payload.owner_hasn_id,
             session_uuid=payload.session_uuid,
             token_payload=payload,
+            default_mode=default_mode,
+            capability_modes=capability_modes,
         )
+
+    def apply_policy(self, policy: dict) -> None:
+        """用现查的权限配置覆盖三态字段（D3 活取）。policy 来自 get_agent_scopes_cached。"""
+        self.default_mode = policy.get('default_mode', 'allow')
+        caps = policy.get('capability_modes')
+        self.capability_modes = caps if isinstance(caps, dict) else {}
+
+    def tool_mode(self, tool: object) -> str:
+        """工具的有效三态（维度①）：聚合工具名 override + 各 required_scope 取最严。"""
+        return resolve_tool_mode(
+            self.default_mode,
+            self.capability_modes,
+            tool_name=getattr(tool, 'name', ''),
+            required_scopes=list(getattr(tool, 'required_scopes', []) or []),
+        )
+
+    def is_tool_denied(self, tool: object) -> bool:
+        """工具是否被 owner 禁用（mode=deny → 不可见、不可调）。"""
+        return self.tool_mode(tool) == MODE_DENY
 
     def to_token_payload(self) -> AgentTokenPayload:
         if self._token_payload is not None:
@@ -85,22 +119,24 @@ class AgentContext:
         return self.owner_id
 
     def has_scope(self, scope: str) -> bool:
-        """检查是否有指定权限"""
-        return scope in self.scopes
+        """检查是否有指定权限（过渡期归一兜底：点号/冒号等价）"""
+        # TODO(P5后): 迁移完成移除归一兜底
+        owned = {normalize_scope(s) for s in self.scopes}
+        return normalize_scope(scope) in owned
 
     def require_scopes(self, *required_scopes: str) -> None:
-        """要求必须有指定权限"""
-        missing = [s for s in required_scopes if s not in self.scopes]
+        """要求必须有指定权限（过渡期归一兜底：点号/冒号等价）"""
+        # TODO(P5后): 迁移完成移除归一兜底
+        owned = {normalize_scope(s) for s in self.scopes}
+        missing = [s for s in required_scopes if normalize_scope(s) not in owned]
         if missing:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Missing required scopes: {', '.join(missing)}"
+                status_code=status.HTTP_403_FORBIDDEN, detail=f'Missing required scopes: {", ".join(missing)}'
             )
 
 
 async def get_agent_context(
-    authorization: Annotated[str, Header()],
-    x_hasn_agent_id: Annotated[str, Header(alias="X-HASN-Agent-ID")]
+    authorization: Annotated[str, Header()], x_hasn_agent_id: Annotated[str, Header(alias='X-HASN-Agent-ID')]
 ) -> AgentContext:
     """
     验证 Agent JWT 并返回执行上下文
@@ -118,11 +154,8 @@ async def get_agent_context(
         HTTPException: 认证失败
     """
     # 提取 token
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header"
-        )
+    if not authorization.startswith('Bearer '):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid authorization header')
 
     token = authorization[7:]  # 移除 "Bearer " 前缀
 
@@ -130,41 +163,30 @@ async def get_agent_context(
     try:
         payload = await verify_agent_token(token)
     except errors.TokenError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f'Invalid token: {e!s}')
 
     # 验证 hasn_id 匹配
     if payload.agent_hasn_id != x_hasn_agent_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Agent ID mismatch"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Agent ID mismatch')
 
     # 加载 Agent 信息验证状态
     async with async_db_session() as db:
         agent = await hasn_agents_dao.get_by_hasn_id(db, hasn_id=x_hasn_agent_id)
 
         if not agent:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Agent not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Agent not found')
 
         # 检查 Agent 状态
         if agent.status != 'active':
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Agent is {agent.status}"
-            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f'Agent is {agent.status}')
 
-    return AgentContext.from_token_payload(payload, agent_status=agent.status)
+        context = AgentContext.from_token_payload(payload, agent_status=agent.status)
+        # D3 消费时活取：JWT scopes 仅审计快照，三态判定现查 DB（凭证与授权解耦）。
+        policy = await get_agent_scopes_cached(x_hasn_agent_id, db)
+        context.apply_policy(policy)
+        return context
 
 
 # 类型别名，方便在路由中使用

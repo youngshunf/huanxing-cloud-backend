@@ -1,0 +1,56 @@
+{
+  "all_ok": true,
+  "agent": "a_7fb207b0-7e6a-424c-9067-a81e56e682d9",
+  "owner": "h_47094e96-ead5-4180-959a-8a28fac942e6",
+  "steps": [
+    {
+      "step": "discover/seed agent",
+      "ok": true,
+      "detail": {
+        "agent": "a_7fb207b0-7e6a-424c-9067-a81e56e682d9",
+        "owner": "h_47094e96-ead5-4180-959a-8a28fac942e6",
+        "seeded": false
+      }
+    },
+    {
+      "step": "default-all-allow + dynamic catalog + external reserved empty",
+      "ok": true,
+      "detail": {
+        "sources": [
+          "app",
+          "external",
+          "platform"
+        ],
+        "message_send": {
+          "key": "message:send",
+          "label": "发送消息",
+          "domain": "message",
+          "risk": "low",
+          "description": "给用户/Agent/会话发消息（走真实路由与关系门控）",
+          "mode": "allow",
+          "tools": [
+            "hasn.message.send"
+          ]
+        },
+        "external_empty": true
+      }
+    },
+    {
+      "step": "D3 instant deny (no re-sign): catalog=deny + tool hidden/denied",
+      "ok": true,
+      "detail": {
+        "catalog_mode": "deny",
+        "is_tool_denied": true
+      }
+    },
+    {
+      "step": "ask gate: mode=ask + real Redis pending listed + approve resolves",
+      "ok": true,
+      "detail": {
+        "tool_mode": "ask",
+        "pending_count": 1,
+        "decision": "approved"
+      }
+    }
+  ]
+}
