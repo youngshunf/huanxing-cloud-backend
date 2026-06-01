@@ -11,7 +11,12 @@ from fastapi import Depends, HTTPException, Header, status
 from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
 from backend.common.dataclasses import AgentTokenPayload
 from backend.common.exception import errors
-from backend.common.security.agent_jwt import normalize_scope, verify_agent_token
+from backend.common.security.agent_jwt import (
+    get_agent_scopes_cached,
+    normalize_scope,
+    verify_agent_token,
+)
+from backend.common.security.scope_policy import MODE_DENY, resolve_tool_mode
 from backend.database.db import async_db_session
 from backend.utils.timezone import timezone
 
@@ -30,6 +35,8 @@ class AgentContext:
         owner_hasn_id: str | None = None,
         session_uuid: str | None = None,
         token_payload: AgentTokenPayload | None = None,
+        default_mode: str = 'allow',
+        capability_modes: dict | None = None,
     ) -> None:
         self.hasn_id = hasn_id
         self.owner_id = owner_id
@@ -40,6 +47,10 @@ class AgentContext:
         self.owner_hasn_id = owner_hasn_id
         self.session_uuid = session_uuid
         self._token_payload = token_payload
+        # 维度① 三态能力授权（D3：消费时活取，凭证不再承载授权权威）。
+        # 默认全开（allow）；streamable 鉴权后用 get_agent_scopes_cached 现查覆盖。
+        self.default_mode = default_mode
+        self.capability_modes = capability_modes or {}
 
     @classmethod
     def from_token_payload(
@@ -48,6 +59,8 @@ class AgentContext:
         *,
         agent_status: str,
         metadata: dict | None = None,
+        default_mode: str = 'allow',
+        capability_modes: dict | None = None,
     ) -> 'AgentContext':
         return cls(
             hasn_id=payload.agent_hasn_id,
@@ -59,7 +72,28 @@ class AgentContext:
             owner_hasn_id=payload.owner_hasn_id,
             session_uuid=payload.session_uuid,
             token_payload=payload,
+            default_mode=default_mode,
+            capability_modes=capability_modes,
         )
+
+    def apply_policy(self, policy: dict) -> None:
+        """用现查的权限配置覆盖三态字段（D3 活取）。policy 来自 get_agent_scopes_cached。"""
+        self.default_mode = policy.get('default_mode', 'allow')
+        caps = policy.get('capability_modes')
+        self.capability_modes = caps if isinstance(caps, dict) else {}
+
+    def tool_mode(self, tool: object) -> str:
+        """工具的有效三态（维度①）：聚合工具名 override + 各 required_scope 取最严。"""
+        return resolve_tool_mode(
+            self.default_mode,
+            self.capability_modes,
+            tool_name=getattr(tool, 'name', ''),
+            required_scopes=list(getattr(tool, 'required_scopes', []) or []),
+        )
+
+    def is_tool_denied(self, tool: object) -> bool:
+        """工具是否被 owner 禁用（mode=deny → 不可见、不可调）。"""
+        return self.tool_mode(tool) == MODE_DENY
 
     def to_token_payload(self) -> AgentTokenPayload:
         if self._token_payload is not None:
@@ -148,7 +182,11 @@ async def get_agent_context(
         if agent.status != 'active':
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f'Agent is {agent.status}')
 
-    return AgentContext.from_token_payload(payload, agent_status=agent.status)
+        context = AgentContext.from_token_payload(payload, agent_status=agent.status)
+        # D3 消费时活取：JWT scopes 仅审计快照，三态判定现查 DB（凭证与授权解耦）。
+        policy = await get_agent_scopes_cached(x_hasn_agent_id, db)
+        context.apply_policy(policy)
+        return context
 
 
 # 类型别名，方便在路由中使用
