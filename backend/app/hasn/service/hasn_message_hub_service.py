@@ -520,7 +520,7 @@ class SqlAlchemyMessageHubGateway:
                        created_time
                 FROM public.hasn_messages
                 WHERE owner_id = :owner_id
-                  AND (:cursor_id IS NULL OR id > :cursor_id)
+                  AND (CAST(:cursor_id AS bigint) IS NULL OR id > CAST(:cursor_id AS bigint))
                 ORDER BY id ASC
                 LIMIT :limit
                 '''
@@ -565,7 +565,7 @@ class SqlAlchemyMessageHubGateway:
                 LEFT JOIN public.hasn_messages m ON m.id = s.message_id
                 WHERE s.owner_id = :owner_id
                   AND s.visible_to_owner = true
-                  AND (:cursor_id IS NULL OR s.message_id > :cursor_id)
+                  AND (CAST(:cursor_id AS bigint) IS NULL OR s.message_id > CAST(:cursor_id AS bigint))
                 ORDER BY s.message_id ASC
                 LIMIT :limit
                 '''

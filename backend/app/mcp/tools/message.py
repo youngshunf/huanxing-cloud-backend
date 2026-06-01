@@ -109,8 +109,30 @@ class MessageSendTool(BaseTool):
         }
 
 
+def _extract_text(envelope: dict[str, Any]) -> str:
+    """从 HASN envelope 里尽力取出可读文本（content 可能是 dict 或 str）。"""
+    content = envelope.get('content')
+    if isinstance(content, dict):
+        return str(content.get('text') or content.get('content') or '')
+    if isinstance(content, str):
+        return content
+    return ''
+
+
+def _extract_sender(envelope: dict[str, Any]) -> str:
+    """从 envelope 取出发送方 hasn_id（兼容多种字段命名）。"""
+    routing = envelope.get('routing') if isinstance(envelope.get('routing'), dict) else {}
+    return str(
+        envelope.get('from')
+        or envelope.get('from_hasn_id')
+        or envelope.get('sender_hasn_id')
+        or routing.get('from')
+        or ''
+    )
+
+
 class MessageListTool(BaseTool):
-    """获取消息列表工具（简化版）"""
+    """获取主人收件箱消息列表（含主人透明副本）。"""
 
     @property
     def source(self) -> str:
@@ -121,8 +143,16 @@ class MessageListTool(BaseTool):
         return 'hasn.message.list'
 
     @property
+    def namespace(self) -> str:
+        return 'hasn.message'
+
+    @property
+    def execution_location(self) -> str:
+        return 'cloud'
+
+    @property
     def description(self) -> str:
-        return '获取收件箱消息列表'
+        return '获取收件箱消息列表（最近的会话消息，含发送方/文本/会话/时间）'
 
     @property
     def input_schema(self) -> dict[str, Any]:
@@ -138,35 +168,26 @@ class MessageListTool(BaseTool):
         return ['message:read']
 
     async def execute(self, agent_context: AgentContext, arguments: dict[str, Any]) -> dict[str, Any]:
-        """执行工具"""
         # 维度① 能力授权由 server.call_tool 三态 mode 统一判定（D3），工具内不二次校验。
+        from backend.app.hasn.schema.hasn_message_hub import InboxPullRequest
         from backend.app.hasn.service.hasn_message_hub_service import HasnMessageHubService
 
+        limit = min(max(int(arguments.get('limit', 20)), 1), 100)
         async with async_db_session() as db:
             message_service = HasnMessageHubService()
+            # 收件箱按 owner 维度拉取（主人透明：含 Agent 会话的 owner_copy）。
+            pull_request = InboxPullRequest(owner_id=agent_context.owner_hasn_id)
+            result = await message_service.pull_inbox(db, pull_request)
 
-            # 获取收件箱消息
-            # 注意：这里使用简化的实现，实际需要根据 API 调整
-            try:
-                from backend.app.hasn.schema.hasn_message_hub import InboxPullRequest
-
-                pull_request = InboxPullRequest(hasn_id=agent_context.hasn_id, limit=arguments.get('limit', 20))
-
-                result = await message_service.pull_inbox(db, pull_request)
-
-                return {
-                    'messages': [
-                        {
-                            'message_id': str(item.message_id),
-                            'from': item.from_hasn_id,
-                            'content': item.content if hasattr(item, 'content') else '',
-                            'created_at': str(item.created_at) if hasattr(item, 'created_at') else '',
-                        }
-                        for item in result.items
-                    ]
-                    if hasattr(result, 'items')
-                    else []
-                }
-            except Exception as e:
-                # 如果 API 不匹配，返回友好错误
-                return {'error': f'Message list not available: {e!s}', 'messages': []}
+            messages = []
+            for item in result.items[:limit]:
+                envelope = item.envelope or {}
+                messages.append({
+                    'message_id': str(item.message_id),
+                    'conversation_id': str(item.conversation_id),
+                    'inbox_kind': getattr(item.inbox_kind, 'value', item.inbox_kind),
+                    'from': _extract_sender(envelope),
+                    'content': _extract_text(envelope),
+                    'created_at': str(item.created_at),
+                })
+            return {'messages': messages, 'has_more': result.has_more, 'next_cursor': result.next_cursor}

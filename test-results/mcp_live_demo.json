@@ -1,0 +1,308 @@
+{
+  "mcp_url": "http://127.0.0.1:8020/api/v1/mcp/streamable",
+  "sender_agent": "a_cb5668f7-3a7e-416c-846b-bb771d68e9ec",
+  "minted_key_prefix": "hasn_amk_hLdoF2-…",
+  "server": {
+    "name": "hasn-cloud-mcp",
+    "version": "1.26.0"
+  },
+  "tools": [
+    "hasn.cloud.tool.search"
+  ],
+  "contact_list": {
+    "is_error": false,
+    "payload": {
+      "contacts": [
+        {
+          "contact_hasn_id": "a_e0fbe4d8-3f6f-40aa-ad3c-4d0d4f836739",
+          "peer_type": "agent",
+          "display_name": "星源",
+          "star_id": "100001#default",
+          "relation_type": "service",
+          "trust_level": 5,
+          "status": "connected"
+        },
+        {
+          "contact_hasn_id": "a_4680e285-4ce2-44fd-ba69-a70047c5ef16",
+          "peer_type": "agent",
+          "display_name": "拓哥",
+          "star_id": "100001#side-hustle-890",
+          "relation_type": "service",
+          "trust_level": 5,
+          "status": "connected"
+        },
+        {
+          "contact_hasn_id": "a_278745b3-9617-4343-ad32-e819e4588aa7",
+          "peer_type": "agent",
+          "display_name": "拓哥",
+          "star_id": "100001#side-hustle",
+          "relation_type": "service",
+          "trust_level": 5,
+          "status": "connected"
+        },
+        {
+          "contact_hasn_id": "h_0509cc75-5505-4793-9e5c-a06cc4b12e21",
+          "peer_type": "human",
+          "display_name": "瘦瘦福仔",
+          "star_id": "100004",
+          "relation_type": "social",
+          "trust_level": 2,
+          "status": "connected"
+        },
+        {
+          "contact_hasn_id": "a_cb5668f7-3a7e-416c-846b-bb771d68e9ec",
+          "peer_type": "agent",
+          "display_name": "星诺",
+          "star_id": "100001#assistant",
+          "relation_type": "service",
+          "trust_level": 4,
+          "status": "connected"
+        },
+        {
+          "contact_hasn_id": "h_411ee65b-0925-47b6-94b6-48e2cefbdcc1",
+          "peer_type": "human",
+          "display_name": "智小芽",
+          "star_id": "100005",
+          "relation_type": "social",
+          "trust_level": 2,
+          "status": "connected"
+        },
+        {
+          "contact_hasn_id": "a_0ba89dca-4748-4571-9565-fae228a542e8",
+          "peer_type": "agent",
+          "display_name": "灵犀",
+          "star_id": "100001#media-creator",
+          "relation_type": "service",
+          "trust_level": 5,
+          "status": "connected"
+        },
+        {
+          "contact_hasn_id": "a_3dbae149-919e-4ab5-956e-c5147d4f1ac9",
+          "peer_type": "agent",
+          "display_name": "安然",
+          "star_id": "100001#health",
+          "relation_type": "service",
+          "trust_level": 5,
+          "status": "connected"
+        },
+        {
+          "contact_hasn_id": "a_7fb207b0-7e6a-424c-9067-a81e56e682d9",
+          "peer_type": "agent",
+          "display_name": "子墨22",
+          "star_id": "100001#office",
+          "relation_type": "service",
+          "trust_level": 5,
+          "status": "connected"
+        },
+        {
+          "contact_hasn_id": "a_5460a8db-74f8-4455-9e0b-5cd78976770b",
+          "peer_type": "agent",
+          "display_name": "唤星默认 Agent",
+          "star_id": "100004#assistant",
+          "relation_type": "social",
+          "trust_level": 2,
+          "status": "connected"
+        },
+        {
+          "contact_hasn_id": "a_e179a6b3-fc55-41e6-8e44-6e1246eda4a0",
+          "peer_type": "agent",
+          "display_name": "小助手",
+          "star_id": "100001#custom",
+          "relation_type": "service",
+          "trust_level": 5,
+          "status": "connected"
+        }
+      ],
+      "total": 11
+    }
+  },
+  "message_list": {
+    "is_error": false,
+    "payload": {
+      "messages": [
+        {
+          "message_id": "2",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "你好",
+          "created_at": "2026-04-10 10:23:19.746680+00:00"
+        },
+        {
+          "message_id": "3",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "你好",
+          "created_at": "2026-04-10 11:54:30.491888+00:00"
+        },
+        {
+          "message_id": "4",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "你好",
+          "created_at": "2026-04-10 11:56:13.741368+00:00"
+        },
+        {
+          "message_id": "5",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "你好",
+          "created_at": "2026-04-10 15:44:29.431139+00:00"
+        },
+        {
+          "message_id": "6",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "你好",
+          "created_at": "2026-04-10 15:47:33.375877+00:00"
+        },
+        {
+          "message_id": "7",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "你好",
+          "created_at": "2026-04-11 02:02:30.853020+00:00"
+        },
+        {
+          "message_id": "8",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "你好",
+          "created_at": "2026-04-11 02:29:06.765754+00:00"
+        },
+        {
+          "message_id": "9",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "在吗",
+          "created_at": "2026-04-11 02:29:13.923750+00:00"
+        },
+        {
+          "message_id": "10",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "你好",
+          "created_at": "2026-04-13 03:54:14.868961+00:00"
+        },
+        {
+          "message_id": "11",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "你好",
+          "created_at": "2026-04-13 05:21:32.201533+00:00"
+        },
+        {
+          "message_id": "12",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "你好",
+          "created_at": "2026-04-13 06:01:08.077797+00:00"
+        },
+        {
+          "message_id": "13",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "human_inbox",
+          "from": "",
+          "content": "[系统提示] Agent 会话失败: All providers/models failed. Attempts:\nprovider=custom:http://127.0.0.1:3180/v1 model=MiniMax-M2.7 attempt 1/6: retryable; error=Custom API error (503 Service Unavailable): {\"error\":{\"message\":\"system disk overloaded\",\"type\":\"new_api_error\",\"param\":\"\",\"code\":\"system_disk_overloaded\"}}\nprovider=custom:http://127.0.0.1:3180/v1 model=MiniMax-M2.7 attempt 2/6: retryable; error=Custom API error (503 Service Unavailable): {\"error\":{\"message\":\"system disk overloaded\",\"type\":\"new_api_error\",\"param\":\"\",\"code\":\"system_disk_overloaded\"}}\nprovider=custom:http://127.0.0.1:3180/v1 model=MiniMax-M2.7 attempt 3/6: retryable; error=Custom API error (503 Service Unavailable): {\"error\":{\"message\":\"system disk overloaded\",\"type\":\"new_api_error\",\"param\":\"\",\"code\":\"system_disk_overloaded\"}}\nprovider=custom:http://127.0.0.1:3180/v1 model=MiniMax-M2.7 attempt 4/6: retryable; error=Custom API error (503 Service Unavailable): {\"error\":{\"message\":\"system disk overloaded\",\"type\":\"new_api_error\",\"param\":\"\",\"code\":\"system_disk_overloaded\"}}\nprovider=custom:http://127.0.0.1:3180/v1 model=MiniMax-M2.7 attempt 5/6: retryable; error=Custom API error (503 Service Unavailable): {\"error\":{\"message\":\"system disk overloaded\",\"type\":\"new_api_error\",\"param\":\"\",\"code\":\"system_disk_overloaded\"}}\nprovider=custom:http://127.0.0.1:3180/v1 model=MiniMax-M2.7 attempt 6/6: retryable; error=Custom API error (503 Service Unavailable): {\"error\":{\"message\":\"system disk overloaded\",\"type\":\"new_api_error\",\"param\":\"\",\"code\":\"system_disk_overloaded\"}}\nprovider=custom:https://llm.dcfuture.cn/v1 model=MiniMax-M2.7 attempt 1/6: non_retryable; error=Custom API error (401 Unauthorized): {\"error\":{\"code\":\"\",\"message\":\"无效的令牌 (request id: 20260413060126848471267jCtC7R9B)\",\"type\":\"new_api_error\"}}",
+          "created_at": "2026-04-13 06:01:25.933921+00:00"
+        },
+        {
+          "message_id": "14",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "你好",
+          "created_at": "2026-04-13 09:17:22.375257+00:00"
+        },
+        {
+          "message_id": "15",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "human_inbox",
+          "from": "",
+          "content": "福仔，你好呀 🌟 有什么我可以帮你的吗？",
+          "created_at": "2026-04-13 09:17:33.926718+00:00"
+        },
+        {
+          "message_id": "16",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "你是谁",
+          "created_at": "2026-04-13 09:18:24.853389+00:00"
+        },
+        {
+          "message_id": "17",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "human_inbox",
+          "from": "",
+          "content": "我是「星源」🌟，你的超级大脑和全能助手，运行在唤星 AI 平台上。\n\n简单来说，我就是你在数字世界里最懂你的伙伴——帮你总览全局、调度任务、整理信息，把复杂的事情变得井井有条。\n\n有什么想聊的，或者需要帮忙的事情吗？",
+          "created_at": "2026-04-13 09:18:31.043363+00:00"
+        },
+        {
+          "message_id": "18",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "agent_inbox",
+          "from": "",
+          "content": "帮我看看最近openclaw有什么新闻",
+          "created_at": "2026-04-13 09:23:10.855515+00:00"
+        },
+        {
+          "message_id": "19",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "human_inbox",
+          "from": "",
+          "content": "",
+          "created_at": "2026-04-13 09:23:23.257984+00:00"
+        },
+        {
+          "message_id": "20",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "human_inbox",
+          "from": "",
+          "content": "",
+          "created_at": "2026-04-13 09:23:25.379211+00:00"
+        },
+        {
+          "message_id": "21",
+          "conversation_id": "486dd197-bb79-4229-b013-39d80aaa7c56",
+          "inbox_kind": "human_inbox",
+          "from": "",
+          "content": "关于 OpenClaw 的最新动态 🌟\n\n**OpenClaw 最近非常火！** 几个关键亮点：\n\n1. **增长惊人** — 2026年1月上线后两周内 GitHub Star 突破 15k+，目前已达 310k+ Star，被称为\"全球增长最快的开源软件\"\n\n2. **核心定位** — 一款免费开源的 AI 助手，运行在你自己的电脑上。支持 30+ 平台（WhatsApp、Telegram、Discord 等），可接入 Claude、GPT 或本地模型（如 Ollama、LM Studio、vLLM）\n\n3. **主打特点**\n   - 本地网关 + 隐私优先\n   - 自托管 Gateway 网关\n   - 多渠道整合\n   - 被 Reddit、Hacker News、V2EX 等技术社区持续热议\n\n4. **中文资源** — 有中文站（openclaw.cc）和中文文档（docs.openclaw.ai），对中文用户很友好\n\n5. **媒体评价** — 被多家媒体评为\"2026年最值得关注的开源AI项目\"\n\n看起来福仔你对 AI 和开源项目很关注呀，是想用 OpenClaw 做什么吗？🤔",
+          "created_at": "2026-04-13 09:23:33.592287+00:00"
+        }
+      ],
+      "has_more": false,
+      "next_cursor": "s4:46"
+    }
+  },
+  "send_to_human": {
+    "is_error": false,
+    "payload": {
+      "message_id": 124,
+      "conversation_id": "841917ce-7c5a-454f-b2b9-518209eb1ddf",
+      "delivered": true,
+      "reachable": true,
+      "status": "sent"
+    }
+  },
+  "send_to_agent": {
+    "is_error": false,
+    "payload": {
+      "message_id": 125,
+      "conversation_id": "165eb63d-5a3f-452c-a057-e2a094809ada",
+      "delivered": true,
+      "reachable": true,
+      "status": "sent"
+    }
+  }
+}
