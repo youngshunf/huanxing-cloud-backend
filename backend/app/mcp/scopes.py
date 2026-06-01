@@ -1,0 +1,54 @@
+"""Scope 元数据注册表（catalog 中文化 / 分组 / 风险展示的集中声明）。
+
+设计事实源：13-doc §4.2（scopes.py 集中声明）；platform 部分以 14-doc §3 为权威源。
+
+判定真相仍是各 `BaseTool.required_scopes`（分散但准确）+ 三态 mode；本表只负责
+**展示元数据**（中文 label / domain / risk / 描述），通过 scope key 关联。
+catalog 渲染缺失元数据时回退到 scope key 本身（不崩、不造假）。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+# scope_key -> {label_zh, domain, risk, description}
+# risk 仅 UI 提示（不强制确认，D4）；社交/平台工具一律 low。
+SCOPE_CATALOG: dict[str, dict[str, str]] = {
+    # —— platform（14-doc §3 权威）——
+    'user:search': {'label_zh': '搜索用户', 'domain': 'user', 'risk': 'low', 'description': '按唤星号/昵称搜索 HASN 用户（人或 Agent）'},
+    'user:read': {'label_zh': '查看用户资料', 'domain': 'user', 'risk': 'low', 'description': '查看用户/Agent 主页详情'},
+    'contact:read': {'label_zh': '查看联系人', 'domain': 'contact', 'risk': 'low', 'description': '列出主人语境下的联系人与关系状态'},
+    'contact:request': {'label_zh': '发送联系请求', 'domain': 'contact', 'risk': 'low', 'description': '向某用户发起加联系/好友请求'},
+    'message:read': {'label_zh': '读取/搜索聊天记录', 'domain': 'message', 'risk': 'low', 'description': '读取会话历史、跨会话搜索聊天记录'},
+    'message:send': {'label_zh': '发送消息', 'domain': 'message', 'risk': 'low', 'description': '给用户/Agent/会话发消息（走真实路由与关系门控）'},
+    'task:create': {'label_zh': '发起任务', 'domain': 'task', 'risk': 'low', 'description': '发起一个任务交给 Runtime 执行'},
+    'task:read': {'label_zh': '查看任务进度与结果', 'domain': 'task', 'risk': 'low', 'description': '查任务/会话状态、进度事件与产物'},
+    # 兼容历史默认词表（DEFAULT_AGENT_SCOPES）——展示用
+    'task:execute': {'label_zh': '执行任务', 'domain': 'task', 'risk': 'low', 'description': '历史默认任务执行权限'},
+    'profile:read': {'label_zh': '读取资料', 'domain': 'profile', 'risk': 'low', 'description': '读取自身/主人公开资料'},
+    # —— app（builtin AI-Native，与 manifest required_scopes 对齐）——
+    'community:read': {'label_zh': '读取社区内容', 'domain': 'community', 'risk': 'low', 'description': '读取社区信息流/帖子/文章'},
+    'community:post': {'label_zh': '发布社区内容', 'domain': 'community', 'risk': 'medium', 'description': '以 Agent 身份发帖/发文（按策略审核）'},
+    'knowledge:read': {'label_zh': '检索知识库', 'domain': 'knowledge', 'risk': 'low', 'description': '检索当前工作空间的知识库资料'},
+}
+
+# source 分组的中文标签（catalog 顶层分组）
+SOURCE_LABELS: dict[str, str] = {
+    'platform': '平台工具',
+    'app': '已安装 App',
+    'external': '外部 MCP',
+}
+
+
+def scope_meta(scope_key: str) -> dict[str, Any]:
+    """取 scope 展示元数据；缺失则回退到 key 本身（不造假）。"""
+    meta = SCOPE_CATALOG.get(scope_key)
+    if meta:
+        return {
+            'label': meta['label_zh'],
+            'domain': meta.get('domain', ''),
+            'risk': meta.get('risk', 'low'),
+            'description': meta.get('description', ''),
+        }
+    domain = scope_key.split(':', 1)[0] if ':' in scope_key else ''
+    return {'label': scope_key, 'domain': domain, 'risk': 'low', 'description': ''}

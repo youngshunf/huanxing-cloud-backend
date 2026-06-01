@@ -317,6 +317,62 @@ async def create_default_agent_scopes(db: AsyncSession, agent_hasn_id: str, owne
     await db.commit()
 
 
+async def update_agent_modes(
+    db: AsyncSession,
+    agent_hasn_id: str,
+    *,
+    default_mode: str,
+    capability_modes: dict,
+    post_needs_review: bool | None = None,
+) -> None:
+    """更新 Agent 三态授权（D3）：写 default_mode/capability_modes（+可选 post_needs_review），
+    失效缓存；**不重签 JWT / 不吊销 key**（消费时活取，即时生效）。
+
+    :param default_mode: allow|ask|deny（非法值落 allow）
+    :param capability_modes: {capability_key: allow|ask|deny}
+    """
+    import json as _json
+
+    from sqlalchemy import text
+
+    if default_mode not in ('allow', 'ask', 'deny'):
+        default_mode = 'allow'
+    caps_json = _json.dumps(capability_modes or {}, ensure_ascii=False)
+
+    if post_needs_review is None:
+        await db.execute(
+            text("""
+                UPDATE hasn_agent_scopes
+                SET default_mode = :default_mode,
+                    capability_modes = CAST(:capability_modes AS jsonb),
+                    updated_time = NOW()
+                WHERE agent_hasn_id = :agent_hasn_id
+            """),
+            {'agent_hasn_id': agent_hasn_id, 'default_mode': default_mode, 'capability_modes': caps_json},
+        )
+    else:
+        await db.execute(
+            text("""
+                UPDATE hasn_agent_scopes
+                SET default_mode = :default_mode,
+                    capability_modes = CAST(:capability_modes AS jsonb),
+                    post_needs_review = :post_needs_review,
+                    updated_time = NOW()
+                WHERE agent_hasn_id = :agent_hasn_id
+            """),
+            {
+                'agent_hasn_id': agent_hasn_id,
+                'default_mode': default_mode,
+                'capability_modes': caps_json,
+                'post_needs_review': post_needs_review,
+            },
+        )
+    await db.commit()
+
+    # D3：失效缓存即可，下一次工具发现/执行现查即时生效；不重签 JWT、不吊销 key。
+    await invalidate_agent_scopes_cache(agent_hasn_id)
+
+
 async def update_agent_scopes(
     db: AsyncSession,
     agent_hasn_id: str,
@@ -325,7 +381,7 @@ async def update_agent_scopes(
     granted_by: str,
 ) -> None:
     """
-    更新 Agent 权限配置
+    更新 Agent 权限配置（旧二态/scopes 数组写法，保留兼容；新逻辑用 update_agent_modes）
 
     :param db: 数据库会话
     :param agent_hasn_id: Agent 的 HASN ID
