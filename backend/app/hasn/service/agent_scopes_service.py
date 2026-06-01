@@ -98,5 +98,21 @@ class AgentScopesService:
         catalog = mcp_server.tool_directory.build_scope_catalog(ctx)
         return ScopeCatalogResponse.model_validate(catalog)
 
+    async def list_ask_requests(self, db: AsyncSession, agent_hasn_id: str, owner_hasn_id: str) -> list[dict]:
+        """列出该 Agent 当前挂起的 ask 批准请求（P6，主人 UI 用）。"""
+        await self._assert_owns(db, agent_hasn_id, owner_hasn_id, write=False)
+        from backend.app.mcp.ask_gate import ask_approval_gate
+
+        return await ask_approval_gate.list_pending(agent_hasn_id)
+
+    async def decide_ask_request(
+        self, db: AsyncSession, agent_hasn_id: str, owner_hasn_id: str, request_id: str, decision: str
+    ) -> None:
+        """主人对某挂起 ask 请求做批准/拒绝决定（P6）。"""
+        await self._assert_owns(db, agent_hasn_id, owner_hasn_id, write=True)
+        from backend.app.mcp.ask_gate import ask_approval_gate
+
+        await ask_approval_gate.submit_decision(request_id, decision)
+
 
 agent_scopes_service = AgentScopesService()

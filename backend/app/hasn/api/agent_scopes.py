@@ -12,6 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
 from backend.app.hasn.schema.agent_scopes import (
     AgentScopesConfig,
+    AskDecisionRequest,
+    AskRequestItem,
+    AskRequestsResponse,
     ScopeCatalogResponse,
     UpdateAgentScopesRequest,
     UpdateAgentScopesResponse,
@@ -92,6 +95,51 @@ async def get_scope_catalog(
         agent_hasn_id=agent_hasn_id,
         owner_hasn_id=owner_hasn_id,
     )
+
+
+# ---------- ask 态批准请求（P6，主人侧列出/决定） ----------
+
+
+@router.get(
+    '/agents/{agent_hasn_id}/ask-requests',
+    summary='列出 Agent 挂起的 ask 批准请求',
+    description='列出该 Agent 当前因 ask 模式挂起、等待主人批准的工具调用（需要 Owner JWT）',
+    dependencies=[DependsJwtAuth],
+)
+async def list_ask_requests(
+    request: Request,
+    agent_hasn_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AskRequestsResponse:
+    owner_hasn_id = await _owner_hasn_id(request, db)
+    pending = await agent_scopes_service.list_ask_requests(
+        db=db, agent_hasn_id=agent_hasn_id, owner_hasn_id=owner_hasn_id
+    )
+    return AskRequestsResponse(requests=[AskRequestItem(**item) for item in pending])
+
+
+@router.post(
+    '/agents/{agent_hasn_id}/ask-requests/{request_id}',
+    summary='对挂起的 ask 请求做批准/拒绝',
+    description='主人批准或拒绝某条挂起的工具调用（需要 Owner JWT）',
+    dependencies=[DependsJwtAuth],
+)
+async def decide_ask_request(
+    request: Request,
+    agent_hasn_id: str,
+    request_id: str,
+    request_body: AskDecisionRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    owner_hasn_id = await _owner_hasn_id(request, db)
+    await agent_scopes_service.decide_ask_request(
+        db=db,
+        agent_hasn_id=agent_hasn_id,
+        owner_hasn_id=owner_hasn_id,
+        request_id=request_id,
+        decision=request_body.decision,
+    )
+    return {'request_id': request_id, 'decision': request_body.decision}
 
 
 # ---------- 兼容别名：旧 /community/settings/agents/{id}（转发同一 service） ----------

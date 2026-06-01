@@ -54,3 +54,25 @@ class ScopeCatalogResponse(SchemaBase):
 
     default_mode: str = Field(default='allow')
     sources: list[ScopeSource] = Field(default_factory=list)
+
+
+class AskRequestItem(SchemaBase):
+    """一条挂起的 ask 批准请求（主人 UI 列出）"""
+
+    request_id: str = Field(description='挂起请求 ID')
+    agent_hasn_id: str = Field(description='发起调用的 Agent')
+    owner_hasn_id: str | None = Field(default=None, description='所属主人')
+    tool_name: str = Field(description='待批准的工具')
+    arguments: dict = Field(default_factory=dict, description='调用参数（供主人判断）')
+
+
+class AskRequestsResponse(SchemaBase):
+    """某 Agent 当前挂起的 ask 请求列表"""
+
+    requests: list[AskRequestItem] = Field(default_factory=list)
+
+
+class AskDecisionRequest(SchemaBase):
+    """主人对挂起请求的决定"""
+
+    decision: str = Field(description='approve|reject（approved/rejected 亦可）')

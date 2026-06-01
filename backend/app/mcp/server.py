@@ -18,7 +18,7 @@ from backend.app.mcp.tools.message import MessageListTool, MessageSendTool
 from backend.app.mcp.tools.registry import ToolRegistry
 from backend.app.mcp.tools.tool_search import ToolSearchTool
 from backend.app.mcp.tools.user import UserSearchTool
-from backend.common.security.scope_policy import MODE_DENY
+from backend.common.security.scope_policy import MODE_ASK, MODE_DENY
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,11 @@ class HasnCloudMcpServer:
             mode = agent_context.tool_mode(tool)
             if mode == MODE_DENY:
                 raise PermissionError(f'Capability denied by owner for tool: {tool_name}')
-            # mode == 'ask' 的主人批准闸门在 P6 接入；本阶段 ask 暂等同 allow 直接执行。
+            if mode == MODE_ASK:
+                # D4：仅 owner 主动设 ask 才挂起；不按 risk 强制。批准→继续；拒绝/超时→raise。
+                from backend.app.mcp.ask_gate import ask_approval_gate
+
+                await ask_approval_gate.gate(agent_context, tool_name=tool_name, arguments=arguments)
 
             # 按 source 分发执行
             result = await self._dispatch_by_source(agent_context, tool, source, arguments)
