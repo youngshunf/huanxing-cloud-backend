@@ -40,3 +40,4 @@ from backend.app.hasn.model.hasn_task_run_summary import HasnTaskRunSummary as H
 from backend.app.hasn.model.hasn_sessions import HasnSessions as HasnSessions
 from backend.app.hasn.model.hasn_session_events import HasnSessionEvents as HasnSessionEvents
 from backend.app.hasn.model.hasn_session_artifacts import HasnSessionArtifacts as HasnSessionArtifacts
+from backend.app.hasn.model.hasn_agent_mcp_keys import HasnAgentMcpKeys as HasnAgentMcpKeys
