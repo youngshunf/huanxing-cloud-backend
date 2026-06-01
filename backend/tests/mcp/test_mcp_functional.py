@@ -102,16 +102,19 @@ class TestMcpFunctional:
             assert 'tools' in data
             assert isinstance(data['tools'], list)
 
+            # legacy_all 暴露（设计 08 §6.2）：tools/list 直接列出全部可见工具。
             tool_names = [tool['name'] for tool in data['tools']]
-            assert tool_names == ['hasn.cloud.tool.search']
-            assert data['tools'][0]['input_schema']['required'] == ['query']
+            assert 'hasn.cloud.tool.search' in tool_names
+            assert 'hasn.message.send' in tool_names
+            search_tool = next(t for t in data['tools'] if t['name'] == 'hasn.cloud.tool.search')
+            assert search_tool['input_schema']['required'] == ['query']
 
             print(f'✅ Found {len(data["tools"])} tools')
             for tool in data['tools']:
                 print(f'  - {tool["name"]}: {tool["description"]}')
 
-    def test_list_tools_with_namespace_filter_stays_bootstrap(self, valid_agent_token, mock_agent) -> None:
-        """测试 namespace 参数不会绕过 bootstrap 暴露"""
+    def test_list_tools_ignores_namespace_filter(self, valid_agent_token, mock_agent) -> None:
+        """legacy_all：namespace 参数被忽略，tools/list 始终返回全部可见工具"""
         app = make_test_app()
         client = TestClient(app)
 
@@ -134,8 +137,10 @@ class TestMcpFunctional:
             data = response.json()
             tools = data['tools']
 
+            # legacy_all：namespace 不收窄暴露集合，仍返回全部可见工具（含非 hasn.message 域）。
             tool_names = [tool['name'] for tool in tools]
-            assert tool_names == ['hasn.cloud.tool.search']
+            assert 'hasn.cloud.tool.search' in tool_names
+            assert 'hasn.contact.list' in tool_names
 
             print(f'✅ Found {len(tools)} bootstrap tools')
 
@@ -144,26 +149,32 @@ class TestMcpFunctional:
         app = make_test_app()
         client = TestClient(app)
 
-        # Mock 数据库和服务
+        # contact.list 走 hasn_contacts_dao.list_contacts + _resolve_peer（DAO 真实查询，零 service 层）。
         from unittest.mock import MagicMock
 
-        mock_contact_service = MagicMock()
-        mock_contact_service.get_list = AsyncMock(
-            return_value={
-                'data': [
-                    MagicMock(id=1, contact_id='h_contact_1', status='active', created_at='2024-01-01'),
-                    MagicMock(id=2, contact_id='h_contact_2', status='active', created_at='2024-01-02'),
-                ]
-            }
-        )
+        def _row(peer_id: str, peer_type: str) -> MagicMock:
+            row = MagicMock()
+            row.peer_id = peer_id
+            row.peer_type = peer_type
+            row.relation_type = 'friend'
+            row.trust_level = 2
+            row.status = 'connected'
+            return row
 
         with (
             patch(
                 'backend.app.hasn.crud.crud_hasn_agents.hasn_agents_dao.get_by_hasn_id', new_callable=AsyncMock
             ) as mock_get,
-            patch('backend.app.mcp.tools.contact.HasnContactsService', return_value=mock_contact_service),
+            patch('backend.app.mcp.tools.contact.async_db_session') as mock_contact_db_session,
+            patch(
+                'backend.app.mcp.tools.contact.hasn_contacts_dao.list_contacts', new_callable=AsyncMock
+            ) as mock_list_contacts,
+            patch('backend.app.mcp.tools.contact._resolve_peer', new_callable=AsyncMock) as mock_resolve_peer,
         ):
             mock_get.return_value = mock_agent
+            mock_contact_db_session.return_value.__aenter__.return_value = MagicMock()
+            mock_list_contacts.return_value = [_row('h_contact_1', 'human'), _row('a_contact_2', 'agent')]
+            mock_resolve_peer.return_value = ('联系人', 'HX')
 
             response = client.post(
                 '/mcp/tools/call',

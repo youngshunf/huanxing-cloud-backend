@@ -38,6 +38,19 @@ class ToolDirectoryService:
             if self._can_discover(agent_context, tool)
         ]
 
+    def list_all_tools(self, agent_context: AgentContext) -> list[dict[str, Any]]:
+        """legacy_all 暴露（设计 08 §6.2）：列出该 agent 可见的全部工具（platform + 已加载 app）。
+
+        function-calling Runtime（hermes-agent）只认 `tools/list` 返回的工具、不支持
+        「search 后轮内二次注入工具声明」，故对这类运行时直接全量暴露。三态 deny 的工具
+        不出现（与 `_can_discover` 一致）；ask 仍可见（调用时由 ask 闸门挂起）。
+        """
+        return [
+            self._tool_schema(tool)
+            for tool in self._registry.get_all_tools()
+            if self._can_discover(agent_context, tool)
+        ]
+
     async def search(
         self,
         agent_context: AgentContext,

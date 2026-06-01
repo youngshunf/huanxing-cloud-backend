@@ -93,10 +93,10 @@ class HasnCloudMcpServer:
         try:
             await self._load_app_tools(agent_context)
 
-            # Progressive exposure keeps `tools/list` on the bootstrap surface.
-            # `namespace` is accepted for compatibility, but it must not widen
-            # the exposed set beyond the bootstrap projection.
-            available_tools = self.tool_directory.list_bootstrap_tools(agent_context)
+            # legacy_all 暴露（设计 08 §6.2）：function-calling Runtime（hermes-agent）不支持
+            # 「search 后轮内二次注入工具声明」，只认 tools/list；故直接列出该 agent 可见的
+            # 全部工具（platform + 已加载 app），三态 deny 的不列。`namespace` 仅兼容保留，不收窄。
+            available_tools = self.tool_directory.list_all_tools(agent_context)
         except Exception as e:
             logger.error(f'Error listing tools: {e!s}', exc_info=True)
             raise

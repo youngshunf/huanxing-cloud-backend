@@ -142,11 +142,13 @@ class TestMcpProgressiveExposure:
         assert ('platform', 'hasn.contact') in sources
         assert ('platform', 'hasn.message') in sources
 
-    def test_list_tools_defaults_to_bootstrap_search_only(
+    def test_list_tools_exposes_all_visible_tools(
         self,
         valid_agent_token: str,
         mock_agent: MagicMock,
     ) -> None:
+        # legacy_all 暴露（设计 08 §6.2）：function-calling Runtime 不支持轮内二次注入，
+        # 故 tools/list 直接列出全部可见工具（不止 bootstrap 的 search）。
         app = make_test_app()
         client = TestClient(app)
 
@@ -164,7 +166,9 @@ class TestMcpProgressiveExposure:
 
         assert response.status_code == 200
         tool_names = [tool['name'] for tool in response.json()['tools']]
-        assert tool_names == ['hasn.cloud.tool.search']
+        assert 'hasn.cloud.tool.search' in tool_names
+        assert 'hasn.message.send' in tool_names
+        assert 'hasn.contact.list' in tool_names
 
     def test_tool_search_returns_builtin_schema(
         self,
@@ -208,31 +212,33 @@ class TestMcpProgressiveExposure:
         app = make_test_app()
         client = TestClient(app)
 
-        mock_contact_service = MagicMock()
-        mock_contact_service.get_list = AsyncMock(
-            return_value={
-                'data': [
-                    MagicMock(
-                        id=1,
-                        contact_id='h_contact_1',
-                        status='active',
-                        created_at='2026-05-20',
-                    )
-                ]
-            }
-        )
+        # contact.list 走 hasn_contacts_dao.list_contacts + _resolve_peer（DAO 真实查询，零 service 层）。
+        contact_row = MagicMock()
+        contact_row.peer_id = 'h_contact_1'
+        contact_row.peer_type = 'human'
+        contact_row.relation_type = 'friend'
+        contact_row.trust_level = 2
+        contact_row.status = 'connected'
 
         with (
             patch(
                 'backend.app.mcp.auth.hasn_agents_dao.get_by_hasn_id',
                 new_callable=AsyncMock,
             ) as mock_get,
+            patch('backend.app.mcp.tools.contact.async_db_session') as mock_contact_db_session,
             patch(
-                'backend.app.mcp.tools.contact.HasnContactsService',
-                return_value=mock_contact_service,
-            ),
+                'backend.app.mcp.tools.contact.hasn_contacts_dao.list_contacts',
+                new_callable=AsyncMock,
+            ) as mock_list_contacts,
+            patch(
+                'backend.app.mcp.tools.contact._resolve_peer',
+                new_callable=AsyncMock,
+            ) as mock_resolve_peer,
         ):
             mock_get.return_value = mock_agent
+            mock_contact_db_session.return_value.__aenter__.return_value = MagicMock()
+            mock_list_contacts.return_value = [contact_row]
+            mock_resolve_peer.return_value = ('联系人甲', 'HX1')
 
             response = client.post(
                 '/mcp/tools/call',

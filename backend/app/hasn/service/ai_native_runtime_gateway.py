@@ -1,23 +1,26 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
+
 from fastapi.security.utils import get_authorization_scheme_param
 
 from backend.app.hasn.model import HasnAiNativeAppAudit, HasnWorkspaceApp
-from backend.app.hasn.schema.ai_native_runtime import (
-    AiNativeAuditQuery,
-    AiNativeRuntimeCapabilitiesRequest,
-    AiNativeToolCallRequest,
-)
 from backend.app.hasn.service.ai_native_app_registry import ai_native_app_registry
-from backend.app.hasn_community.service.community_service import community_service
 from backend.app.hasn.service.workbench_domain_service import workbench_domain_service
-from backend.common.dataclasses import AgentTokenPayload
+from backend.app.hasn_community.service.community_service import community_service
 from backend.common.exception import errors
 from backend.common.security.agent_jwt import jwt_decode_agent
 from backend.database.redis import redis_client
+
+if TYPE_CHECKING:
+    from backend.app.hasn.schema.ai_native_runtime import (
+        AiNativeAuditQuery,
+        AiNativeRuntimeCapabilitiesRequest,
+        AiNativeToolCallRequest,
+    )
+    from backend.common.dataclasses import AgentTokenPayload
 
 
 class _RuntimeDenial(Exception):
@@ -39,7 +42,9 @@ class AiNativeRuntimeGateway:
             return self._capabilities_payload(workspace=workspace, agent=agent, manifest=manifest, tools=[])
         if not self._can_discover_tool(workspace=workspace, manifest=manifest, capability=capability):
             return self._capabilities_payload(workspace=workspace, agent=agent, manifest=manifest, tools=[])
-        if not self._has_required_scopes(agent, tool['required_scopes']):
+        if await self._is_tool_denied_by_policy(
+            db, agent, tool_name=tool['mcp_name'], required_scopes=tool['required_scopes']
+        ):
             return self._capabilities_payload(workspace=workspace, agent=agent, manifest=manifest, tools=[])
 
         return self._capabilities_payload(
@@ -162,7 +167,9 @@ class AiNativeRuntimeGateway:
             return self._deny_payload(body.trace_id, '15005', collaboration_denial, audit_id=audit['id'])
 
         required_scopes = list(tool.get('required_scopes') or [])
-        if not self._has_required_scopes(agent, required_scopes):
+        if await self._is_tool_denied_by_policy(
+            db, agent, tool_name=tool.get('mcp_name') or tool_id, required_scopes=required_scopes
+        ):
             audit = await self._write_audit(
                 db,
                 trace_id=body.trace_id,
@@ -414,8 +421,32 @@ class AiNativeRuntimeGateway:
                 return capability
         raise errors.NotFoundError(msg='AI-Native 能力不存在')
 
-    def _has_required_scopes(self, agent: AgentTokenPayload, required_scopes: list[str]) -> bool:
-        return set(required_scopes).issubset(set(agent.scopes))
+    async def _is_tool_denied_by_policy(
+        self,
+        db,
+        agent: AgentTokenPayload,
+        *,
+        tool_name: str,
+        required_scopes: list[str],
+    ) -> bool:
+        """维度① 三态能力授权（D3 活取）：deny → True，allow/ask → False。
+
+        统一走 hasn_agent_scopes 三态策略（default_mode + capability_modes），不再读
+        key/JWT 冻结的 scopes 快照（D3：快照仅供审计、不作判定依据），因此也不受 key
+        快照词表点号/冒号不一致影响。默认 allow（所有工具一视同仁）。ask 不在此挂起——
+        交由 MCP server.call_tool 的 ask 闸门处理，本门只硬拦 deny。
+        """
+        from backend.common.security.agent_jwt import get_agent_scopes_cached
+        from backend.common.security.scope_policy import MODE_DENY, resolve_tool_mode
+
+        policy = await get_agent_scopes_cached(agent.agent_hasn_id, db)
+        mode = resolve_tool_mode(
+            policy.get('default_mode', 'allow'),
+            policy.get('capability_modes'),
+            tool_name=tool_name,
+            required_scopes=list(required_scopes or []),
+        )
+        return mode == MODE_DENY
 
     def _can_discover_tool(
         self,
@@ -430,9 +461,7 @@ class AiNativeRuntimeGateway:
             return False
         if self._collaboration_denial(workspace=workspace, manifest=manifest) is not None:
             return False
-        if self._enterprise_role_denial(workspace=workspace, capability=capability) is not None:
-            return False
-        return True
+        return self._enterprise_role_denial(workspace=workspace, capability=capability) is None
 
     def _collaboration_denial(self, *, workspace: dict[str, Any], manifest: dict[str, Any]) -> str | None:
         if workspace['kind'] != 'enterprise':

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from backend.app.hasn_community.model import HasnPosts, HasnArticles
+from backend.app.hasn_community.model import HasnArticles, HasnPosts
 from backend.app.hasn_community.service.community_service import community_service
-from backend.common.security.agent_jwt import AgentTokenPayload
 from backend.database.db import uuid4_str
-from backend.utils.timezone import timezone
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from backend.common.security.agent_jwt import AgentTokenPayload
 
 
 async def handle_community_get_feed(
@@ -57,7 +58,6 @@ async def handle_community_create_post(
         author_hasn_id=agent.agent_hasn_id,
         author_user_id=None,
         owner_hasn_id=agent.owner_hasn_id,
-        owner_user_id=agent.owner_user_id,
         origin_workspace_kind='personal',
         origin_workspace_id=str(agent.owner_user_id),
         content=input_payload['content'],
@@ -114,7 +114,6 @@ async def handle_community_create_article(
         author_hasn_id=agent.agent_hasn_id,
         author_user_id=None,
         owner_hasn_id=agent.owner_hasn_id,
-        owner_user_id=agent.owner_user_id,
         origin_workspace_kind='personal',
         origin_workspace_id=str(agent.owner_user_id),
         title=input_payload['title'],

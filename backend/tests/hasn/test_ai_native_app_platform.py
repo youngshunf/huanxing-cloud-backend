@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -64,7 +64,8 @@ def test_builtin_knowledge_manifest_matches_p0_contract() -> None:
     assert manifest['collaboration_mode'] == 'workspace_shared'
     assert manifest['capabilities'][0]['tool_id'] == 'knowledge.search'
     assert manifest['capabilities'][0]['mcp_name'] == 'hasn.knowledge.search'
-    assert manifest['capabilities'][0]['required_scopes'] == ['knowledge.read']
+    # P1 词表迁移（点→冒号，#1079）：scope 统一冒号分隔。
+    assert manifest['capabilities'][0]['required_scopes'] == ['knowledge:read']
     assert manifest['tools'][0]['handler'] == 'knowledge.search'
     assert manifest['tools'][0]['idempotent'] is True
 
@@ -162,7 +163,7 @@ class _ScalarResult:
     def __init__(self, rows: list[Any]) -> None:
         self._rows = rows
 
-    def scalars(self) -> '_ScalarResult':
+    def scalars(self) -> _ScalarResult:
         return self
 
     def first(self) -> Any:
@@ -191,7 +192,7 @@ class _FakeDb:
             return _ScalarResult([self.app_row] if self.app_row is not None else [])
         if 'hasn_ai_native_app_audit' in sql:
             rows = list(self.audit_rows)
-            params = getattr(getattr(stmt, 'compile')(), 'params', {})
+            params = getattr(stmt.compile(), 'params', {})
             if 'workspace_kind_1' in params:
                 rows = [row for row in rows if row.workspace_kind == params['workspace_kind_1']]
             if 'app_id_1' in params:
@@ -316,11 +317,19 @@ def _make_runtime_test_app(
             '_authenticate_runtime_agent',
             fake_runtime_agent,
         )
+
+    # 维度① 三态能力授权（D3 活取）：gateway 经 get_agent_scopes_cached 取 hasn_agent_scopes 策略，
+    # 不再读 key/JWT 冻结的 scopes 快照。这里默认全开（default_mode=allow），deny 用例自行 override。
+    import backend.common.security.agent_jwt as agent_jwt_module
+
+    async def _default_allow_scopes(_agent_hasn_id: str, _db: Any) -> dict[str, Any]:
+        return {'default_mode': 'allow', 'capability_modes': {}, 'scopes': [], 'post_needs_review': False}
+
+    monkeypatch.setattr(agent_jwt_module, 'get_agent_scopes_cached', _default_allow_scopes)
     return app
 
 
 def test_runtime_capabilities_returns_current_workspace_knowledge_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    from backend.app.hasn.api.v1 import ai_native_app as module
     from backend.app.hasn.model import HasnWorkspaceApp
     from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
 
@@ -361,7 +370,8 @@ def test_runtime_capabilities_returns_current_workspace_knowledge_tool(monkeypat
     }
     assert data['tools'][0]['tool_id'] == 'knowledge.search'
     assert data['tools'][0]['mcp_name'] == 'hasn.knowledge.search'
-    assert data['tools'][0]['required_scopes'] == ['knowledge.read']
+    # P1 词表迁移（点→冒号，#1079）：scope 统一冒号分隔。
+    assert data['tools'][0]['required_scopes'] == ['knowledge:read']
 
 
 def test_runtime_capabilities_filters_disabled_workspace_app(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -492,7 +502,6 @@ def test_enterprise_runtime_capabilities_filters_collaboration_none(monkeypatch:
 
 
 def test_runtime_tool_call_invokes_real_knowledge_search_and_writes_audit(monkeypatch: pytest.MonkeyPatch) -> None:
-    from backend.app.hasn.api.v1 import ai_native_app as module
     from backend.app.hasn.model import HasnWorkspaceApp
     from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
 
@@ -542,13 +551,10 @@ def test_runtime_tool_call_invokes_real_knowledge_search_and_writes_audit(monkey
     assert audit_row.decision == 'allow'
 
 
-def test_runtime_tool_call_scope_denial_writes_audit(monkeypatch: pytest.MonkeyPatch) -> None:
-    from backend.app.hasn.api.v1 import ai_native_app as module
+def test_runtime_tool_call_capability_deny_writes_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 三态模型（D1/D3）：缺 scope 不再 deny（默认 allow）；owner 把能力显式设 deny 才硬拦 15012。
     from backend.app.hasn.model import HasnWorkspaceApp
     from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
-
-    class NoKnowledgeScopeAgent(_FakeAgent):
-        scopes = ['message.read']
 
     fake_db = _FakeDb(
         workspace={'kind': 'personal', 'enterprise_id': None},
@@ -567,14 +573,13 @@ def test_runtime_tool_call_scope_denial_writes_audit(monkeypatch: pytest.MonkeyP
     async def fake_active_workspace(_db: Any, *, user_id: int) -> dict[str, Any]:
         return {'kind': 'personal', 'enterprise_id': None}
 
-    async def fake_runtime_agent(_request):
-        return {'decision': 'allow', 'agent': NoKnowledgeScopeAgent()}
+    # owner 把 knowledge:read 能力设 deny（三态活取，冒号词表与 manifest required_scopes 一致）→ knowledge.search 被拒。
+    import backend.common.security.agent_jwt as agent_jwt_module
 
-    monkeypatch.setattr(
-        module.ai_native_runtime_gateway,
-        '_authenticate_runtime_agent',
-        fake_runtime_agent,
-    )
+    async def _deny_knowledge(_agent_hasn_id: str, _db: Any) -> dict[str, Any]:
+        return {'default_mode': 'allow', 'capability_modes': {'knowledge:read': 'deny'}, 'scopes': [], 'post_needs_review': False}
+
+    monkeypatch.setattr(agent_jwt_module, 'get_agent_scopes_cached', _deny_knowledge)
     monkeypatch.setattr(gateway_module.workbench_domain_service, 'get_active_workspace', fake_active_workspace)
 
     with TestClient(app) as client:
@@ -662,12 +667,10 @@ def test_runtime_tool_call_community_get_post_returns_full_resource(monkeypatch:
     assert audit_row.required_scopes == ['community.read']
 
 
-def test_runtime_tool_call_community_missing_scope_is_denied(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_tool_call_community_capability_deny_writes_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 三态模型（D1/D3）：owner 把 community:read 能力设 deny → community.get_article 被拒 15012。
     from backend.app.hasn.model import HasnWorkspaceApp
     from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
-
-    class NoCommunityScopeAgent(_FakeAgent):
-        scopes = ['message.read']
 
     fake_db = _FakeDb(
         workspace={'kind': 'personal', 'enterprise_id': None},
@@ -683,9 +686,6 @@ def test_runtime_tool_call_community_missing_scope_is_denied(monkeypatch: pytest
     )
     app = _make_runtime_test_app(fake_db, monkeypatch)
 
-    async def fake_runtime_agent(_request):
-        return {'decision': 'allow', 'agent': NoCommunityScopeAgent()}
-
     async def fake_active_workspace(_db: Any, *, user_id: int) -> dict[str, Any]:
         return {'kind': 'personal', 'enterprise_id': None}
 
@@ -693,9 +693,14 @@ def test_runtime_tool_call_community_missing_scope_is_denied(monkeypatch: pytest
         assert app_id == 'community'
         return _community_manifest_payload()
 
+    import backend.common.security.agent_jwt as agent_jwt_module
+
+    async def _deny_community(_agent_hasn_id: str, _db: Any) -> dict[str, Any]:
+        return {'default_mode': 'allow', 'capability_modes': {'community:read': 'deny'}, 'scopes': [], 'post_needs_review': False}
+
+    monkeypatch.setattr(agent_jwt_module, 'get_agent_scopes_cached', _deny_community)
     monkeypatch.setattr(gateway_module.ai_native_app_registry, 'ensure_builtin_published', fake_manifest)
     monkeypatch.setattr(gateway_module.workbench_domain_service, 'get_active_workspace', fake_active_workspace)
-    monkeypatch.setattr(gateway_module.ai_native_runtime_gateway, '_authenticate_runtime_agent', fake_runtime_agent)
 
     with TestClient(app) as client:
         resp = client.post(
@@ -715,7 +720,6 @@ def test_runtime_tool_call_community_missing_scope_is_denied(monkeypatch: pytest
 
 
 def test_runtime_tool_call_disabled_app_writes_audit(monkeypatch: pytest.MonkeyPatch) -> None:
-    from backend.app.hasn.api.v1 import ai_native_app as module
     from backend.app.hasn.model import HasnWorkspaceApp
     from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
 
@@ -1029,7 +1033,7 @@ def test_runtime_tool_call_inaccessible_workspace_writes_15003_audit(monkeypatch
 
     async def missing_membership(_db: Any, *, enterprise_id: int, user_id: int) -> None:
         assert (enterprise_id, user_id) == (7, 12345)
-        return None
+        return
 
     monkeypatch.setattr(gateway_module.workbench_domain_service, '_approved_membership', missing_membership)
 
