@@ -43,6 +43,7 @@ def _pending_request(req_id: int, from_id: str, to_id: str, message: str = '') -
         status='pending',
         message=message,
         channel_source=None,
+        add_source=None,
         created_time=None,
     )
 
@@ -60,6 +61,7 @@ def _connected_contact(contact_id: int, owner_id: str, peer_id: str) -> SimpleNa
         subscription=False,
         status='connected',
         channel_source=None,
+        add_source=None,
         custom_permissions=None,
         scope=None,
         connected_at=None,

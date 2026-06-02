@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
 from backend.app.hasn.crud.crud_hasn_contacts import hasn_contacts_dao
@@ -28,6 +29,7 @@ async def search_users(
     q: Annotated[str, Query(min_length=2, max_length=64, description='唤星号或昵称前缀')],
     auth: Annotated[dict, Depends(hasn_auth)],
     limit: Annotated[int, Query(ge=1, le=50, description='返回上限')] = 20,
+    by: Annotated[str, Query(description='搜索方式 auto|phone（auto=唤星号精确+昵称前缀；phone=手机号精确）')] = 'auto',
 ) -> ResponseModel:
     """搜索用户用于添加好友。
 
@@ -41,6 +43,37 @@ async def search_users(
     """
     self_hasn_id: str = auth.get('effective_id', auth['hasn_id'])
 
+    if by == 'phone':
+        # 手机号精确匹配（隐私：精确等值不模糊，仅 humans）。前端「手机号」入口走此分支。
+        human = await hasn_humans_dao.search_by_phone(db, q, exclude_hasn_id=self_hasn_id)
+        items = [_make_item(human, peer_type='human')] if human else []
+    else:
+        # auto：唤星号精确命中 + 昵称前缀模糊匹配（原行为）
+        items = await _collect_auto_matches(db, q, self_hasn_id=self_hasn_id, limit=limit)
+
+    # 补 existing_relation（驱动前端「已是好友/已发送/可添加」按钮态）
+    for item in items:
+        relation = await hasn_contacts_dao.get_relation(db, self_hasn_id, item['hasn_id'], 'social')
+        item['existing_relation'] = relation.status if relation else None
+
+    return response_base.success(data={'items': items, 'total': len(items)})
+
+
+def _make_item(entity: Any, *, peer_type: str) -> dict:
+    """把 HasnHumans / HasnAgents 行规范成搜索结果 item。"""
+    return {
+        'hasn_id': entity.hasn_id,
+        'star_id': entity.star_id,
+        'name': getattr(entity, 'name', '') or '',
+        'avatar': getattr(entity, 'avatar', None) or getattr(entity, 'avatar_url', None),
+        'avatar_url': getattr(entity, 'avatar_url', None) or getattr(entity, 'avatar', None),
+        'type': peer_type,
+        'existing_relation': None,
+    }
+
+
+async def _collect_auto_matches(db: AsyncSession, q: str, *, self_hasn_id: str, limit: int) -> list[dict]:
+    """auto 搜索：唤星号精确命中 + 昵称前缀模糊匹配，返回去重后的 items。"""
     items: list[dict] = []
     seen: set[str] = set()
 
@@ -58,12 +91,8 @@ async def search_users(
 
     # 2) 昵称前缀模糊匹配（不与精确命中重复）
     if len(items) < limit:
-        prefix_remaining = limit - len(items)
         humans = await hasn_humans_dao.search_by_name(
-            db,
-            prefix=q,
-            limit=prefix_remaining + 1,  # +1 用于排除已 seen 后仍能取够 prefix_remaining
-            exclude_hasn_id=self_hasn_id,
+            db, prefix=q, limit=(limit - len(items)) + 1, exclude_hasn_id=self_hasn_id,
         )
         for h in humans:
             if h.hasn_id in seen:
@@ -73,27 +102,4 @@ async def search_users(
             if len(items) >= limit:
                 break
 
-    # 3) 补 existing_relation
-    for item in items:
-        relation = await hasn_contacts_dao.get_relation(
-            db,
-            self_hasn_id,
-            item['hasn_id'],
-            'social',
-        )
-        item['existing_relation'] = relation.status if relation else None
-
-    return response_base.success(data={'items': items, 'total': len(items)})
-
-
-def _make_item(entity: Any, *, peer_type: str) -> dict:
-    """把 HasnHumans / HasnAgents 行规范成搜索结果 item。"""
-    return {
-        'hasn_id': entity.hasn_id,
-        'star_id': entity.star_id,
-        'name': getattr(entity, 'name', '') or '',
-        'avatar': getattr(entity, 'avatar', None) or getattr(entity, 'avatar_url', None),
-        'avatar_url': getattr(entity, 'avatar_url', None) or getattr(entity, 'avatar', None),
-        'type': peer_type,
-        'existing_relation': None,
-    }
+    return items

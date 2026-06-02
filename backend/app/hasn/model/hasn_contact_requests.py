@@ -48,3 +48,4 @@ class HasnContactRequests(Base):
         default=None,
         comment='来源渠道类型 (wechat:微信:green/feishu:飞书:blue/qq:QQ:cyan/webhook:Webhook:purple/manual:好友请求:gray/system:系统:orange)',
     )
+    add_source: Mapped[str | None] = mapped_column(sa.String(20), default=None, comment='添加来源')

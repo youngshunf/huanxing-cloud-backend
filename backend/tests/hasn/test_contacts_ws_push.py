@@ -63,6 +63,7 @@ def _request(
         status='pending',
         message=message,
         channel_source='manual',
+        add_source='other',
         created_time=None,
     )
 

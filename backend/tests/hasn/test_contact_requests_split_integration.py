@@ -29,6 +29,7 @@ from backend.app.hasn.api.v1.app.contacts import (
 )
 from backend.app.hasn.crud.crud_hasn_contact_requests import hasn_contact_requests_dao
 from backend.app.hasn.crud.crud_hasn_contacts import hasn_contacts_dao
+from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
 from backend.app.hasn.model import HasnAgents, HasnContactRequests, HasnContacts, HasnHumans
 from backend.app.hasn.schema.hasn_contacts_business import HasnContactRequestReq, HasnContactRespondReq
 from backend.app.hasn.service.message_router import check_relation_permission
@@ -274,6 +275,66 @@ async def test_e2e_blocked_sender_cannot_request(pg_session_endpoint) -> None:
     # 被拉黑：断言没有建出 pending 请求（send 返回 fail）
     pending = await hasn_contact_requests_dao.get_active_pending(session, A, B, REL)
     assert pending is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# add_source「添加来源」+ 手机号搜人（来源不再写死 manual，来源/附言贯穿到联系人）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_add_source_invalid_coerced_to_other() -> None:
+    """非法/缺省 add_source 归一为 other，绝不因来源拼写挡住加好友。"""
+    assert HasnContactRequestReq(target_star_id='x', add_source='garbage').add_source == 'other'
+    assert HasnContactRequestReq(target_star_id='x').add_source == 'other'
+    assert HasnContactRequestReq(target_star_id='x', add_source='search_phone').add_source == 'search_phone'
+
+
+async def test_e2e_add_source_roundtrips_to_contact(pg_session_endpoint) -> None:
+    """add_source 随请求落库，accept 后连同附言复制进 hasn_contacts（好友列表可见来源）。"""
+    session = pg_session_endpoint
+    await _seed_human(session, A, A_STAR, 'Alice')
+    await _seed_human(session, B, B_STAR, 'Bob')
+
+    with patch('backend.app.hasn.api.v1.app.contacts.ws_router.push_message_to', new=AsyncMock(return_value=True)):
+        sent = await send_contact_request(
+            obj_in=HasnContactRequestReq(target_star_id=B_STAR, message='手机号加的', add_source='search_phone'),
+            db=session, auth={'hasn_id': A},
+        )
+        request_id = sent.data['request_id']
+        assert sent.data['add_source'] == 'search_phone'  # 响应回显来源
+
+        req = await hasn_contact_requests_dao.get(session, request_id)
+        assert req.add_source == 'search_phone'  # 请求行落库来源
+
+        await respond_to_request(
+            request_id=request_id, obj_in=HasnContactRespondReq(action='accept'),
+            db=session, auth={'hasn_id': B},
+        )
+
+    # accept 后：发起方→目标 的联系人边带上来源与附言；反向边来源 NULL（接受方未经搜索）
+    fwd = await hasn_contacts_dao.get_relation(session, A, B, REL)
+    assert fwd is not None and fwd.add_source == 'search_phone'
+    assert fwd.request_message == '手机号加的'
+    rev = await hasn_contacts_dao.get_relation(session, B, A, REL)
+    assert rev is not None and rev.add_source is None
+
+
+async def test_search_by_phone_finds_active_human(pg_session_endpoint) -> None:
+    """按手机号精确匹配命中 active human（join sys_user.phone）；错号/排除自己查不到。"""
+    session = pg_session_endpoint
+    from backend.app.admin.model import User
+
+    phone = '13900008888'
+    user = User(username='creqit_phone_u', nickname='PhoneUser', password=None, salt=None, phone=phone, status=1)
+    session.add(user)
+    await session.flush()
+    session.add(HasnHumans(hasn_id=A, star_id=A_STAR, user_id=user.id, nickname='Alice', status='active'))
+    await session.flush()
+
+    found = await hasn_humans_dao.search_by_phone(session, phone)
+    assert found is not None and found.hasn_id == A
+    assert await hasn_humans_dao.search_by_phone(session, '13900000000') is None  # 精确：错号不命中
+    assert await hasn_humans_dao.search_by_phone(session, phone, exclude_hasn_id=A) is None  # 排除自己
 
 
 # ─────────────────────────────────────────────────────────────────────────────

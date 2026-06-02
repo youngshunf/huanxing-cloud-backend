@@ -87,7 +87,7 @@ def _agent_peer_out(agent) -> HasnContactPeerOut:
     )
 
 
-async def _send_agent_contact_request(db, *, requester_id: str, agent, message: str | None):
+async def _send_agent_contact_request(db, *, requester_id: str, agent, message: str | None, add_source: str = 'other'):
     """普通朋友请求把好友的『分身』加为联系人（agent 目标，审批人=分身主人）。
 
     与 human 目标的本质区别：目标保持为分身本体（to_type='agent'、to_id=分身 hasn_id），
@@ -122,6 +122,7 @@ async def _send_agent_contact_request(db, *, requester_id: str, agent, message: 
                 status='pending',
                 created_at=pending.created_time,
                 channel_source=pending.channel_source,
+                add_source=pending.add_source,
                 target=target_peer,
                 message=pending.message or '',
             ).model_dump()
@@ -141,6 +142,7 @@ async def _send_agent_contact_request(db, *, requester_id: str, agent, message: 
         requested_trust_level=trust_level,
         message=message,
         channel_source='manual',
+        add_source=add_source,
     )
     await db.commit()
 
@@ -170,6 +172,7 @@ async def _send_agent_contact_request(db, *, requester_id: str, agent, message: 
             status='pending',
             created_at=req.created_time,
             channel_source=req.channel_source,
+            add_source=req.add_source,
             target=target_peer,
             message=msg_text,
         ).model_dump()
@@ -201,7 +204,7 @@ async def send_contact_request(
     # agent 目标走分身级请求/审批闭环（审批人=分身主人）。
     if target_type == 'agent':
         return await _send_agent_contact_request(
-            db, requester_id=hasn_id, agent=target, message=obj_in.message
+            db, requester_id=hasn_id, agent=target, message=obj_in.message, add_source=obj_in.add_source
         )
 
     # human 目标：目标即审批人本人。
@@ -242,6 +245,7 @@ async def send_contact_request(
         requested_trust_level=2,
         message=obj_in.message,
         channel_source='manual',
+        add_source=obj_in.add_source,
     )
     await db.commit()
 
@@ -272,6 +276,7 @@ async def send_contact_request(
             status='pending',
             created_at=req.created_time,
             channel_source=req.channel_source,
+            add_source=req.add_source,
             target=target_peer,
             message=obj_in.message,
         ).model_dump()
@@ -329,6 +334,7 @@ async def list_pending_requests(
                     status=req.status,
                     created_at=req.created_time,
                     channel_source=req.channel_source,
+                    add_source=req.add_source,
                     from_peer=from_peer,
                     target=target,
                     message=req.message or '',
@@ -369,6 +375,7 @@ async def list_pending_requests(
                 status=req.status,
                 created_at=req.created_time,
                 channel_source=req.channel_source,
+                add_source=req.add_source,
                 target=target,
                 message=req.message or '',
             )
@@ -408,6 +415,7 @@ async def respond_to_request(
                 db, owner_id=req.from_id, peer_id=req.to_id, peer_type='agent',
                 relation_type=req.relation_type, trust_level=trust,
                 peer_owner_id=req.to_owner_id, channel_source=req.channel_source or 'manual',
+                add_source=req.add_source, request_message=req.message,
             )
             await hasn_contact_requests_dao.mark_accepted(
                 db, request_id, decided_by=hasn_id, resulting_contact_id=forward.id,
@@ -439,11 +447,13 @@ async def respond_to_request(
             db, owner_id=req.from_id, peer_id=req.to_id, peer_type='human',
             relation_type=req.relation_type, trust_level=trust,
             peer_owner_id=req.to_id, channel_source=req.channel_source or 'manual',
+            add_source=req.add_source, request_message=req.message,
         )
         await hasn_contacts_dao.upsert_connected(
             db, owner_id=req.to_id, peer_id=req.from_id, peer_type='human',
             relation_type=req.relation_type, trust_level=trust,
             peer_owner_id=req.from_id, channel_source=req.channel_source or 'manual',
+            request_message=req.message,
         )
         await hasn_contact_requests_dao.mark_accepted(
             db, request_id, decided_by=hasn_id, resulting_contact_id=forward.id,
@@ -551,6 +561,7 @@ async def list_contacts(
                 trust_level=c.trust_level,
                 trust_level_label=TRUST_LEVEL_LABELS.get(c.trust_level, ''),
                 channel_source=c.channel_source,
+                add_source=c.add_source,
                 nickname=c.nickname,
                 bio=getattr(peer_user, 'bio', None),
                 gender=getattr(peer_user, 'gender', None),

@@ -118,6 +118,8 @@ class CRUDHasnContacts(CRUDPlus[HasnContacts]):
         trust_level: int = 2,
         peer_owner_id: str | None = None,
         channel_source: str = 'manual',
+        add_source: str | None = None,
+        request_message: str | None = None,
     ) -> HasnContacts:
         """建立/复活一条 connected 关系边。
 
@@ -137,6 +139,8 @@ class CRUDHasnContacts(CRUDPlus[HasnContacts]):
                 trust_level=trust_level,
                 status='connected',
                 channel_source=channel_source,
+                add_source=add_source,
+                request_message=request_message,
                 connected_at=func.now(),
             )
             .on_conflict_do_update(
@@ -146,6 +150,8 @@ class CRUDHasnContacts(CRUDPlus[HasnContacts]):
                     'trust_level': trust_level,
                     'peer_owner_id': peer_owner_id,
                     'peer_type': peer_type,
+                    'add_source': add_source,
+                    'request_message': request_message,
                     'connected_at': func.now(),
                     'updated_time': func.now(),
                 },
