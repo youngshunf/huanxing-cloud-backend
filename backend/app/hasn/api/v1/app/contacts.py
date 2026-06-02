@@ -516,10 +516,22 @@ async def list_contacts(
             peer_info = await hasn_agents_dao.get_by_hasn_id(db, c.peer_id)
         if not peer_info:
             continue
+        # agent 联系人需带「主人摘要」：列表第二行展示这个分身归属谁（头像 + 昵称）。
+        owner_peer: HasnContactPeerOut | None = None
         if c.peer_type == 'agent':
             peer_owner_id = c.peer_owner_id or getattr(peer_info, 'owner_id', None)
             if peer_owner_id == hasn_id:
                 continue
+            if peer_owner_id:
+                owner_human = await hasn_humans_dao.get_by_hasn_id(db, peer_owner_id)
+                if owner_human:
+                    owner_peer = HasnContactPeerOut(
+                        hasn_id=owner_human.hasn_id,
+                        star_id=owner_human.star_id or '',
+                        name=owner_human.nickname or owner_human.star_id or owner_human.hasn_id,
+                        type='human',
+                        avatar=getattr(owner_human, 'avatar', None),
+                    )
 
         # 阶段二: 查询 human 联系人名下的 Agent 列表（含实时在线状态）。
         # 与详情构造共用 HasnContactsService.fetch_owned_agents_with_status，
@@ -582,6 +594,7 @@ async def list_contacts(
                 request_message=c.request_message,
                 auto_expire=str(c.auto_expire) if c.auto_expire else None,
                 peer_owner_id=c.peer_owner_id,
+                owner=owner_peer,
             )
         )
 
