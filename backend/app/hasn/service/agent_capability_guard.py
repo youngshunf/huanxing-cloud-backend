@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from backend.common.security.agent_jwt import get_agent_scopes_cached
 from backend.common.security.scope_policy import resolve_tool_mode
 
 if TYPE_CHECKING:
@@ -41,6 +40,9 @@ class CapabilityGuard:
         给**手里没有预取策略**的调用面用（AI-Native Runtime 网关、将来 external）。
         快照（key/JWT scopes）仅审计、不作判定依据，故不受词表点/冒号差异影响。
         """
+        # 延迟 import：让消费方对 agent_jwt.get_agent_scopes_cached 的 monkeypatch（源模块）生效。
+        from backend.common.security.agent_jwt import get_agent_scopes_cached
+
         policy = await get_agent_scopes_cached(agent_hasn_id, db)
         return self.resolve_from_policy(
             policy.get('default_mode', 'allow'),
