@@ -71,5 +71,27 @@ class CRUDHasnHumans(CRUDPlus[HasnHumans]):
         stmt = stmt.order_by(HasnHumans.nickname).limit(limit)
         return (await db.execute(stmt)).scalars().all()
 
+    @staticmethod
+    async def search_by_phone(
+        db: AsyncSession,
+        phone: str,
+        exclude_hasn_id: str | None = None,
+    ) -> HasnHumans | None:
+        """按手机号精确匹配 active human（隐私：精确等值，绝不前缀/模糊枚举）。
+
+        手机号存于 admin users 表，HasnHumans.user_id → users.id；命中唯一 active human。
+        """
+        from backend.app.admin.model import User
+
+        stmt = (
+            select(HasnHumans)
+            .join(User, HasnHumans.user_id == User.id)
+            .where(User.phone == phone)
+            .where(HasnHumans.status == 'active')
+        )
+        if exclude_hasn_id:
+            stmt = stmt.where(HasnHumans.hasn_id != exclude_hasn_id)
+        return (await db.execute(stmt)).scalars().first()
+
 
 hasn_humans_dao: CRUDHasnHumans = CRUDHasnHumans(HasnHumans)

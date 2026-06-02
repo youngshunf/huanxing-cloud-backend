@@ -78,6 +78,7 @@ class CRUDHasnContactRequests(CRUDPlus[HasnContactRequests]):
         requested_trust_level: int = 2,
         message: str | None = None,
         channel_source: str = 'manual',
+        add_source: str = 'other',
     ) -> HasnContactRequests:
         """创建一条 pending 好友请求"""
         obj = HasnContactRequests(
@@ -91,6 +92,7 @@ class CRUDHasnContactRequests(CRUDPlus[HasnContactRequests]):
             message=message,
             status='pending',
             channel_source=channel_source,
+            add_source=add_source,
         )
         db.add(obj)
         await db.flush()

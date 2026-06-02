@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # 从 constants 导入六级标签（统一数据源）
 from backend.app.hasn.constants import TRUST_LEVEL_LABELS as _TRUST_LEVEL_LABELS
@@ -24,10 +24,24 @@ class HasnContactPeerOut(BaseModel):
     status: str = 'active'
 
 
+# add_source「添加来源」合法取值（与 hasn_contact_requests.add_source 字典对齐）
+ADD_SOURCE_VALUES = frozenset({
+    'search_star_id', 'search_nickname', 'search_phone',
+    'community', 'agent_discovery', 'qr_code', 'system', 'other',
+})
+
+
 class HasnContactRequestReq(BaseModel):
     """发送好友请求"""
     target_star_id: str = Field(..., description='目标唤星号')
     message: str = Field('', description='请求附言')
+    add_source: str = Field('other', description='添加来源（站内添加方式，取值见 ADD_SOURCE_VALUES）')
+
+    @field_validator('add_source')
+    @classmethod
+    def _normalize_add_source(cls, v: str) -> str:
+        # 非法/空值归一为 other，绝不因来源拼写挡住加好友
+        return v if v in ADD_SOURCE_VALUES else 'other'
 
 
 class HasnContactRespondReq(BaseModel):
@@ -42,6 +56,7 @@ class HasnContactRequestOut(BaseModel):
     created_at: datetime | None = None
     relation_type: str = 'social'
     channel_source: str | None = None
+    add_source: str | None = None
     target: HasnContactPeerOut | None = None
     from_peer: HasnContactPeerOut | None = None
     message: str = ''
@@ -75,6 +90,7 @@ class HasnContactOut(BaseModel):
     tags: list[str] | None = None
     subscription: bool = False
     channel_source: str | None = None
+    add_source: str | None = None
     status: str = 'connected'
     # 阶段二新增
     owned_agents: list[AgentPeerOut] = []       # human 联系人名下 Agent 列表

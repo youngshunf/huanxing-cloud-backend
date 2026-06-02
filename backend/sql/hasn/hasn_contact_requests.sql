@@ -18,6 +18,7 @@ CREATE TABLE "public"."hasn_contact_requests" (
   "decided_at"            timestamptz(6),
   "resulting_contact_id"  bigint,
   "channel_source"        varchar(30),
+  "add_source"            varchar(20),
   "created_time"          timestamptz(6) NOT NULL DEFAULT now(),
   "updated_time"          timestamptz(6)
 );
@@ -46,5 +47,6 @@ COMMENT ON COLUMN "public"."hasn_contact_requests"."decided_by" IS '回应人 ha
 COMMENT ON COLUMN "public"."hasn_contact_requests"."decided_at" IS '回应时间';
 COMMENT ON COLUMN "public"."hasn_contact_requests"."resulting_contact_id" IS '通过后建立的 hasn_contacts 行 ID（审计链）';
 COMMENT ON COLUMN "public"."hasn_contact_requests"."channel_source" IS '来源渠道类型 (wechat:微信:green/feishu:飞书:blue/qq:QQ:cyan/webhook:Webhook:purple/manual:好友请求:gray/system:系统:orange)';
+COMMENT ON COLUMN "public"."hasn_contact_requests"."add_source" IS '添加来源 (search_star_id:搜索唤星号:blue/search_nickname:搜索昵称:cyan/search_phone:手机号搜索:green/community:社区:purple/agent_discovery:Agent发现:orange/qr_code:扫一扫:gold/system:系统:gray/other:其他:default)';
 COMMENT ON COLUMN "public"."hasn_contact_requests"."created_time" IS '创建时间';
 COMMENT ON COLUMN "public"."hasn_contact_requests"."updated_time" IS '更新时间';
