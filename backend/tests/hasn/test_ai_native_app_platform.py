@@ -577,7 +577,12 @@ def test_runtime_tool_call_capability_deny_writes_audit(monkeypatch: pytest.Monk
     import backend.common.security.agent_jwt as agent_jwt_module
 
     async def _deny_knowledge(_agent_hasn_id: str, _db: Any) -> dict[str, Any]:
-        return {'default_mode': 'allow', 'capability_modes': {'knowledge:read': 'deny'}, 'scopes': [], 'post_needs_review': False}
+        return {
+            'default_mode': 'allow',
+            'capability_modes': {'knowledge:read': 'deny'},
+            'scopes': [],
+            'post_needs_review': False,
+        }
 
     monkeypatch.setattr(agent_jwt_module, 'get_agent_scopes_cached', _deny_knowledge)
     monkeypatch.setattr(gateway_module.workbench_domain_service, 'get_active_workspace', fake_active_workspace)
@@ -596,6 +601,113 @@ def test_runtime_tool_call_capability_deny_writes_audit(monkeypatch: pytest.Monk
     audit_row = fake_db.added[-1]
     assert audit_row.decision == 'deny'
     assert audit_row.error_code == '15012'
+
+
+def _knowledge_fake_db() -> _FakeDb:
+    from backend.app.hasn.model import HasnWorkspaceApp
+
+    return _FakeDb(
+        workspace={'kind': 'personal', 'enterprise_id': None},
+        app_row=HasnWorkspaceApp(
+            workspace_kind='personal',
+            user_id=12345,
+            enterprise_id=None,
+            app_id='knowledge',
+            status='active',
+            config={},
+            enabled_by=12345,
+        ),
+    )
+
+
+def test_runtime_tool_call_ask_mode_approved_executes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 三态 ask（owner 设「每次问我」）：runtime 网关也阻塞等批准（与 MCP 一致）。批准→执行 allow。
+    import backend.app.mcp.ask_gate as ask_gate_module
+    import backend.common.security.agent_jwt as agent_jwt_module
+
+    from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
+
+    fake_db = _knowledge_fake_db()
+    app = _make_runtime_test_app(fake_db, monkeypatch)
+
+    async def fake_active_workspace(_db: Any, *, user_id: int) -> dict[str, Any]:
+        return {'kind': 'personal', 'enterprise_id': None}
+
+    async def fake_search(_db: Any, *, user_id: int, query: str, limit: int, dataset_id: str | None) -> dict[str, Any]:
+        return {'items': [], 'total': 0}
+
+    async def _ask(_agent_hasn_id: str, _db: Any) -> dict[str, Any]:
+        return {
+            'default_mode': 'allow',
+            'capability_modes': {'knowledge:read': 'ask'},
+            'scopes': [],
+            'post_needs_review': False,
+        }
+
+    gate_calls: dict[str, Any] = {}
+
+    async def _gate_approved(*, agent_hasn_id: str, owner_hasn_id: str | None, tool_name: str, arguments: dict) -> None:
+        gate_calls['tool_name'] = tool_name  # 批准（不抛）
+
+    monkeypatch.setattr(agent_jwt_module, 'get_agent_scopes_cached', _ask)
+    monkeypatch.setattr(ask_gate_module.ask_approval_gate, 'gate', _gate_approved)
+    monkeypatch.setattr(gateway_module.workbench_domain_service, 'get_active_workspace', fake_active_workspace)
+    monkeypatch.setattr(gateway_module.workbench_domain_service, 'search_current_knowledge', fake_search)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            '/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call',
+            json={'workspace': None, 'input': {'query': '唤星'}, 'trace_id': 'trace-ask-ok'},
+            headers={'Authorization': 'Bearer test-agent'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['decision'] == 'allow'
+    assert gate_calls['tool_name'] == 'hasn.knowledge.search'  # 确实挂起了 ask 闸门
+    assert fake_db.added[-1].decision == 'allow'
+
+
+def test_runtime_tool_call_ask_mode_rejected_writes_15013(monkeypatch: pytest.MonkeyPatch) -> None:
+    # ask 被主人拒绝/超时（gate raise PermissionError）→ 15013 deny + 审计，不触达 handler。
+    import backend.app.mcp.ask_gate as ask_gate_module
+    import backend.common.security.agent_jwt as agent_jwt_module
+
+    from backend.app.hasn.service import ai_native_runtime_gateway as gateway_module
+
+    fake_db = _knowledge_fake_db()
+    app = _make_runtime_test_app(fake_db, monkeypatch)
+
+    async def fake_active_workspace(_db: Any, *, user_id: int) -> dict[str, Any]:
+        return {'kind': 'personal', 'enterprise_id': None}
+
+    async def _ask(_agent_hasn_id: str, _db: Any) -> dict[str, Any]:
+        return {
+            'default_mode': 'allow',
+            'capability_modes': {'knowledge:read': 'ask'},
+            'scopes': [],
+            'post_needs_review': False,
+        }
+
+    async def _gate_rejected(*, agent_hasn_id: str, owner_hasn_id: str | None, tool_name: str, arguments: dict) -> None:
+        raise PermissionError('Owner approval required (ask mode, rejected)')
+
+    monkeypatch.setattr(agent_jwt_module, 'get_agent_scopes_cached', _ask)
+    monkeypatch.setattr(ask_gate_module.ask_approval_gate, 'gate', _gate_rejected)
+    monkeypatch.setattr(gateway_module.workbench_domain_service, 'get_active_workspace', fake_active_workspace)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            '/api/v1/ai-native/runtime/tools/knowledge/knowledge.search/call',
+            json={'workspace': None, 'input': {'query': '唤星'}, 'trace_id': 'trace-ask-no'},
+            headers={'Authorization': 'Bearer test-agent'},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()['data']
+    assert data['decision'] == 'deny'
+    assert data['error'] == {'code': '15013', 'message': 'agent_capability_ask_denied'}
+    assert fake_db.added[-1].error_code == '15013'
 
 
 def test_runtime_tool_call_community_get_post_returns_full_resource(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -696,7 +808,12 @@ def test_runtime_tool_call_community_capability_deny_writes_audit(monkeypatch: p
     import backend.common.security.agent_jwt as agent_jwt_module
 
     async def _deny_community(_agent_hasn_id: str, _db: Any) -> dict[str, Any]:
-        return {'default_mode': 'allow', 'capability_modes': {'community:read': 'deny'}, 'scopes': [], 'post_needs_review': False}
+        return {
+            'default_mode': 'allow',
+            'capability_modes': {'community:read': 'deny'},
+            'scopes': [],
+            'post_needs_review': False,
+        }
 
     monkeypatch.setattr(agent_jwt_module, 'get_agent_scopes_cached', _deny_community)
     monkeypatch.setattr(gateway_module.ai_native_app_registry, 'ensure_builtin_published', fake_manifest)
