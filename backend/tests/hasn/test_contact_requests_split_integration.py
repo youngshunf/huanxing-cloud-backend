@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
+
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -28,7 +29,7 @@ from backend.app.hasn.api.v1.app.contacts import (
 )
 from backend.app.hasn.crud.crud_hasn_contact_requests import hasn_contact_requests_dao
 from backend.app.hasn.crud.crud_hasn_contacts import hasn_contacts_dao
-from backend.app.hasn.model import HasnContactRequests, HasnContacts, HasnHumans
+from backend.app.hasn.model import HasnAgents, HasnContactRequests, HasnContacts, HasnHumans
 from backend.app.hasn.schema.hasn_contacts_business import HasnContactRequestReq, HasnContactRespondReq
 from backend.app.hasn.service.message_router import check_relation_permission
 from backend.database.db import SQLALCHEMY_DATABASE_URL
@@ -273,3 +274,150 @@ async def test_e2e_blocked_sender_cannot_request(pg_session_endpoint) -> None:
     # 被拉黑：断言没有建出 pending 请求（send 返回 fail）
     pending = await hasn_contact_requests_dao.get_active_pending(session, A, B, REL)
     assert pending is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# agent 目标：普通朋友（主人↔主人 trust=2）请求把好友的『分身』加为联系人。
+# 关键回归：主人已是好友不再误报"已是好友"；审批后建 agent 级单向边；列表带 agent target。
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 分身 hasn_id 用真实长度（'a_' + 36 字符 = 38 字符，同列宽哨兵）；唤星号带 '#'.
+B_AGENT = 'a_bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+B_AGENT_STAR = f'{B_STAR}#assistant'
+A_AGENT = 'a_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+A_AGENT_STAR = f'{A_STAR}#assistant'
+
+
+async def _seed_agent(session, hasn_id: str, star_id: str, owner_id: str, display_name: str) -> None:
+    session.add(HasnAgents(
+        hasn_id=hasn_id, star_id=star_id, owner_id=owner_id,
+        display_name=display_name, agent_name='assistant', status='active',
+    ))
+    await session.flush()
+
+
+async def _make_owners_friends(session, trust: int = 2) -> None:
+    """A↔B 主人级 social 双向 connected（agent 审批流程的前置）。"""
+    await hasn_contacts_dao.upsert_connected(
+        session, owner_id=A, peer_id=B, peer_type='human', relation_type=REL, trust_level=trust,
+    )
+    await hasn_contacts_dao.upsert_connected(
+        session, owner_id=B, peer_id=A, peer_type='human', relation_type=REL, trust_level=trust,
+    )
+    await session.flush()
+
+
+async def test_e2e_agent_request_not_blocked_by_owner_friendship(pg_session_endpoint) -> None:
+    """主人已是好友时，请求好友分身不再误报"已是好友"，且落 to_type='agent' / trust=主人值。"""
+    session = pg_session_endpoint
+    await _seed_human(session, A, A_STAR, 'Alice')
+    await _seed_human(session, B, B_STAR, 'Bob')
+    await _seed_agent(session, B_AGENT, B_AGENT_STAR, owner_id=B, display_name='Bob 的分身')
+    await _make_owners_friends(session, trust=2)
+
+    with patch('backend.app.hasn.api.v1.app.contacts.ws_router.push_message_to', new=AsyncMock(return_value=True)):
+        sent = await send_contact_request(
+            obj_in=HasnContactRequestReq(target_star_id=B_AGENT_STAR, message='想和你的分身聊聊'),
+            db=session, auth={'hasn_id': A},
+        )
+    # 不再被"你们已经是好友"挡掉：返回 pending + target 是 agent 本体。
+    assert sent.data['status'] == 'pending'
+    assert sent.data['target']['type'] == 'agent'
+    assert sent.data['target']['hasn_id'] == B_AGENT
+
+    req = await hasn_contact_requests_dao.get(session, sent.data['request_id'])
+    assert req.to_type == 'agent'
+    assert req.to_id == B_AGENT
+    assert req.to_owner_id == B
+    assert req.requested_trust_level == 2  # 与主人↔主人 trust 一致
+
+
+async def test_e2e_agent_request_lists_show_agent_target(pg_session_endpoint) -> None:
+    """审批方收件箱 + 请求方发件箱都把 target 渲染成 type='agent'。"""
+    session = pg_session_endpoint
+    await _seed_human(session, A, A_STAR, 'Alice')
+    await _seed_human(session, B, B_STAR, 'Bob')
+    await _seed_agent(session, B_AGENT, B_AGENT_STAR, owner_id=B, display_name='Bob 的分身')
+    await _make_owners_friends(session, trust=2)
+
+    with patch('backend.app.hasn.api.v1.app.contacts.ws_router.push_message_to', new=AsyncMock(return_value=True)):
+        sent = await send_contact_request(
+            obj_in=HasnContactRequestReq(target_star_id=B_AGENT_STAR, message='hi'),
+            db=session, auth={'hasn_id': A},
+        )
+        rid = sent.data['request_id']
+        received = await list_pending_requests(db=session, auth={'hasn_id': B}, direction='received')
+        sent_list = await list_pending_requests(db=session, auth={'hasn_id': A}, direction='sent')
+
+    rec = next(it for it in received.data if it['request_id'] == rid)
+    assert rec['from_peer']['hasn_id'] == A
+    assert rec['target']['type'] == 'agent' and rec['target']['hasn_id'] == B_AGENT
+    snt = next(it for it in sent_list.data if it['request_id'] == rid)
+    assert snt['target']['type'] == 'agent' and snt['target']['hasn_id'] == B_AGENT
+
+
+async def test_e2e_agent_accept_builds_forward_agent_edge(pg_session_endpoint) -> None:
+    """B accept → 仅建『A→分身』单向 agent 边（peer_type=agent, trust=2）；无反向 agent 边。"""
+    session = pg_session_endpoint
+    await _seed_human(session, A, A_STAR, 'Alice')
+    await _seed_human(session, B, B_STAR, 'Bob')
+    await _seed_agent(session, B_AGENT, B_AGENT_STAR, owner_id=B, display_name='Bob 的分身')
+    await _make_owners_friends(session, trust=2)
+
+    with patch('backend.app.hasn.api.v1.app.contacts.ws_router.push_message_to', new=AsyncMock(return_value=True)):
+        sent = await send_contact_request(
+            obj_in=HasnContactRequestReq(target_star_id=B_AGENT_STAR, message='hi'),
+            db=session, auth={'hasn_id': A},
+        )
+        resp = await respond_to_request(
+            request_id=sent.data['request_id'], obj_in=HasnContactRespondReq(action='accept'),
+            db=session, auth={'hasn_id': B},
+        )
+    assert resp.data['status'] == 'connected'
+
+    fwd = await hasn_contacts_dao.get_relation(session, A, B_AGENT, REL)
+    assert fwd is not None
+    assert fwd.status == 'connected' and fwd.peer_type == 'agent' and fwd.trust_level == 2
+    assert fwd.peer_owner_id == B
+    # 不建反向 agent 边（分身→A）：分身回复依赖主人↔主人 trust。
+    assert await hasn_contacts_dao.get_relation(session, B_AGENT, A, REL) is None
+
+    req = await hasn_contact_requests_dao.get(session, sent.data['request_id'])
+    assert req.status == 'accepted' and req.resulting_contact_id == fwd.id
+
+
+async def test_e2e_agent_request_idempotent(pg_session_endpoint) -> None:
+    """重复请求同一好友分身：第二次幂等返回同一 pending（不报"已有待处理"、不新增行）。"""
+    session = pg_session_endpoint
+    await _seed_human(session, A, A_STAR, 'Alice')
+    await _seed_human(session, B, B_STAR, 'Bob')
+    await _seed_agent(session, B_AGENT, B_AGENT_STAR, owner_id=B, display_name='Bob 的分身')
+    await _make_owners_friends(session, trust=2)
+
+    with patch('backend.app.hasn.api.v1.app.contacts.ws_router.push_message_to', new=AsyncMock(return_value=True)):
+        first = await send_contact_request(
+            obj_in=HasnContactRequestReq(target_star_id=B_AGENT_STAR, message='一次'),
+            db=session, auth={'hasn_id': A},
+        )
+        second = await send_contact_request(
+            obj_in=HasnContactRequestReq(target_star_id=B_AGENT_STAR, message='又一次'),
+            db=session, auth={'hasn_id': A},
+        )
+    assert second.data['status'] == 'pending'
+    assert second.data['request_id'] == first.data['request_id']  # 幂等：同一行
+    assert await _count_pending(session, A, B_AGENT) == 1
+
+
+async def test_e2e_cannot_request_own_agent(pg_session_endpoint) -> None:
+    """不能把自己的分身加为联系人（send 返回 fail，不建 pending）。"""
+    session = pg_session_endpoint
+    await _seed_human(session, A, A_STAR, 'Alice')
+    await _seed_agent(session, A_AGENT, A_AGENT_STAR, owner_id=A, display_name='Alice 的分身')
+
+    with patch('backend.app.hasn.api.v1.app.contacts.ws_router.push_message_to', new=AsyncMock(return_value=True)):
+        result = await send_contact_request(
+            obj_in=HasnContactRequestReq(target_star_id=A_AGENT_STAR, message='hi'),
+            db=session, auth={'hasn_id': A},
+        )
+    assert result.code == 400
+    assert await _count_pending(session, A, A_AGENT) == 0

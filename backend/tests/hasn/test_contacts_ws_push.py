@@ -25,7 +25,6 @@ from backend.app.hasn.schema.hasn_contacts_business import (
     HasnContactRespondReq,
 )
 
-
 SENDER = "h_aaaaaaaaaaaaaaaaaa"
 RECEIVER = "h_bbbbbbbbbbbbbbbbbb"
 RECEIVER_AGENT = "a_bbbbbbbbbbbbbbbbbb"
@@ -48,13 +47,17 @@ def _agent(hasn_id: str, star_id: str, name: str, owner_id: str) -> SimpleNamesp
     )
 
 
-def _request(req_id: int, from_id: str, to_id: str, message: str = '') -> SimpleNamespace:
+def _request(
+    req_id: int, from_id: str, to_id: str, message: str = '',
+    *, to_type: str = 'human', to_owner_id: str | None = None,
+) -> SimpleNamespace:
     """hasn_contact_requests 行。"""
     return SimpleNamespace(
         id=req_id,
         from_id=from_id,
         to_id=to_id,
-        to_owner_id=to_id,
+        to_type=to_type,
+        to_owner_id=to_owner_id or to_id,
         relation_type='social',
         requested_trust_level=2,
         status='pending',
@@ -123,10 +126,9 @@ async def test_send_request_pushes_request_received_to_target() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_agent_request_resolves_to_owner_and_pushes() -> None:
-    """A 请求添加 B 的 Agent → 解析成其主人 B（human）, 推给 B, 目标恒 human."""
+async def test_send_agent_request_keeps_agent_target_and_pushes_to_owner() -> None:
+    """A 请求添加 B 的『分身』→ 目标保持分身本体（to_type=agent），审批人=主人 B，推给 B."""
     receiver_agent = _agent(RECEIVER_AGENT, RECEIVER_AGENT_STAR, 'Bob Helper', RECEIVER)
-    receiver = _human(RECEIVER, RECEIVER_STAR, 'Bob')
     sender = _human(SENDER, SENDER_STAR, 'Alice')
     push = AsyncMock(return_value=True)
 
@@ -134,6 +136,7 @@ async def test_send_agent_request_resolves_to_owner_and_pushes() -> None:
         'backend.app.hasn.api.v1.app.contacts._resolve_star_id',
         new=AsyncMock(return_value=(receiver_agent, 'agent')),
     ), patch(
+        # 无既有 agent 边 / 未被主人拉黑 / 主人 trust 缺省 → 落 trust=2
         'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.get_relation',
         new=AsyncMock(return_value=None),
     ), patch(
@@ -141,10 +144,12 @@ async def test_send_agent_request_resolves_to_owner_and_pushes() -> None:
         new=AsyncMock(return_value=None),
     ), patch(
         'backend.app.hasn.api.v1.app.contacts.hasn_contact_requests_dao.create_request',
-        new=AsyncMock(return_value=_request(43, SENDER, RECEIVER, 'hi agent')),
+        new=AsyncMock(return_value=_request(
+            43, SENDER, RECEIVER_AGENT, 'hi agent', to_type='agent', to_owner_id=RECEIVER,
+        )),
     ) as create_request, patch(
         'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
-        new=_humans_lookup(sender, receiver),
+        new=_humans_lookup(sender),
     ), patch(
         'backend.app.hasn.api.v1.app.contacts.ws_router.push_message_to',
         new=push,
@@ -157,19 +162,21 @@ async def test_send_agent_request_resolves_to_owner_and_pushes() -> None:
         )
 
     create_request.assert_awaited_once()
-    # 目标解析成主人 B（human），而非 Agent ID
-    assert create_request.await_args.kwargs['to_id'] == RECEIVER
+    # 目标保持分身本体；审批人=主人 B；信任与主人一致（缺省 2）。
+    assert create_request.await_args.kwargs['to_id'] == RECEIVER_AGENT
     assert create_request.await_args.kwargs['to_owner_id'] == RECEIVER
+    assert create_request.await_args.kwargs['to_type'] == 'agent'
+    assert create_request.await_args.kwargs['requested_trust_level'] == 2
 
     push.assert_awaited_once()
     target, payload = push.await_args.args
-    assert target == RECEIVER
+    assert target == RECEIVER  # 推给分身主人（审批人）
     assert payload['method'] == 'hasn.contact.request_received'
     assert payload['params']['owner_id'] == RECEIVER
     assert payload['params']['request_id'] == 43
     assert payload['params']['from_peer']['hasn_id'] == SENDER
-    assert payload['params']['target']['hasn_id'] == RECEIVER
-    assert payload['params']['target']['type'] == 'human'
+    assert payload['params']['target']['hasn_id'] == RECEIVER_AGENT
+    assert payload['params']['target']['type'] == 'agent'
 
 
 @pytest.mark.asyncio
