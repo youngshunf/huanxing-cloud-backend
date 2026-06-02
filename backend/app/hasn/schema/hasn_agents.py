@@ -114,6 +114,7 @@ class CloudCreateAgentRequest(SchemaBase):
     soul_md: str | None = Field(None, description='SOUL.md 内容')
     agents_md: str | None = Field(None, description='AGENTS.md 内容')
     user_md: str | None = Field(None, description='USER.md 内容')
+    memory_md: str | None = Field(None, description='MEMORY.md 内容（自我演化记忆）；空则取模板种子')
     runtime_type: str | None = Field(None, description='期望本地绑定 Runtime 类型')
     node_id: str | None = Field(None, description='创建发起节点 ID')
     agent_type: str = Field(default='desktop', description='Agent 类型')

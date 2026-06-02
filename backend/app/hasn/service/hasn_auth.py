@@ -417,6 +417,50 @@ async def register_hasn_identity(
     }
 
 
+def _format_created_at(value: Any) -> str:
+    """渲染 {{createdAt}} 用的创建时间串（YYYY-MM-DD）。None → 当前时间。"""
+    dt = value or timezone.now()
+    try:
+        return dt.strftime('%Y-%m-%d')
+    except Exception:  # noqa: BLE001 — 任意时间类型兜底成字符串
+        return str(dt)
+
+
+def _render_profile_vars(
+    text: str | None,
+    *,
+    owner_nickname: str,
+    owner_id: str,
+    display_name: str,
+    agent_name: str,
+    star_id: str,
+    agent_id: str,
+    created_at: str,
+) -> str | None:
+    """建档即替换 Agent persona/记忆模板里的占位符，使落库内容即完整权威 profile。
+
+    Agent 一旦创建，profile 即权威源——替换只在此处（写 hasn_agents 行前）做一次，
+    serve/runtime 端不再替换，owner 记忆合并直接写完整正文，绝不残留 {{}}。
+    占位符集合与 huanxing-hub/templates/README.md、hasn-node render_agent_template 对齐。
+    None / 无占位符则原样返回。
+    """
+    if not text:
+        return text
+    replacements = {
+        '{{owner_nickname}}': owner_nickname,
+        '{{owner_id}}': owner_id,
+        '{{display_name}}': display_name,
+        '{{agent_name}}': agent_name,
+        '{{star_id}}': star_id,
+        '{{agent_id}}': agent_id,
+        '{{createdAt}}': created_at,
+        '{{created_at}}': created_at,
+    }
+    for token, value in replacements.items():
+        text = text.replace(token, value or '')
+    return text
+
+
 async def register_hasn_agent(
     db: AsyncSession,
     owner_hasn_id: str,
@@ -458,6 +502,23 @@ async def register_hasn_agent(
     if not owner:
         raise HTTPException(status_code=404, detail='owner_hasn_id 对应的 Human 不存在')
 
+    # 建档即替换占位符的上下文（owner 昵称缺省回退 owner_id）。
+    owner_nickname = getattr(owner, 'nickname', None) or owner_hasn_id
+
+    def _render_for(
+        text: str | None, *, agent_display: str, a_name: str, a_star: str, a_id: str, a_created: str
+    ) -> str | None:
+        return _render_profile_vars(
+            text,
+            owner_nickname=owner_nickname,
+            owner_id=owner_hasn_id,
+            display_name=agent_display,
+            agent_name=a_name,
+            star_id=a_star,
+            agent_id=a_id,
+            created_at=a_created,
+        )
+
     # 幂等检查
     existing_result = await db.execute(
         select(HasnAgents).where(
@@ -467,6 +528,26 @@ async def register_hasn_agent(
     )
     existing_agent = existing_result.scalar_one_or_none()
     if existing_agent:
+        # 建档即替换（幂等回填同样要完整）：用现存 star_id/hasn_id/创建时间渲染占位符，
+        # 再参与下面的「变了才更新」比较，避免把带 {{}} 的模板原文回填进权威 profile。
+        _eff_display = display_name or existing_agent.display_name
+        _created = _format_created_at(getattr(existing_agent, 'created_time', None))
+        soul_md = _render_for(
+            soul_md, agent_display=_eff_display, a_name=existing_agent.agent_name,
+            a_star=existing_agent.star_id, a_id=existing_agent.hasn_id, a_created=_created,
+        )
+        agents_md = _render_for(
+            agents_md, agent_display=_eff_display, a_name=existing_agent.agent_name,
+            a_star=existing_agent.star_id, a_id=existing_agent.hasn_id, a_created=_created,
+        )
+        user_md = _render_for(
+            user_md, agent_display=_eff_display, a_name=existing_agent.agent_name,
+            a_star=existing_agent.star_id, a_id=existing_agent.hasn_id, a_created=_created,
+        )
+        memory_md = _render_for(
+            memory_md, agent_display=_eff_display, a_name=existing_agent.agent_name,
+            a_star=existing_agent.star_id, a_id=existing_agent.hasn_id, a_created=_created,
+        )
         # 幂等更新：如果属性变了，更新记录
         updated = False
         if node_id and existing_agent.node_id != node_id:
@@ -509,6 +590,25 @@ async def register_hasn_agent(
     agent_hasn_id = f'a_{uuid.uuid4()}'
     agent_star_id = f'{owner.star_id}#{agent_name}'
     agent_key, agent_key_hash = _generate_agent_key()
+
+    # 建档即替换：star_id/hasn_id 已分配，用真实值渲染 persona/记忆占位符再落库（落库即权威）。
+    _created = _format_created_at(None)
+    soul_md = _render_for(
+        soul_md, agent_display=display_name, a_name=agent_name,
+        a_star=agent_star_id, a_id=agent_hasn_id, a_created=_created,
+    )
+    agents_md = _render_for(
+        agents_md, agent_display=display_name, a_name=agent_name,
+        a_star=agent_star_id, a_id=agent_hasn_id, a_created=_created,
+    )
+    user_md = _render_for(
+        user_md, agent_display=display_name, a_name=agent_name,
+        a_star=agent_star_id, a_id=agent_hasn_id, a_created=_created,
+    )
+    memory_md = _render_for(
+        memory_md, agent_display=display_name, a_name=agent_name,
+        a_star=agent_star_id, a_id=agent_hasn_id, a_created=_created,
+    )
 
     agent = HasnAgents(
         hasn_id=agent_hasn_id,

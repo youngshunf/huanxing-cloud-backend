@@ -89,6 +89,11 @@ class MarketplaceTemplate(Base):
         default=None,
         comment='模板 USER.md 内容（主人信息种子，创建时物化进 hasn_agents.user_md）',
     )
+    memory_md: Mapped[str | None] = mapped_column(
+        UniversalText,
+        default=None,
+        comment='模板 MEMORY.md 内容（Agent 长期/自我演化记忆种子，§ 记录格式，创建时种子进 hasn_agents.memory_md）',
+    )
     sop_dependencies: Mapped[str | None] = mapped_column(
         UniversalText,
         default=None,

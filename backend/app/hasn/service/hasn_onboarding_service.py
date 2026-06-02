@@ -290,6 +290,7 @@ class SqlAlchemyOnboardingGateway:
         soul_md: str | None = None
         agents_md: str | None = None
         user_md: str | None = None
+        memory_md: str | None = None
         skills: dict[str, Any] | None = None
         if tpl is not None:
             template_id = DEFAULT_AGENT_TEMPLATE_ID
@@ -298,6 +299,7 @@ class SqlAlchemyOnboardingGateway:
             soul_md = tpl.soul_md
             agents_md = tpl.agents_md
             user_md = tpl.user_md
+            memory_md = getattr(tpl, 'memory_md', None)
             enabled_skills = [s.strip() for s in (tpl.skill_dependencies or '').split(',') if s.strip()]
             if enabled_skills:
                 skills = {'enabled': enabled_skills}
@@ -327,6 +329,7 @@ class SqlAlchemyOnboardingGateway:
             soul_md=soul_md,
             agents_md=agents_md,
             user_md=user_md,
+            memory_md=memory_md,
         )
         return result['agent'], not result.get('already_exists', False)
 

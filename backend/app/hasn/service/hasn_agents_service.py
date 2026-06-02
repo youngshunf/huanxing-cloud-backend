@@ -110,16 +110,53 @@ class SqlAlchemyAgentProfileGateway:
             default_soul_md=tpl.soul_md,
             default_agents_md=tpl.agents_md,
             default_user_md=tpl.user_md,
+            default_memory_md=getattr(tpl, 'memory_md', None),
             default_runtime_type='hermes',
         )
+
+    async def _ensure_unique_agent_name(self, db: AsyncSession, *, owner_id: str, base_slug: str) -> str:
+        """同 owner 下保证 agent_name 唯一：base 被占用则依次试 base-2 / base-3 …。
+
+        令「同模板重复创建」产出独立 Agent——register_hasn_agent 按 (owner_id, agent_name)
+        查重幂等，slug 不唯一会把第二次创建当成更新覆盖上一个 Agent（star_id/profile 目录复用）。
+        agent_name 列上限 30，故 root 截断到 22 留出后缀空间。
+        """
+        import sqlalchemy as sa
+
+        async def _taken(name: str) -> bool:
+            row = (
+                await db.execute(
+                    sa.select(HasnAgents.id)
+                    .where(HasnAgents.owner_id == owner_id, HasnAgents.agent_name == name)
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            return row is not None
+
+        if not await _taken(base_slug):
+            return base_slug
+        root = base_slug[:22].rstrip('-_') or 'agent'
+        for suffix in range(2, 1000):
+            candidate = f'{root}-{suffix}'
+            if not await _taken(candidate):
+                return candidate
+        import uuid
+
+        return f'{root}-{uuid.uuid4().hex[:6]}'
 
     async def create_agent(self, db: AsyncSession, payload: dict[str, Any]) -> tuple[Any, str | None, bool]:
         from backend.app.hasn.service.hasn_auth import register_hasn_agent
 
+        # 同模板可重复创建：先把 agent_name 在该 owner 下唯一化（assistant→assistant-2…），
+        # 避免撞 register_hasn_agent 的 (owner_id, agent_name) 幂等分支而覆盖上一个 Agent。
+        agent_name = await self._ensure_unique_agent_name(
+            db, owner_id=payload['owner_id'], base_slug=payload['agent_name']
+        )
+
         result = await register_hasn_agent(
             db=db,
             owner_hasn_id=payload['owner_id'],
-            agent_name=payload['agent_name'],
+            agent_name=agent_name,
             display_name=payload['display_name'],
             agent_type=payload.get('agent_type') or 'desktop',
             node_id=payload.get('node_id'),
@@ -138,7 +175,9 @@ class SqlAlchemyAgentProfileGateway:
         )
         agent = result['agent']
         # 只用非 None 值覆盖，避免幂等命中已有 Agent 时把已存的 profile 字段清空。
-        for attr in ('template_id', 'template_version', 'skills', 'soul_md', 'agents_md', 'user_md', 'memory_md'):
+        # 注意：soul/agents/user/memory_md 不在此列——它们由 register_hasn_agent 建档即渲染占位符
+        # 后写入（权威完整），此处再用 payload 的模板原文覆盖会把 {{}} 灌回去，破坏权威 profile。
+        for attr in ('template_id', 'template_version', 'skills'):
             value = payload.get(attr)
             if value is not None and hasattr(agent, attr):
                 setattr(agent, attr, value)
@@ -573,8 +612,9 @@ def _merge_agent_create_payload(request: CloudCreateAgentRequest, template: Any 
             request.agents_md if request.agents_md is not None else getattr(template, 'default_agents_md', None)
         ),
         'user_md': request.user_md if request.user_md is not None else getattr(template, 'default_user_md', None),
-        # MEMORY.md 不由模板种子：Agent 自我演化时回写，创建时为空。
-        'memory_md': None,
+        # MEMORY.md 由模板种子（§ 记录格式最小起点），Agent 运行后用记忆工具自演化回写；
+        # provision 首次缺省时落盘、已有非空不覆盖（见 hermes-runtime provisioning）。
+        'memory_md': request.memory_md if request.memory_md is not None else getattr(template, 'default_memory_md', None),
         'runtime_type': request.runtime_type or getattr(template, 'default_runtime_type', None) or 'hermes',
         'node_id': request.node_id,
         'agent_type': request.agent_type,

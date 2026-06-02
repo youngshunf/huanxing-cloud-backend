@@ -158,6 +158,11 @@ class GitHubAppSyncService:
         user_md = self._read_optional_text(template_dir / 'USER.md') or self._read_optional_text(
             Path(self.local_path) / 'templates' / 'USER.md'
         )
+        # MEMORY.md 是 agent 维度（Agent 长期/自我演化记忆种子，§ 记录格式），同样全模板共用
+        # templates/MEMORY.md；per-template 自带则覆盖。provision 首次缺省时种子、已有非空不覆盖。
+        memory_md = self._read_optional_text(template_dir / 'MEMORY.md') or self._read_optional_text(
+            Path(self.local_path) / 'templates' / 'MEMORY.md'
+        )
 
         return {
             'template_id': template_id,
@@ -189,6 +194,7 @@ class GitHubAppSyncService:
             'soul_md': soul_md,
             'agents_md': agents_md,
             'user_md': user_md,
+            'memory_md': memory_md,
             'repo_path': f'templates/{category}/{slug}',
             'git_commit_hash': self.repo.head.commit.hexsha if self.repo else None,
             'synced_at': timezone.now(),

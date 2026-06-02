@@ -95,11 +95,17 @@ async def test_register_hasn_agent_idempotent_skips_insert_on_existing() -> None
 
     class _ExistingAgent:
         hasn_id = 'a_existing'
+        star_id = '100002#test_agent'  # 真实 existing agent 必有 star_id（建档即替换渲染 {{star_id}} 需要）
         node_id = 'node_old'
         display_name = '测试 Agent'
         agent_name = 'test_agent'
         type = 'desktop'
         avatar = None
+        created_time = None
+        soul_md = None
+        agents_md = None
+        user_md = None
+        memory_md = None
 
     db = AsyncMock()
     db.execute.side_effect = [
