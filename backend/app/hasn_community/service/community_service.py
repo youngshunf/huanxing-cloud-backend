@@ -648,9 +648,26 @@ class CommunityService:
         :param limit: 每页条数
         :return: 草稿列表
         """
-        # 查询当前用户的草稿和待审核帖子
+        # 草稿条目必须与信息流帖子同形（嵌套 author + content_type='post' + 计数），
+        # WebUI 草稿 tab 复用同一张 PostCard 渲染——否则缺 author 会整页白屏崩溃。
+        # 因此与 get_feed 一样 JOIN 作者/主人表回填展示名与头像。
+        AuthorHuman = aliased(HasnHumans)
+        AuthorAgent = aliased(HasnAgents)
+        OwnerHuman = aliased(HasnHumans)
+
         stmt = (
-            select(HasnPosts)
+            select(
+                HasnPosts,
+                AuthorHuman.nickname.label('human_nickname'),
+                AuthorHuman.avatar.label('human_avatar'),
+                AuthorAgent.display_name.label('agent_display_name'),
+                AuthorAgent.avatar.label('agent_avatar'),
+                OwnerHuman.hasn_id.label('owner_hasn_id'),
+                OwnerHuman.nickname.label('owner_nickname'),
+            )
+            .outerjoin(AuthorHuman, (HasnPosts.author_type == 'human') & (HasnPosts.author_hasn_id == AuthorHuman.hasn_id))
+            .outerjoin(AuthorAgent, (HasnPosts.author_type == 'agent') & (HasnPosts.author_hasn_id == AuthorAgent.hasn_id))
+            .outerjoin(OwnerHuman, (HasnPosts.author_type == 'agent') & (AuthorAgent.owner_id == OwnerHuman.hasn_id))
             .where(
                 HasnPosts.owner_hasn_id == hasn_id,
                 HasnPosts.status.in_(['draft', 'pending_review']),
@@ -660,23 +677,60 @@ class CommunityService:
         )
 
         result = await db.execute(stmt)
-        posts = result.scalars().all()
+        rows = result.all()
 
         items = []
-        for post in posts:
+        for row in rows:
+            post = row.HasnPosts
+
+            author_info = {
+                'hasn_id': post.author_hasn_id,
+                'type': post.author_type,
+            }
+            if post.author_type == 'human':
+                author_info['display_name'] = row.human_nickname or post.author_hasn_id
+                author_info['avatar'] = row.human_avatar
+            else:  # agent
+                author_info['display_name'] = row.agent_display_name or post.author_hasn_id
+                author_info['avatar'] = row.agent_avatar
+                if row.owner_hasn_id:
+                    author_info['owner'] = {
+                        'hasn_id': row.owner_hasn_id,
+                        'display_name': row.owner_nickname or row.owner_hasn_id,
+                    }
+
+            # 草稿未发布：时间退回 created_time 让卡片有时间展示；无点赞/收藏交互。
+            draft_time = (
+                post.published_time.isoformat()
+                if post.published_time
+                else (post.created_time.isoformat() if post.created_time else None)
+            )
+
             items.append({
+                'content_type': 'post',
                 'post_id': post.post_id,
-                'author_type': post.author_type,
-                'author_hasn_id': post.author_hasn_id,
+                'status': post.status,
+                'origin_workspace': {
+                    'kind': post.origin_workspace_kind,
+                    'id': post.origin_workspace_id,
+                },
+                'author': author_info,
                 'content': post.content,
                 'tags': post.tags or [],
-                'status': post.status,
+                'reference_cards': CommunityService._present_reference_cards(
+                    post.reference_cards, hasn_id
+                ),
+                'like_count': post.like_count or 0,
+                'comment_count': post.comment_count or 0,
+                'published_time': draft_time,
                 'created_time': post.created_time.isoformat() if post.created_time else None,
+                'is_liked': False,
+                'is_collected': False,
             })
 
         return {
             'items': items,
-            'next_cursor': posts[-1].post_id if posts else None,
+            'next_cursor': rows[-1].HasnPosts.post_id if rows else None,
         }
 
     @staticmethod
