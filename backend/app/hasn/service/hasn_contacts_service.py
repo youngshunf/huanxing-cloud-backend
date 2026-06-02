@@ -97,59 +97,82 @@ class HasnContactsService:
 
         result["peer"] = peer_info
 
-        owned_agents = []
+        owned_agents: list[dict[str, Any]] = []
         if contact.peer_type == "human":
-            latest_report_subq = (
-                select(
-                    HasnAgentRuntimeReports.agent_hasn_id,
-                    HasnAgentRuntimeReports.runtime_status,
-                    HasnAgentRuntimeReports.last_seen_at,
-                    func.row_number()
-                    .over(
-                        partition_by=HasnAgentRuntimeReports.agent_hasn_id,
-                        order_by=HasnAgentRuntimeReports.reported_at.desc(),
-                    )
-                    .label("rn"),
-                )
-                .subquery()
+            owned_agents = await HasnContactsService.fetch_owned_agents_with_status(
+                db, contact.peer_id
             )
-            agents_result = await db.execute(
-                select(
-                    HasnAgents,
-                    latest_report_subq.c.runtime_status,
-                    latest_report_subq.c.last_seen_at,
-                )
-                .outerjoin(
-                    latest_report_subq,
-                    (latest_report_subq.c.agent_hasn_id == HasnAgents.hasn_id)
-                    & (latest_report_subq.c.rn == 1),
-                )
-                .where(
-                    HasnAgents.owner_id == contact.peer_id,
-                    HasnAgents.status == "active",
-                    HasnAgents.social_enabled.is_(True),
-                    HasnAgents.deleted_at.is_(None),
-                )
-            )
-            for agent, runtime_status, last_seen_at in agents_result.all():
-                owned_agents.append(
-                    {
-                        "hasn_id": agent.hasn_id,
-                        "star_id": agent.star_id,
-                        "name": agent.display_name,
-                        "agent_name": agent.agent_name,
-                        "avatar": agent.avatar,
-                        "type": agent.type,
-                        "role": agent.role,
-                        "bio": agent.bio,
-                        "online_status": runtime_status or "unknown",
-                        "last_seen_at": last_seen_at.isoformat() if last_seen_at else None,
-                    }
-                )
 
         result["owned_agents"] = owned_agents
 
         return result
+
+    @staticmethod
+    async def fetch_owned_agents_with_status(
+        db: AsyncSession, peer_id: str
+    ) -> list[dict[str, Any]]:
+        """
+        查询某个 human 名下、对社交可见的 active Agent 及其实时在线状态。
+
+        在线状态取自 HasnAgentRuntimeReports 每个 agent 最新一条上报
+        （runtime_status / last_seen_at）；无上报记录则 online_status = "unknown"。
+        联系人**列表**端点与**详情**构造共用本方法，保证「TA 的 AI 分身」在
+        列表与详情看到的 Agent 集合与在线状态一致（避免 split-brain，这正是此前
+        列表路径漏填 online_status 导致头像无在线状态点的根因）。
+
+        :param db: 数据库会话
+        :param peer_id: 联系人（human）的 hasn_id
+        :return: owned_agents 字典列表
+        """
+        latest_report_subq = (
+            select(
+                HasnAgentRuntimeReports.agent_hasn_id,
+                HasnAgentRuntimeReports.runtime_status,
+                HasnAgentRuntimeReports.last_seen_at,
+                func.row_number()
+                .over(
+                    partition_by=HasnAgentRuntimeReports.agent_hasn_id,
+                    order_by=HasnAgentRuntimeReports.reported_at.desc(),
+                )
+                .label("rn"),
+            )
+            .subquery()
+        )
+        agents_result = await db.execute(
+            select(
+                HasnAgents,
+                latest_report_subq.c.runtime_status,
+                latest_report_subq.c.last_seen_at,
+            )
+            .outerjoin(
+                latest_report_subq,
+                (latest_report_subq.c.agent_hasn_id == HasnAgents.hasn_id)
+                & (latest_report_subq.c.rn == 1),
+            )
+            .where(
+                HasnAgents.owner_id == peer_id,
+                HasnAgents.status == "active",
+                HasnAgents.social_enabled.is_(True),
+                HasnAgents.deleted_at.is_(None),
+            )
+        )
+        owned_agents: list[dict[str, Any]] = []
+        for agent, runtime_status, last_seen_at in agents_result.all():
+            owned_agents.append(
+                {
+                    "hasn_id": agent.hasn_id,
+                    "star_id": agent.star_id,
+                    "name": agent.display_name,
+                    "agent_name": agent.agent_name,
+                    "avatar": agent.avatar,
+                    "type": agent.type,
+                    "role": agent.role,
+                    "bio": agent.bio,
+                    "online_status": runtime_status or "unknown",
+                    "last_seen_at": last_seen_at.isoformat() if last_seen_at else None,
+                }
+            )
+        return owned_agents
 
     @staticmethod
     def _get_trust_level_label(trust_level: int) -> str:

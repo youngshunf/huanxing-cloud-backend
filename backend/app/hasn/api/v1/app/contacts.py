@@ -33,6 +33,7 @@ from backend.app.hasn.schema.hasn_contacts_business import (
     HasnTrustLevelReq,
 )
 from backend.app.hasn.service.hasn_auth import hasn_auth
+from backend.app.hasn.service.hasn_contacts_service import HasnContactsService
 from backend.app.hasn.service.ws_router import ws_router
 from backend.common.response.response_code import CustomResponse
 from backend.common.response.response_schema import ResponseModel, response_base
@@ -520,29 +521,28 @@ async def list_contacts(
             if peer_owner_id == hasn_id:
                 continue
 
-        # 阶段二: 查询 human 联系人名下的 Agent 列表
+        # 阶段二: 查询 human 联系人名下的 Agent 列表（含实时在线状态）。
+        # 与详情构造共用 HasnContactsService.fetch_owned_agents_with_status，
+        # 列表/详情同一份 owned_agents 定义 + 同源 online_status（修复列表路径
+        # 此前漏 JOIN 运行时上报、头像无在线状态点的根因）。
         owned_agents: list[AgentPeerOut] = []
         if c.peer_type == 'human':
-            from sqlalchemy import select
-
-            from backend.app.hasn.model.hasn_agents import HasnAgents
-
-            agent_result = await db.execute(
-                select(HasnAgents).where(
-                    HasnAgents.owner_id == c.peer_id,
-                    HasnAgents.status == 'active',
+            agent_dicts = await HasnContactsService.fetch_owned_agents_with_status(db, c.peer_id)
+            owned_agents.extend(
+                AgentPeerOut(
+                    hasn_id=ag['hasn_id'],
+                    star_id=ag['star_id'],
+                    name=ag['name'],
+                    agent_name=ag['agent_name'],
+                    avatar=ag.get('avatar'),
+                    type=ag.get('type') or 'desktop',
+                    role=ag.get('role') or 'specialist',
+                    bio=ag.get('bio'),
+                    online_status=ag.get('online_status') or 'unknown',
+                    last_seen_at=ag.get('last_seen_at'),
                 )
+                for ag in agent_dicts
             )
-            owned_agents.extend(AgentPeerOut(
-                        hasn_id=a.hasn_id,
-                        star_id=a.star_id,
-                        name=a.display_name,
-                        agent_name=a.agent_name,
-                        avatar=getattr(a, 'avatar', None),
-                        type=a.type or 'desktop',
-                        role=a.role or 'specialist',
-                        bio=getattr(a, 'bio', None),
-                    ) for a in agent_result.scalars().all())
 
         # HasnHumans 使用 nickname，HasnAgents 使用 display_name
         peer_name = peer_info.nickname if c.peer_type == 'human' else peer_info.display_name
