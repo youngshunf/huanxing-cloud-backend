@@ -92,7 +92,7 @@ class HasnAgents(Base):
         comment='创建来源 (guardian:Guardian注册:blue/client:客户端创建:green/ws:WS实时注册:purple)',
     )
     social_enabled: Mapped[bool] = mapped_column(
-        sa.Boolean, default=False, comment='是否对外开启社交可见 (true:社交可见/false:仅自用)'
+        sa.Boolean, default=True, comment='是否对外开启社交可见 (true:社交可见/false:仅自用)，默认开启，用户可手动关闭'
     )
     binding_node_id: Mapped[str | None] = mapped_column(sa.String(64), default=None, comment='Agent 当前绑定的 node ID')
     binding_status: Mapped[str] = mapped_column(
