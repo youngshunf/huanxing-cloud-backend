@@ -17,12 +17,9 @@ import json
 import logging
 import uuid
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from backend.database.redis import redis_client
-
-if TYPE_CHECKING:
-    from backend.app.mcp.auth import AgentContext
 
 logger = logging.getLogger(__name__)
 
@@ -49,33 +46,43 @@ class AskApprovalGate:
         self._poll_interval = poll_interval
         self._pending_ttl = pending_ttl
 
-    async def gate(self, agent_context: AgentContext, *, tool_name: str, arguments: dict[str, Any]) -> None:
-        """ask 态主路径：挂起→等待→放行/拒绝。approved 返回（执行继续）；否则 raise PermissionError。"""
+    async def gate(
+        self, *, agent_hasn_id: str, owner_hasn_id: str | None, tool_name: str, arguments: dict[str, Any]
+    ) -> None:
+        """ask 态主路径：挂起→等待→放行/拒绝。approved 返回（执行继续）；否则 raise PermissionError。
+
+        面无关：只吃 agent_hasn_id + owner_hasn_id，MCP server 与 AI-Native Runtime 网关一致调用。
+        """
         request_id = uuid.uuid4().hex
-        await self._record_pending(agent_context, request_id, tool_name, arguments)
-        decision = await self._await_decision(agent_context.agent_hasn_id, request_id)
-        await self._finalize(agent_context, request_id, decision, tool_name)
+        await self._record_pending(agent_hasn_id, owner_hasn_id, request_id, tool_name, arguments)
+        decision = await self._await_decision(agent_hasn_id, request_id)
+        await self._finalize(agent_hasn_id, request_id, decision, tool_name)
         if decision != DECISION_APPROVED:
             raise PermissionError(f'Owner approval required (ask mode, {decision}) for tool: {tool_name}')
 
     async def _record_pending(
-        self, agent_context: AgentContext, request_id: str, tool_name: str, arguments: dict[str, Any]
+        self,
+        agent_hasn_id: str,
+        owner_hasn_id: str | None,
+        request_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
     ) -> None:
         """写 pending 请求（Redis 供主人列出/推送）+ 审计挂起。两者各自 best-effort，不互相阻断。"""
         payload = {
             'request_id': request_id,
-            'agent_hasn_id': agent_context.agent_hasn_id,
-            'owner_hasn_id': agent_context.owner_hasn_id,
+            'agent_hasn_id': agent_hasn_id,
+            'owner_hasn_id': owner_hasn_id,
             'tool_name': tool_name,
             'arguments': arguments,
         }
         try:
-            key = _PENDING_KEY.format(agent_hasn_id=agent_context.agent_hasn_id)
+            key = _PENDING_KEY.format(agent_hasn_id=agent_hasn_id)
             await redis_client.hset(key, request_id, json.dumps(payload, ensure_ascii=False))
             await redis_client.expire(key, self._pending_ttl)
         except Exception:
             logger.exception('Failed to persist ask-mode pending request to Redis')
-        await self._audit(agent_context, 'mcp_ask_pending', request_id, tool_name, {'arguments': arguments})
+        await self._audit(agent_hasn_id, 'mcp_ask_pending', request_id, tool_name, {'arguments': arguments})
 
     async def _await_decision(self, agent_hasn_id: str, request_id: str) -> str:
         """轮询主人决定键直至超时（默认 120s）。seam：测试可 monkeypatch 本方法即时返回决定。"""
@@ -93,17 +100,17 @@ class AskApprovalGate:
             waited += self._poll_interval
         return DECISION_TIMEOUT
 
-    async def _finalize(self, agent_context: AgentContext, request_id: str, decision: str, tool_name: str) -> None:
+    async def _finalize(self, agent_hasn_id: str, request_id: str, decision: str, tool_name: str) -> None:
         """清理 pending + 决定键，审计最终决定。"""
         try:
-            await redis_client.hdel(_PENDING_KEY.format(agent_hasn_id=agent_context.agent_hasn_id), request_id)
+            await redis_client.hdel(_PENDING_KEY.format(agent_hasn_id=agent_hasn_id), request_id)
             await redis_client.delete(_DECISION_KEY.format(request_id=request_id))
         except Exception:
             logger.exception('Failed to clean up ask-mode keys')
-        await self._audit(agent_context, 'mcp_ask_decision', request_id, tool_name, {'decision': decision})
+        await self._audit(agent_hasn_id, 'mcp_ask_decision', request_id, tool_name, {'decision': decision})
 
     async def _audit(
-        self, agent_context: AgentContext, action: str, request_id: str, tool_name: str, extra: dict[str, Any]
+        self, agent_hasn_id: str, action: str, request_id: str, tool_name: str, extra: dict[str, Any]
     ) -> None:
         try:
             from backend.app.hasn.service.hasn_audit_log_service import HasnAuditLogService
@@ -113,7 +120,7 @@ class AskApprovalGate:
                 await HasnAuditLogService().append(
                     db=db,
                     actor_type='agent',
-                    actor_id=agent_context.agent_hasn_id,
+                    actor_id=agent_hasn_id,
                     action=action,
                     target_type='tool',
                     target_id=tool_name,

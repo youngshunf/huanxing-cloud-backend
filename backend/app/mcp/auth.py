@@ -16,7 +16,7 @@ from backend.common.security.agent_jwt import (
     normalize_scope,
     verify_agent_token,
 )
-from backend.common.security.scope_policy import MODE_DENY, resolve_tool_mode
+from backend.common.security.scope_policy import MODE_DENY
 from backend.database.db import async_db_session
 from backend.utils.timezone import timezone
 
@@ -83,8 +83,10 @@ class AgentContext:
         self.capability_modes = caps if isinstance(caps, dict) else {}
 
     def tool_mode(self, tool: object) -> str:
-        """工具的有效三态（维度①）：聚合工具名 override + 各 required_scope 取最严。"""
-        return resolve_tool_mode(
+        """工具的有效三态（维度①）：走统一判定服务 CapabilityGuard（已预取策略，无需取库）。"""
+        from backend.app.hasn.service.agent_capability_guard import capability_guard
+
+        return capability_guard.resolve_from_policy(
             self.default_mode,
             self.capability_modes,
             tool_name=getattr(tool, 'name', ''),

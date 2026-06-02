@@ -86,7 +86,7 @@ async def test_gate_approved_returns(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(gate, '_await_decision', _approved)
     # 不抛 = 放行
-    await gate.gate(_ctx(), tool_name='hasn.stub.act', arguments={})
+    await gate.gate(agent_hasn_id='a_ask_test', owner_hasn_id='h_ask_test', tool_name='hasn.stub.act', arguments={})
 
 
 @pytest.mark.asyncio
@@ -100,7 +100,7 @@ async def test_gate_not_approved_raises(monkeypatch: pytest.MonkeyPatch, decisio
 
     monkeypatch.setattr(gate, '_await_decision', _decide)
     with pytest.raises(PermissionError):
-        await gate.gate(_ctx(), tool_name='hasn.stub.act', arguments={})
+        await gate.gate(agent_hasn_id='a_ask_test', owner_hasn_id='h_ask_test', tool_name='hasn.stub.act', arguments={})
 
 
 @pytest.mark.asyncio
@@ -119,7 +119,7 @@ async def test_call_tool_ask_mode_suspends_then_executes_on_approve(monkeypatch:
 
     called: dict[str, Any] = {}
 
-    async def _gate(agent_context: object, *, tool_name: str, arguments: dict) -> None:  # noqa: RUF029
+    async def _gate(*, agent_hasn_id: str, owner_hasn_id: str | None, tool_name: str, arguments: dict) -> None:  # noqa: RUF029
         called['gated'] = tool_name  # 批准（不抛）
 
     monkeypatch.setattr(ask_gate_module.ask_approval_gate, 'gate', _gate)

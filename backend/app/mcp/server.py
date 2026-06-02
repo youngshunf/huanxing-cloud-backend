@@ -133,7 +133,12 @@ class HasnCloudMcpServer:
                 # D4：仅 owner 主动设 ask 才挂起；不按 risk 强制。批准→继续；拒绝/超时→raise。
                 from backend.app.mcp.ask_gate import ask_approval_gate
 
-                await ask_approval_gate.gate(agent_context, tool_name=tool_name, arguments=arguments)
+                await ask_approval_gate.gate(
+                    agent_hasn_id=agent_context.agent_hasn_id,
+                    owner_hasn_id=agent_context.owner_hasn_id,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                )
 
             # 按 source 分发执行
             result = await self._dispatch_by_source(agent_context, tool, source, arguments)
