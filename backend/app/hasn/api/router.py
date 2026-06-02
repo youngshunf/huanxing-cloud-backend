@@ -6,6 +6,7 @@ from backend.app.hasn.api.v1.admin.hasn_agents import router as admin_hasn_agent
 from backend.app.hasn.api.v1.admin.hasn_audit_log import router as admin_hasn_audit_log_router
 from backend.app.hasn.api.v1.admin.hasn_channel_bindings import router as admin_hasn_channel_bindings_router
 from backend.app.hasn.api.v1.admin.hasn_clients import router as admin_hasn_clients_router
+from backend.app.hasn.api.v1.admin.hasn_contact_requests import router as admin_hasn_contact_requests_router
 from backend.app.hasn.api.v1.admin.hasn_contacts import router as admin_hasn_contacts_router
 from backend.app.hasn.api.v1.admin.hasn_conversations import router as admin_hasn_conversations_router
 from backend.app.hasn.api.v1.admin.hasn_enterprise import router as admin_hasn_enterprise_router
@@ -58,6 +59,7 @@ v1.include_router(sync_router, tags=['HASN Sync'])
 v1.include_router(admin_hasn_humans_router, prefix='/humans', tags=['用户管理'])
 v1.include_router(admin_hasn_agents_router, prefix='/agents', tags=['Agent管理'])
 v1.include_router(admin_hasn_contacts_router, prefix='/contacts', tags=['联系人管理'])
+v1.include_router(admin_hasn_contact_requests_router, prefix='/contact-requests', tags=['好友请求管理'])
 v1.include_router(admin_hasn_conversations_router, prefix='/conversations', tags=['会话管理'])
 v1.include_router(admin_hasn_messages_router, prefix='/messages', tags=['消息管理'])
 v1.include_router(admin_hasn_unread_counts_router, prefix='/unread/counts', tags=['未读计数'])

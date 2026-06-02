@@ -97,6 +97,16 @@ def _patch_router_pipeline(
     push_mock = AsyncMock(return_value=None)
     monkeypatch.setattr(mr, '_push_message_to', push_mock, raising=False)
 
+    # Owner 透明 fanout：fc401e7 起改走 ws_router.push_to_owner_excluding_agent_node
+    # （排除 Agent 实体节点，避免 Agent 跑在主人 daemon 上时同一节点收两遍），
+    # 不再用 _push_message_to 二次投递。单测需 mock 该单例方法。
+    from backend.app.hasn.service.ws_router import ws_router as _ws_router
+
+    owner_fanout_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        _ws_router, 'push_to_owner_excluding_agent_node', owner_fanout_mock, raising=False,
+    )
+
     legacy_mock = AsyncMock(return_value={'allowed': False})  # 应不被调用
     monkeypatch.setattr(mr, 'check_relation_permission', legacy_mock)
 
@@ -104,6 +114,7 @@ def _patch_router_pipeline(
         'evaluate': eval_mock,
         'stash': stash_mock,
         'push': push_mock,
+        'owner_fanout': owner_fanout_mock,
         'legacy': legacy_mock,
     }
 
@@ -163,9 +174,16 @@ async def test_agent_target_also_pushes_to_owner_without_runtime(monkeypatch):
     )
 
     assert result.get('error') is False
-    assert [call.args[0] for call in mocks['push'].call_args_list] == ['a_receiver', 'h_owner']
+    # Agent 实体节点经 _push_message_to 收到一次（Runtime 缺失/离线也照投，本地 IM 透明）。
+    assert [call.args[0] for call in mocks['push'].call_args_list] == ['a_receiver']
     envelope = _extract_pushed_envelope(mocks['push'])
     assert envelope['to_owner_id'] == 'h_owner'
+    # Owner 透明 fanout 经 ws_router 排除 Agent 实体节点投递一次：(owner_id, agent_id, payload)。
+    mocks['owner_fanout'].assert_called_once()
+    fanout_args = mocks['owner_fanout'].call_args.args
+    assert fanout_args[0] == 'h_owner'
+    assert fanout_args[1] == 'a_receiver'
+    assert fanout_args[2]['params']['message']['to_owner_id'] == 'h_owner'
 
 
 # ── Test 2: DENY → 不 push，返回 error ──

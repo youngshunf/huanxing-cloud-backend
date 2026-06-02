@@ -17,6 +17,7 @@ from backend.app.hasn.constants import (
     validate_relation_constraints,
 )
 from backend.app.hasn.crud.crud_hasn_agents import hasn_agents_dao
+from backend.app.hasn.crud.crud_hasn_contact_requests import hasn_contact_requests_dao
 from backend.app.hasn.crud.crud_hasn_contacts import hasn_contacts_dao
 from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
 from backend.app.hasn.schema.hasn_contacts_business import (
@@ -81,7 +82,12 @@ async def send_contact_request(
     db: CurrentSession,
     auth: Annotated[dict, Depends(hasn_auth)],
 ) -> ResponseModel:
-    """发送好友请求 (social 关系)"""
+    """发送好友请求 (social 关系)。
+
+    请求落独立的 hasn_contact_requests 表，通过后才在 hasn_contacts 建边（见 ADR 2026-05-30）。
+    目标恒为 human：若传 agent 唤星号，解析成其主人（owner 级模型，加好友=加人）。
+    校验：无 connected 关系 + 无 pending 请求 + 未被对方拉黑。
+    """
     hasn_id = auth.get('effective_id', auth['hasn_id'])
 
     # 解析目标
@@ -89,35 +95,55 @@ async def send_contact_request(
     if not target:
         return response_base.fail(res=CustomResponse(code=400, msg=f'唤星号 {obj_in.target_star_id} 不存在'))
 
-    # 检查是否已有关系（使用 hasn_id）
-    existing = await hasn_contacts_dao.get_relation(db, hasn_id, target.hasn_id, 'social')
-    if existing:
-        return response_base.fail(
-            res=CustomResponse(code=400, msg=f'与 {obj_in.target_star_id} 已存在关系 (status={existing.status})')
+    # 目标恒解析为 human（审批人）：agent 目标 → 其主人
+    if target_type == 'agent':
+        to_owner_id = getattr(target, 'owner_id', None) or target.hasn_id
+        to_human = await hasn_humans_dao.get_by_hasn_id(db, to_owner_id)
+        to_id = to_owner_id
+        target_peer = HasnContactPeerOut(
+            hasn_id=to_owner_id,
+            star_id=getattr(to_human, 'star_id', ''),
+            name=_peer_display_name(to_human, peer_type='human') if to_human else '',
+            type='human',
+        )
+    else:
+        to_id = target.hasn_id
+        to_owner_id = target.hasn_id
+        target_peer = HasnContactPeerOut(
+            hasn_id=target.hasn_id,
+            star_id=target.star_id,
+            name=_peer_display_name(target, peer_type='human'),
+            type='human',
         )
 
-    target_owner_id = target.hasn_id
-    if target_type == 'agent':
-        target_owner_id = getattr(target, 'owner_id', None) or target.hasn_id
-    target_peer = HasnContactPeerOut(
-        hasn_id=target.hasn_id,
-        star_id=target.star_id,
-        name=_peer_display_name(target, peer_type=target_type),
-        type=target_type,
-    )
+    if to_id == hasn_id:
+        return response_base.fail(res=CustomResponse(code=400, msg='不能添加自己为好友'))
 
-    # 创建 pending 关系
-    contact = await hasn_contacts_dao.create_contact(
+    # 校验 1：已是好友（connected）
+    existing = await hasn_contacts_dao.get_relation(db, hasn_id, to_id, 'social')
+    if existing and existing.status == 'connected':
+        return response_base.fail(res=CustomResponse(code=400, msg='你们已经是好友'))
+
+    # 校验 2：是否被对方拉黑（对方 → 我 方向 trust_level=0）
+    reverse = await hasn_contacts_dao.get_relation(db, to_id, hasn_id, 'social')
+    if reverse and reverse.trust_level == 0:
+        return response_base.fail(res=CustomResponse(code=400, msg='无法向对方发送好友请求'))
+
+    # 校验 3：已有待处理请求（部分唯一索引兜底，应用层先行拦截给友好提示）
+    pending = await hasn_contact_requests_dao.get_active_pending(db, hasn_id, to_id, 'social')
+    if pending:
+        return response_base.fail(res=CustomResponse(code=400, msg='已有待处理的好友请求'))
+
+    # 创建 pending 请求（不再在 hasn_contacts 建行）
+    req = await hasn_contact_requests_dao.create_request(
         db,
-        owner_id=hasn_id,
-        peer_id=target.hasn_id,
-        peer_owner_id=target_owner_id,
-        peer_type=target_type,
+        from_id=hasn_id,
+        to_id=to_id,
+        to_owner_id=to_owner_id,
         relation_type='social',
-        trust_level=1,
-        status='pending',
+        requested_trust_level=2,
+        message=obj_in.message,
         channel_source='manual',
-        request_message=obj_in.message,
     )
     await db.commit()
 
@@ -129,12 +155,12 @@ async def send_contact_request(
         type='human',
     )
     await _push_contact_event(
-        target_owner_id,
+        to_owner_id,
         {
             'method': 'hasn.contact.request_received',
             'params': {
-                'owner_id': target_owner_id,
-                'request_id': contact.id,
+                'owner_id': to_owner_id,
+                'request_id': req.id,
                 'from_peer': sender_peer.model_dump(),
                 'target': target_peer.model_dump(),
                 'message': obj_in.message,
@@ -144,10 +170,10 @@ async def send_contact_request(
 
     return response_base.success(
         data=HasnContactRequestOut(
-            request_id=contact.id,
+            request_id=req.id,
             status='pending',
-            created_at=contact.created_time,
-            channel_source=contact.channel_source,
+            created_at=req.created_time,
+            channel_source=req.channel_source,
             target=target_peer,
             message=obj_in.message,
         ).model_dump()
@@ -171,10 +197,10 @@ async def list_pending_requests(
     hasn_id = auth.get('effective_id', auth['hasn_id'])
 
     if direction == 'received':
-        requests = await hasn_contacts_dao.get_pending_requests(db, hasn_id)
+        requests = await hasn_contact_requests_dao.get_received_pending(db, hasn_id)
         items = []
         for req in requests:
-            sender = await hasn_humans_dao.get_by_hasn_id(db, req.owner_id)
+            sender = await hasn_humans_dao.get_by_hasn_id(db, req.from_id)
             if sender:
                 from_peer = HasnContactPeerOut(
                     hasn_id=sender.hasn_id,
@@ -183,30 +209,13 @@ async def list_pending_requests(
                     type='human',
                 )
             else:
-                # peer_id 解析失败用 stub 占位, 不抛 500 (INV-15)
+                # from_id 解析失败用 stub 占位, 不抛 500 (INV-15)
                 from_peer = HasnContactPeerOut(
-                    hasn_id=req.owner_id,
+                    hasn_id=req.from_id,
                     star_id='',
                     name='',
                     type='human',
                 )
-            target = None
-            if getattr(req, 'peer_type', None) == 'agent':
-                target_agent = await hasn_agents_dao.get_by_hasn_id(db, req.peer_id)
-                if target_agent:
-                    target = HasnContactPeerOut(
-                        hasn_id=target_agent.hasn_id,
-                        star_id=target_agent.star_id,
-                        name=_peer_display_name(target_agent, peer_type='agent'),
-                        type='agent',
-                    )
-                else:
-                    target = HasnContactPeerOut(
-                        hasn_id=req.peer_id,
-                        star_id='',
-                        name='',
-                        type='agent',
-                    )
             items.append(
                 HasnContactRequestOut(
                     request_id=req.id,
@@ -214,32 +223,27 @@ async def list_pending_requests(
                     created_at=req.created_time,
                     channel_source=req.channel_source,
                     from_peer=from_peer,
-                    target=target,
-                    message=req.request_message or '',
+                    target=None,
+                    message=req.message or '',
                 )
             )
         return response_base.success(data=[i.model_dump() for i in items])
 
-    # direction == 'sent'
-    requests = await hasn_contacts_dao.get_sent_pending_requests(db, hasn_id)
+    # direction == 'sent'（目标恒为 human）
+    requests = await hasn_contact_requests_dao.get_sent_pending(db, hasn_id)
     items = []
     for req in requests:
-        peer_info = await hasn_humans_dao.get_by_hasn_id(db, req.peer_id)
-        peer_type = 'human'
-        if not peer_info:
-            peer_info = await hasn_agents_dao.get_by_hasn_id(db, req.peer_id)
-            peer_type = 'agent' if peer_info else 'human'
-        if peer_info:
-            # HasnHumans 使用 nickname，HasnAgents 使用 display_name
+        target_human = await hasn_humans_dao.get_by_hasn_id(db, req.to_id)
+        if target_human:
             target = HasnContactPeerOut(
-                hasn_id=peer_info.hasn_id,
-                star_id=peer_info.star_id,
-                name=_peer_display_name(peer_info, peer_type=peer_type),
-                type=peer_type,
+                hasn_id=target_human.hasn_id,
+                star_id=target_human.star_id,
+                name=_peer_display_name(target_human, peer_type='human'),
+                type='human',
             )
         else:
             target = HasnContactPeerOut(
-                hasn_id=req.peer_id,
+                hasn_id=req.to_id,
                 star_id='',
                 name='',
                 type='human',
@@ -251,7 +255,7 @@ async def list_pending_requests(
                 created_at=req.created_time,
                 channel_source=req.channel_source,
                 target=target,
-                message=req.request_message or '',
+                message=req.message or '',
             )
         )
     return response_base.success(data=[i.model_dump() for i in items])
@@ -264,57 +268,75 @@ async def respond_to_request(
     db: CurrentSession,
     auth: Annotated[dict, Depends(hasn_auth)],
 ) -> ResponseModel:
-    """接受/拒绝好友请求"""
-    if obj_in.action == 'accept':
-        await hasn_contacts_dao.accept_request(db, request_id)
+    """回应好友请求：accept / reject（审批人）/ withdraw（发起方）。
 
-        # 查出原请求并创建反向关系
-        contact = await hasn_contacts_dao.get(db, request_id)
-        if contact:
-            existing_reverse = await hasn_contacts_dao.get_relation(db, contact.peer_id, contact.owner_id, 'social')
-            if not existing_reverse:
-                await hasn_contacts_dao.create_contact(
-                    db,
-                    owner_id=contact.peer_id,
-                    peer_id=contact.owner_id,
-                    peer_type='human',
-                    relation_type='social',
-                    trust_level=2,
-                    status='connected',
-                    channel_source=contact.channel_source or 'manual',
-                )
-            peer_type = getattr(contact, 'peer_type', 'human') or 'human'
-            if peer_type == 'agent':
-                acceptor = await hasn_agents_dao.get_by_hasn_id(db, contact.peer_id)
-            else:
-                acceptor = await hasn_humans_dao.get_by_hasn_id(db, contact.peer_id)
-            peer = HasnContactPeerOut(
-                hasn_id=contact.peer_id,
-                star_id=getattr(acceptor, 'star_id', ''),
-                name=_peer_display_name(acceptor, peer_type=peer_type) if acceptor else '',
-                type=peer_type,
-            )
-            await _push_contact_event(
-                contact.owner_id,
-                {
-                    'method': 'hasn.contact.connected',
-                    'params': {
-                        'owner_id': contact.owner_id,
-                        'request_id': request_id,
-                        'peer': peer.model_dump(),
-                        'trust_level': 2,
-                    },
-                },
-            )
+    accept 时通过 UPSERT 在 hasn_contacts 建双向 connected 边（兜过历史 archived 行），
+    并把请求标记 accepted、回填 resulting_contact_id（审计链）。
+    """
+    hasn_id = auth.get('effective_id', auth['hasn_id'])
+    req = await hasn_contact_requests_dao.get(db, request_id)
+    if not req:
+        raise HTTPException(status_code=404, detail='好友请求不存在')
+    if req.status != 'pending':
+        return response_base.fail(res=CustomResponse(code=400, msg=f'该请求已处理 (status={req.status})'))
+
+    trust = req.requested_trust_level or 2
+
+    if obj_in.action == 'accept':
+        if req.to_owner_id != hasn_id:
+            raise HTTPException(status_code=403, detail='只有被请求方可以接受该请求')
+        # UPSERT 双向边：发起方→目标、目标→发起方，均 connected
+        forward = await hasn_contacts_dao.upsert_connected(
+            db, owner_id=req.from_id, peer_id=req.to_id, peer_type='human',
+            relation_type=req.relation_type, trust_level=trust,
+            peer_owner_id=req.to_id, channel_source=req.channel_source or 'manual',
+        )
+        await hasn_contacts_dao.upsert_connected(
+            db, owner_id=req.to_id, peer_id=req.from_id, peer_type='human',
+            relation_type=req.relation_type, trust_level=trust,
+            peer_owner_id=req.from_id, channel_source=req.channel_source or 'manual',
+        )
+        await hasn_contact_requests_dao.mark_accepted(
+            db, request_id, decided_by=hasn_id, resulting_contact_id=forward.id,
+        )
         await db.commit()
-        return response_base.success(data={'status': 'connected', 'trust_level': 2})
+
+        acceptor = await hasn_humans_dao.get_by_hasn_id(db, req.to_id)
+        peer = HasnContactPeerOut(
+            hasn_id=req.to_id,
+            star_id=getattr(acceptor, 'star_id', ''),
+            name=_peer_display_name(acceptor, peer_type='human') if acceptor else '',
+            type='human',
+        )
+        await _push_contact_event(
+            req.from_id,
+            {
+                'method': 'hasn.contact.connected',
+                'params': {
+                    'owner_id': req.from_id,
+                    'request_id': request_id,
+                    'peer': peer.model_dump(),
+                    'trust_level': trust,
+                },
+            },
+        )
+        return response_base.success(data={'status': 'connected', 'trust_level': trust})
 
     if obj_in.action == 'reject':
-        await hasn_contacts_dao.reject_request(db, request_id)
+        if req.to_owner_id != hasn_id:
+            raise HTTPException(status_code=403, detail='只有被请求方可以拒绝该请求')
+        await hasn_contact_requests_dao.mark_rejected(db, request_id, decided_by=hasn_id)
         await db.commit()
         return response_base.success(data={'status': 'rejected'})
 
-    return response_base.fail(res=CustomResponse(code=400, msg='action 必须是 accept 或 reject'))
+    if obj_in.action == 'withdraw':
+        if req.from_id != hasn_id:
+            raise HTTPException(status_code=403, detail='只有发起方可以撤回该请求')
+        await hasn_contact_requests_dao.mark_withdrawn(db, request_id, decided_by=hasn_id)
+        await db.commit()
+        return response_base.success(data={'status': 'withdrawn'})
+
+    return response_base.fail(res=CustomResponse(code=400, msg='action 必须是 accept / reject / withdraw'))
 
 
 @router.get('', summary='联系人列表')

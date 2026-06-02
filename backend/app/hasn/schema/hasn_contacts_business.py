@@ -32,7 +32,7 @@ class HasnContactRequestReq(BaseModel):
 
 class HasnContactRespondReq(BaseModel):
     """回应好友请求"""
-    action: str = Field(..., description='accept / reject')
+    action: str = Field(..., description='accept / reject（审批人） / withdraw（发起方）')
     reason: str | None = None
 
 
