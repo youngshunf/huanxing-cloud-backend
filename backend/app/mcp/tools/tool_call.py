@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from jsonschema import Draft202012Validator
+
+from backend.app.mcp.canonical import schema_hash
 from backend.app.mcp.errors import McpErrorCode, McpToolError
 from backend.app.mcp.tools.base import BaseTool
 
@@ -87,5 +90,48 @@ class ToolCallTool(BaseTool):
         if name in _NON_DISPATCHABLE or name == self.name:
             raise McpToolError(McpErrorCode.DIRECT_CALL_DENIED, f"tool.call cannot dispatch meta tool: {name}")
 
-        # 委托统一调用管线：未注册→TOOL_NOT_FOUND；维度① 三态闸门 + 维度② + 审计全落内层。
+        # 解析内层工具（含迁移别名）。App 工具已由外层 call_tool 的 _load_app_tools 载入。
+        inner_tool = self._server.tool_registry.get_tool(name)
+        if inner_tool is None:
+            raise McpToolError(McpErrorCode.TOOL_NOT_FOUND, f"Tool not found: {name}")
+
+        # schema-on-error（§9.4）：仅参数 schema 校验失败时回吐内层完整 schema 供修正；
+        # 业务失败（维度② 不可达、额度等）由内层工具透传，不附 schema。
+        validation_error = self._validate_params(inner_tool, params)
+        if validation_error is not None:
+            return validation_error
+
+        # 委托统一调用管线：维度① 三态闸门 + 维度② + 审计全落内层。
         return await self._server.call_tool(agent_context, name, params)
+
+    def _validate_params(self, inner_tool: BaseTool, params: dict[str, Any]) -> dict[str, Any] | None:
+        """用内层工具 input_schema 校验 params；通过返回 None，失败返回 schema-on-error 信封。"""
+        schema = inner_tool.input_schema or {}
+        errors = sorted(
+            Draft202012Validator(schema).iter_errors(params),
+            key=lambda e: [str(p) for p in e.path],
+        )
+        if not errors:
+            return None
+
+        missing: list[str] = []
+        invalid: dict[str, str] = {}
+        for error in errors:
+            path = ".".join(str(p) for p in error.path)
+            if error.validator == "required":
+                prop = error.message.split("'")[1] if "'" in error.message else error.message
+                key = f"{path}.{prop}" if path else prop
+                if key not in missing:
+                    missing.append(key)
+            else:
+                invalid.setdefault(path or "(root)", error.message)
+
+        return {
+            "ok": False,
+            "error": "input_validation_failed",
+            "tool": inner_tool.name,
+            "missing": missing,
+            "invalid": invalid,
+            "input_schema": schema,
+            "schema_hash": schema_hash(schema),
+        }

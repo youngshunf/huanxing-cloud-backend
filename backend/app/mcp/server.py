@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 # 发现工具名（含迁移别名）。其 summary 级查询属"普通查询"，可降采样（04 §6）。
 _DISCOVERY_TOOL_NAMES = frozenset({'hasn.cloud.tool.search', 'hasn.tool.search'})
 
+# 调用元工具（03 §9）：透明转发，审计落**内层**工具，wrapper 自身不单独记，避免双记。
+_DISPATCH_TOOL_NAMES = frozenset({'hasn.cloud.tool.call', 'hasn.local.tool.call'})
+
 # 普通 summary/sources/apps 发现查询的审计采样率：约 1/N 落库，trace_id 仍全量保留聚合能力。
 _SUMMARY_AUDIT_SAMPLE_RATE = 10
 
@@ -155,10 +158,12 @@ class HasnCloudMcpServer:
             logger.error(f'Tool {tool_name} execution failed: {e!s}', exc_info=True)
 
             # 失败 / 拒绝一律审计（04 §6：Tool 拒绝 + scope/role 拒绝必审计）。
-            try:
-                await self._log_tool_call(agent_context, tool_name, arguments, None, success=False, error=str(e))
-            except Exception:
-                logger.exception('Failed to record tool-call denial audit')
+            # 调用元工具透明转发：失败也由内层工具自行审计，wrapper 自身不重复记。
+            if tool_name not in _DISPATCH_TOOL_NAMES:
+                try:
+                    await self._log_tool_call(agent_context, tool_name, arguments, None, success=False, error=str(e))
+                except Exception:
+                    logger.exception('Failed to record tool-call denial audit')
 
             raise
         else:
@@ -177,6 +182,8 @@ class HasnCloudMcpServer:
         可降采样：普通 summary/sources/apps 发现查询——按 (tool, query) 稳定哈希
         约 1/N 落库；trace_id 仍随结果全量返回，聚合能力不丢失。
         """
+        if tool_name in _DISPATCH_TOOL_NAMES:
+            return False  # 透明转发：审计落内层工具，wrapper 自身不记
         if not success:
             return True
         if tool_name not in _DISCOVERY_TOOL_NAMES:
