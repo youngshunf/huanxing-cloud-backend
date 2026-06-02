@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import TYPE_CHECKING, Any
 
 from backend.app.hasn.crud.crud_hasn_ai_native_app_manifest import hasn_ai_native_app_manifest_dao
 from backend.app.hasn.model import HasnAiNativeAppManifest
-from backend.app.hasn.service.ai_native_builtin_manifests import COMMUNITY_AI_NATIVE_MANIFEST, KNOWLEDGE_AI_NATIVE_MANIFEST
+from backend.app.hasn.service.ai_native_builtin_manifests import (
+    COMMUNITY_AI_NATIVE_MANIFEST,
+    KNOWLEDGE_AI_NATIVE_MANIFEST,
+)
 from backend.app.hasn.service.workbench_app_registry import WorkbenchAppRegistry, workbench_app_registry
 from backend.common.exception import errors
 from backend.common.pagination import paging_data
 from backend.utils.timezone import timezone
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ManifestValidationResult:
@@ -89,8 +94,37 @@ class AINativeAppRegistry:
     async def ensure_builtin_published(self, db: AsyncSession, app_id: str) -> dict[str, Any]:
         published = await self.get_published_manifest(db, app_id=app_id)
         if published:
+            # builtin app 以代码 manifest 为权威源：hash 变化即就地刷新已发布行，
+            # 自愈陈旧 manifest（如新增工具后旧发布行仍是旧工具集）。
+            if app_id in self._builtin_manifests:
+                current_hash = _manifest_hash(self.get_builtin_manifest(app_id))
+                if published.get('manifest_hash') != current_hash:
+                    return await self._refresh_builtin_published(db, app_id=app_id)
             return published
         return await self.publish_builtin(db, app_id)
+
+    async def _refresh_builtin_published(self, db: AsyncSession, *, app_id: str) -> dict[str, Any]:
+        """builtin manifest hash 变化时，就地更新已发布行（单行、不新增 status、无唯一约束风险）。"""
+        manifest = self.get_builtin_manifest(app_id)
+        validation = self.validate_manifest(manifest)
+        if not validation.valid:
+            raise errors.RequestError(msg='manifest_validation_failed', data={'errors': validation.errors})
+        stmt = await hasn_ai_native_app_manifest_dao.get_select()
+        stmt = stmt.where(
+            HasnAiNativeAppManifest.app_id == app_id,
+            HasnAiNativeAppManifest.status == 'published',
+        )
+        row = (await db.execute(stmt)).scalars().first()
+        if row is None:
+            return await self.publish_builtin(db, app_id)
+        row.version = manifest['version']
+        row.workspace_scope = list(manifest.get('workspace_scope') or [])
+        row.collaboration_mode = str(manifest.get('collaboration_mode') or 'none')
+        row.manifest_json = manifest
+        row.manifest_hash = validation.manifest_hash
+        row.published_at = timezone.now()
+        await db.flush()
+        return _manifest_payload(row)
 
     async def get_published_manifest(self, db: AsyncSession, *, app_id: str) -> dict[str, Any] | None:
         stmt = await hasn_ai_native_app_manifest_dao.get_select()
@@ -111,8 +145,13 @@ class AINativeAppRegistry:
         stmt = stmt.where(HasnAiNativeAppManifest.status == 'published')
         rows = (await db.execute(stmt)).scalars().all()
         manifests = {row.app_id: _manifest_payload(row) for row in rows}
+        # builtin app 以代码 manifest 为权威源：DB 行缺失或 hash 陈旧时，
+        # 返回当前代码 manifest（只读不写；DB 行的持久化自愈交给 ensure_builtin_published）。
         for app_id, manifest in self._builtin_manifests.items():
-            manifests.setdefault(app_id, _builtin_manifest_payload(manifest))
+            current_hash = _manifest_hash(manifest)
+            existing = manifests.get(app_id)
+            if existing is None or existing.get('manifest_hash') != current_hash:
+                manifests[app_id] = _builtin_manifest_payload(manifest, manifest_hash=current_hash)
         return list(manifests.values())
 
     async def get(self, db: AsyncSession, app_id: str) -> dict[str, Any]:

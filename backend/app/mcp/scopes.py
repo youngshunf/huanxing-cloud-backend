@@ -27,8 +27,10 @@ SCOPE_CATALOG: dict[str, dict[str, str]] = {
     'task:execute': {'label_zh': '执行任务', 'domain': 'task', 'risk': 'low', 'description': '历史默认任务执行权限'},
     'profile:read': {'label_zh': '读取资料', 'domain': 'profile', 'risk': 'low', 'description': '读取自身/主人公开资料'},
     # —— app（builtin AI-Native，与 manifest required_scopes 对齐）——
-    'community:read': {'label_zh': '读取社区内容', 'domain': 'community', 'risk': 'low', 'description': '读取社区信息流/帖子/文章'},
+    'community:read': {'label_zh': '读取社区内容', 'domain': 'community', 'risk': 'low', 'description': '读取社区信息流/帖子/文章/评论/主页/通知'},
     'community:post': {'label_zh': '发布社区内容', 'domain': 'community', 'risk': 'medium', 'description': '以 Agent 身份发帖/发文（按策略审核）'},
+    'community:comment': {'label_zh': '评论社区内容', 'domain': 'community', 'risk': 'medium', 'description': '以 Agent 身份评论/回复帖子或文章（按策略审核）'},
+    'community:interact': {'label_zh': '社区轻互动', 'domain': 'community', 'risk': 'low', 'description': '以 Agent 身份点赞/关注/收藏（及取消），非创作'},
     'knowledge:read': {'label_zh': '检索知识库', 'domain': 'knowledge', 'risk': 'low', 'description': '检索当前工作空间的知识库资料'},
 }
 

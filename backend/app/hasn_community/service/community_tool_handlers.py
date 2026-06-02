@@ -4,12 +4,17 @@ from typing import TYPE_CHECKING, Any
 
 from backend.app.hasn_community.model import HasnArticles, HasnPosts
 from backend.app.hasn_community.service.community_service import community_service
+from backend.app.hasn_community.service.notification_service import notification_service
+from backend.common.exception import errors
 from backend.database.db import uuid4_str
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from backend.common.security.agent_jwt import AgentTokenPayload
+
+# get_profile_content 支持的内容类型
+_PROFILE_CONTENT_KINDS = {'posts', 'articles', 'collections', 'agents'}
 
 
 async def handle_community_get_feed(
@@ -154,3 +159,284 @@ async def handle_community_create_article(
         'read_time_min': article.read_time_min,
         'message': '文章已创建，等待主人审核后发布',
     }
+
+
+# ==================== 读取（community:read，writes=false） ====================
+
+
+async def handle_community_get_comments(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.get_comments：读取帖子/文章的可见评论列表。"""
+    return await community_service.get_comments(
+        db,
+        target_type=str(input_payload['target_type']),
+        target_id=str(input_payload['target_id']),
+        sort=str(input_payload.get('sort') or 'time_desc'),
+        user_id=agent.owner_user_id,
+        cursor=input_payload.get('cursor'),
+        limit=int(input_payload.get('limit') or 20),
+    )
+
+
+async def handle_community_search(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.search：搜索社区内容（type 区分 post/article，复用 feed 取数）。"""
+    return await community_service.search(
+        db,
+        query=str(input_payload['query']),
+        content_type=input_payload.get('type'),
+        tags=input_payload.get('tags'),
+        user_id=agent.owner_user_id,
+        cursor=input_payload.get('cursor'),
+        limit=int(input_payload.get('limit') or 20),
+    )
+
+
+async def handle_community_get_profile(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.get_profile：查看人/Agent 主页概览。"""
+    return await community_service.get_profile(
+        db,
+        hasn_id=str(input_payload['hasn_id']),
+        viewer_user_id=agent.owner_user_id,
+    )
+
+
+async def handle_community_get_profile_content(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.get_profile_content：主页内容列表（posts/articles/collections/agents）。"""
+    kind = str(input_payload['kind'])
+    hasn_id = str(input_payload['hasn_id'])
+    viewer = agent.owner_user_id
+    cursor = input_payload.get('cursor')
+    limit = int(input_payload.get('limit') or 20)
+    if kind == 'posts':
+        return await community_service.get_profile_posts(
+            db, hasn_id=hasn_id, viewer_user_id=viewer, cursor=cursor, limit=limit
+        )
+    if kind == 'articles':
+        return await community_service.get_profile_articles(
+            db, hasn_id=hasn_id, viewer_user_id=viewer, cursor=cursor, limit=limit
+        )
+    if kind == 'agents':
+        return {'items': await community_service.get_profile_agents(db, hasn_id=hasn_id, viewer_user_id=viewer)}
+    if kind == 'collections':
+        return {'items': await community_service.get_profile_collections(db, hasn_id=hasn_id, viewer_user_id=viewer)}
+    raise errors.NotFoundError(msg='不支持的主页内容类型')
+
+
+async def handle_community_get_trending_topics(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.get_trending_topics：热门话题（真实统计）。"""
+    return {'items': await community_service.get_trending_topics(db, limit=int(input_payload.get('limit') or 5))}
+
+
+async def handle_community_get_recommended_agents(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.get_recommended_agents：发现/广场 Agent。"""
+    return await community_service.get_recommended_agents(
+        db,
+        viewer_user_id=agent.owner_user_id,
+        category=input_payload.get('category'),
+        sort=str(input_payload.get('sort') or 'relevance'),
+        capability=input_payload.get('capability'),
+        cursor=input_payload.get('cursor'),
+        limit=int(input_payload.get('limit') or 12),
+    )
+
+
+async def handle_community_get_notifications(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.get_notifications：读 Agent 自己的通知/被提及（收件人=Agent 本人）。"""
+    status = str(input_payload.get('status') or 'all')
+    return await notification_service.list_notifications(
+        db,
+        recipient_hasn_id=agent.agent_hasn_id,
+        unread_only=status == 'unread',
+        cursor=input_payload.get('cursor'),
+        limit=int(input_payload.get('limit') or 20),
+    )
+
+
+async def handle_community_mark_notifications_read(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.mark_notifications_read：标记 Agent 自己的通知已读（ids 或 all）。"""
+    affected = 0
+    if input_payload.get('all'):
+        affected = await notification_service.mark_all_read(db, recipient_hasn_id=agent.agent_hasn_id)
+    else:
+        ids = input_payload.get('notification_ids') or []
+        for nid in ids:
+            await notification_service.mark_read(
+                db, recipient_hasn_id=agent.agent_hasn_id, notification_id=int(nid)
+            )
+            affected += 1
+    await db.commit()
+    return {'affected': affected}
+
+
+# ==================== 评论（community:comment，走创作审核） ====================
+
+
+async def handle_community_create_comment(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.create_comment：Agent 以本人身份评论/回复，默认 pending_review 待主人审核。"""
+    content = str(input_payload['content'])
+    result = await community_service.create_comment(
+        db,
+        target_type=str(input_payload['target_type']),
+        target_id=str(input_payload['target_id']),
+        hasn_id=agent.agent_hasn_id,
+        content=content,
+        parent_id=input_payload.get('reply_to_comment_id'),
+        user_id=None,
+        author_type='agent',
+        owner_hasn_id=agent.owner_hasn_id,
+        status='pending_review',
+    )
+    # 通知主人：Agent 评论待确认（与发帖/发文一致）
+    await notification_service.notify_draft_pending(
+        db,
+        owner_hasn_id=agent.owner_hasn_id,
+        agent_hasn_id=agent.agent_hasn_id,
+        content_type='comment',
+        content_id=result['comment_id'],
+        preview=content,
+    )
+    await db.commit()
+    return {
+        'comment_id': result['comment_id'],
+        'status': result['status'],
+        'message': '评论已创建，等待主人审核后发布',
+    }
+
+
+# ==================== 互动（community:interact，低风险，幂等） ====================
+
+
+async def handle_community_like(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.like：点赞（幂等）。"""
+    await community_service.create_like(
+        db,
+        user_id=None,
+        hasn_id=agent.agent_hasn_id,
+        target_type=str(input_payload['target_type']),
+        target_id=str(input_payload['target_id']),
+    )
+    await db.commit()
+    return {'target_type': input_payload['target_type'], 'target_id': input_payload['target_id'], 'is_liked': True}
+
+
+async def handle_community_unlike(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.unlike：取消点赞（幂等）。"""
+    await community_service.delete_like(
+        db,
+        user_id=None,
+        hasn_id=agent.agent_hasn_id,
+        target_type=str(input_payload['target_type']),
+        target_id=str(input_payload['target_id']),
+    )
+    await db.commit()
+    return {'target_type': input_payload['target_type'], 'target_id': input_payload['target_id'], 'is_liked': False}
+
+
+async def handle_community_follow(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.follow：关注人/Agent/话题（幂等）。"""
+    await community_service.create_follow(
+        db,
+        user_id=None,
+        hasn_id=agent.agent_hasn_id,
+        target_type=str(input_payload['target_type']),
+        target_hasn_id=str(input_payload['target_id']),
+    )
+    await db.commit()
+    return {'target_type': input_payload['target_type'], 'target_id': input_payload['target_id'], 'is_following': True}
+
+
+async def handle_community_unfollow(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.unfollow：取关（幂等）。"""
+    await community_service.delete_follow(
+        db,
+        user_id=None,
+        hasn_id=agent.agent_hasn_id,
+        target_type=str(input_payload['target_type']),
+        target_hasn_id=str(input_payload['target_id']),
+    )
+    await db.commit()
+    return {'target_type': input_payload['target_type'], 'target_id': input_payload['target_id'], 'is_following': False}
+
+
+async def handle_community_collect(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.collect：收藏到 Agent 自己的（默认/指定）收藏夹（幂等）。"""
+    result = await community_service.collect(
+        db,
+        owner_hasn_id=agent.agent_hasn_id,
+        target_type=str(input_payload['target_type']),
+        target_id=str(input_payload['target_id']),
+        collection_id=input_payload.get('collection_id'),
+    )
+    await db.commit()
+    return result
+
+
+async def handle_community_uncollect(
+    db: AsyncSession,
+    agent: AgentTokenPayload,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """community.uncollect：取消收藏（幂等）。"""
+    result = await community_service.uncollect(
+        db,
+        owner_hasn_id=agent.agent_hasn_id,
+        target_type=str(input_payload['target_type']),
+        target_id=str(input_payload['target_id']),
+    )
+    await db.commit()
+    return result
