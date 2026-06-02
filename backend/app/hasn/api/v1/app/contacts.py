@@ -537,8 +537,9 @@ async def list_contacts(
                     avatar=ag.get('avatar'),
                     type=ag.get('type') or 'desktop',
                     role=ag.get('role') or 'specialist',
+                    description=ag.get('description'),
                     bio=ag.get('bio'),
-                    online_status=ag.get('online_status') or 'unknown',
+                    online_status=ag.get('online_status') or 'offline',
                     last_seen_at=ag.get('last_seen_at'),
                 )
                 for ag in agent_dicts

@@ -1,6 +1,6 @@
 from typing import Any, Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn.crud.crud_hasn_contacts import hasn_contacts_dao
@@ -8,7 +8,6 @@ from backend.app.hasn.constants import TRUST_LEVEL_LABELS
 from backend.app.hasn.model import HasnContacts
 from backend.app.hasn.model.hasn_humans import HasnHumans
 from backend.app.hasn.model.hasn_agents import HasnAgents
-from backend.app.hasn.model.hasn_agent_runtime_reports import HasnAgentRuntimeReports
 from backend.app.hasn.schema.hasn_contacts import CreateHasnContactsParam, DeleteHasnContactsParam, UpdateHasnContactsParam
 from backend.common.exception import errors
 from backend.common.pagination import paging_data
@@ -114,42 +113,18 @@ class HasnContactsService:
         """
         查询某个 human 名下、对社交可见的 active Agent 及其实时在线状态。
 
-        在线状态取自 HasnAgentRuntimeReports 每个 agent 最新一条上报
-        （runtime_status / last_seen_at）；无上报记录则 online_status = "unknown"。
+        在线状态取自 HasnAgents.online_status 列（心跳 last_heartbeat_at 更新的
+        权威字段，online/offline）——不是空置的 HasnAgentRuntimeReports 表。
+        描述用 HasnAgents.description（agent 的角色介绍，bio 多为空）。
         联系人**列表**端点与**详情**构造共用本方法，保证「TA 的 AI 分身」在
-        列表与详情看到的 Agent 集合与在线状态一致（避免 split-brain，这正是此前
-        列表路径漏填 online_status 导致头像无在线状态点的根因）。
+        列表与详情看到的 Agent 集合、在线状态、描述一致（避免 split-brain）。
 
         :param db: 数据库会话
         :param peer_id: 联系人（human）的 hasn_id
         :return: owned_agents 字典列表
         """
-        latest_report_subq = (
-            select(
-                HasnAgentRuntimeReports.agent_hasn_id,
-                HasnAgentRuntimeReports.runtime_status,
-                HasnAgentRuntimeReports.last_seen_at,
-                func.row_number()
-                .over(
-                    partition_by=HasnAgentRuntimeReports.agent_hasn_id,
-                    order_by=HasnAgentRuntimeReports.reported_at.desc(),
-                )
-                .label("rn"),
-            )
-            .subquery()
-        )
         agents_result = await db.execute(
-            select(
-                HasnAgents,
-                latest_report_subq.c.runtime_status,
-                latest_report_subq.c.last_seen_at,
-            )
-            .outerjoin(
-                latest_report_subq,
-                (latest_report_subq.c.agent_hasn_id == HasnAgents.hasn_id)
-                & (latest_report_subq.c.rn == 1),
-            )
-            .where(
+            select(HasnAgents).where(
                 HasnAgents.owner_id == peer_id,
                 HasnAgents.status == "active",
                 HasnAgents.social_enabled.is_(True),
@@ -157,7 +132,7 @@ class HasnContactsService:
             )
         )
         owned_agents: list[dict[str, Any]] = []
-        for agent, runtime_status, last_seen_at in agents_result.all():
+        for agent in agents_result.scalars().all():
             owned_agents.append(
                 {
                     "hasn_id": agent.hasn_id,
@@ -167,9 +142,12 @@ class HasnContactsService:
                     "avatar": agent.avatar,
                     "type": agent.type,
                     "role": agent.role,
+                    "description": agent.description,
                     "bio": agent.bio,
-                    "online_status": runtime_status or "unknown",
-                    "last_seen_at": last_seen_at.isoformat() if last_seen_at else None,
+                    "online_status": agent.online_status or "offline",
+                    "last_seen_at": (
+                        agent.last_heartbeat_at.isoformat() if agent.last_heartbeat_at else None
+                    ),
                 }
             )
         return owned_agents
