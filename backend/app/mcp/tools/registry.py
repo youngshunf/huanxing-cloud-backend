@@ -4,8 +4,9 @@
 
 from backend.app.mcp.tools.base import BaseTool
 
-# 云端 server 默认 bootstrap 暴露云端发现工具（03 §3）。
-BOOTSTRAP_TOOL_NAMES = frozenset({"hasn.cloud.tool.search"})
+# 云端 server 默认 bootstrap 暴露发现 + 调用两个元工具（03 §3 / §9）。
+# 长尾工具不进默认清单，经 hasn.cloud.tool.call 转发调用（恢复 §1 渐进式）。
+BOOTSTRAP_TOOL_NAMES = frozenset({"hasn.cloud.tool.search", "hasn.cloud.tool.call"})
 
 
 class ToolRegistry:

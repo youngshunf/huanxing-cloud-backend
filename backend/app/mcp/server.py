@@ -16,6 +16,7 @@ from backend.app.mcp.tools.base import BaseTool
 from backend.app.mcp.tools.contact import ContactListTool
 from backend.app.mcp.tools.message import MessageListTool, MessageSendTool
 from backend.app.mcp.tools.registry import ToolRegistry
+from backend.app.mcp.tools.tool_call import ToolCallTool
 from backend.app.mcp.tools.tool_search import ToolSearchTool
 from backend.app.mcp.tools.user import UserSearchTool
 from backend.common.security.scope_policy import MODE_ASK, MODE_DENY
@@ -67,6 +68,9 @@ class HasnCloudMcpServer:
         # 迁移别名：hasn.tool.search → hasn.cloud.tool.search（03 §3）。
         self.tool_registry.register_alias('hasn.tool.search', 'hasn.cloud.tool.search')
 
+        # 通用调用元工具：转发任意 canonical 工具（03 §9），与 search 对称。
+        self.tool_registry.register(ToolCallTool(self))
+
         # 用户搜索工具（平台 user 域）
         self.tool_registry.register(UserSearchTool())
 
@@ -93,10 +97,10 @@ class HasnCloudMcpServer:
         try:
             await self._load_app_tools(agent_context)
 
-            # legacy_all 暴露（设计 08 §6.2）：function-calling Runtime（hermes-agent）不支持
-            # 「search 后轮内二次注入工具声明」，只认 tools/list；故直接列出该 agent 可见的
-            # 全部工具（platform + 已加载 app），三态 deny 的不列。`namespace` 仅兼容保留，不收窄。
-            available_tools = self.tool_directory.list_all_tools(agent_context)
+            # 渐进式暴露（设计 03 §9）：默认只回 bootstrap 元工具（tool.search + tool.call）。
+            # 长尾工具不进清单，function-calling Runtime 经 hasn.cloud.tool.call 直调任意
+            # canonical name（legacy_all 全量暴露已退役）。`namespace` 仅兼容保留，不收窄。
+            available_tools = self.tool_directory.list_bootstrap_tools(agent_context)
         except Exception as e:
             logger.error(f'Error listing tools: {e!s}', exc_info=True)
             raise
