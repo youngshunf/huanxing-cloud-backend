@@ -29,22 +29,22 @@ def _human(hasn_id: str, star_id: str, name: str) -> SimpleNamespace:
     return SimpleNamespace(hasn_id=hasn_id, star_id=star_id, name=name)
 
 
-def _request(req_id: int, owner_id: str, peer_id: str, message: str = '') -> SimpleNamespace:
+def _pending_request(req_id: int, from_id: str, to_id: str, message: str = '') -> SimpleNamespace:
+    """hasn_contact_requests 行（拆表后：from_id/to_id/message，目标恒 human）。"""
     return SimpleNamespace(
         id=req_id,
-        owner_id=owner_id,
-        peer_id=peer_id,
+        from_id=from_id,
+        to_id=to_id,
+        to_owner_id=to_id,
+        from_type='human',
+        to_type='human',
+        relation_type='social',
+        requested_trust_level=2,
         status='pending',
-        request_message=message,
-        peer_type='human',
+        message=message,
         channel_source=None,
+        created_time=None,
     )
-
-
-def _agent_request(req_id: int, owner_id: str, peer_id: str, message: str = '') -> SimpleNamespace:
-    request = _request(req_id, owner_id, peer_id, message)
-    request.peer_type = 'agent'
-    return request
 
 
 def _connected_contact(contact_id: int, owner_id: str, peer_id: str) -> SimpleNamespace:
@@ -95,10 +95,10 @@ class _EmptyAgentResult:
 
 @pytest.mark.asyncio
 async def test_received_default_unchanged() -> None:
-    """direction='received' 走旧 received 路径, 旧 daemon 调用照常工作。"""
+    """direction='received' 读 hasn_contact_requests.get_received_pending，契约对 daemon 不变。"""
     with patch(
-        'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.get_pending_requests',
-        new=AsyncMock(return_value=[_request(101, PEER, SELF, '想加个好友')]),
+        'backend.app.hasn.api.v1.app.contacts.hasn_contact_requests_dao.get_received_pending',
+        new=AsyncMock(return_value=[_pending_request(101, PEER, SELF, '想加个好友')]),
     ), patch(
         'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
         new=AsyncMock(return_value=_human(PEER, '100002', 'Bob')),
@@ -113,17 +113,17 @@ async def test_received_default_unchanged() -> None:
     assert items[0]['request_id'] == 101
     assert items[0]['from_peer']['hasn_id'] == PEER
     assert items[0]['from_peer']['name'] == 'Bob'
-    # sent 路径不应被触发, 因此 target 应为 None
+    # 拆表后请求恒 human→human，received 不再带 target
     assert items[0]['target'] is None
     assert items[0]['message'] == '想加个好友'
 
 
 @pytest.mark.asyncio
 async def test_sent_direction_returns_target() -> None:
-    """direction=sent 走 get_sent_pending_requests + target 字段。"""
+    """direction=sent 走 get_sent_pending + target 字段（目标 human）。"""
     with patch(
-        'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.get_sent_pending_requests',
-        new=AsyncMock(return_value=[_request(202, SELF, PEER)]),
+        'backend.app.hasn.api.v1.app.contacts.hasn_contact_requests_dao.get_sent_pending',
+        new=AsyncMock(return_value=[_pending_request(202, SELF, PEER)]),
     ), patch(
         'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
         new=AsyncMock(return_value=_human(PEER, '100002', 'Bob')),
@@ -143,24 +143,14 @@ async def test_sent_direction_returns_target() -> None:
 
 
 @pytest.mark.asyncio
-async def test_received_agent_request_returns_target_agent() -> None:
-    """收到添加我 Agent 的请求时, 返回 from_peer + target Agent 供 UI 展示。"""
+async def test_received_sender_resolution_falls_back_to_stub() -> None:
+    """received: from_id 人类解析失败时回退 stub 占位（空串），不抛 500 (INV-15)。"""
     with patch(
-        'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.get_pending_requests',
-        new=AsyncMock(return_value=[_agent_request(203, PEER, PEER_AGENT, '想联系你的 Agent')]),
+        'backend.app.hasn.api.v1.app.contacts.hasn_contact_requests_dao.get_received_pending',
+        new=AsyncMock(return_value=[_pending_request(203, 'h_unknownxxxxxxxxxx', SELF)]),
     ), patch(
         'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
-        new=AsyncMock(return_value=_human(PEER, '100002', 'Bob')),
-    ), patch(
-        'backend.app.hasn.api.v1.app.contacts.hasn_agents_dao.get_by_hasn_id',
-        new=AsyncMock(
-            return_value=SimpleNamespace(
-                hasn_id=PEER_AGENT,
-                star_id='100001#helper',
-                display_name='我的助手',
-                name='我的助手',
-            )
-        ),
+        new=AsyncMock(return_value=None),
     ):
         resp = await list_pending_requests(
             db=AsyncMock(),
@@ -169,20 +159,20 @@ async def test_received_agent_request_returns_target_agent() -> None:
         )
     items = resp.data
     assert len(items) == 1
-    assert items[0]['from_peer']['hasn_id'] == PEER
-    assert items[0]['target']['hasn_id'] == PEER_AGENT
-    assert items[0]['target']['name'] == '我的助手'
-    assert items[0]['target']['type'] == 'agent'
+    assert items[0]['from_peer']['hasn_id'] == 'h_unknownxxxxxxxxxx'
+    assert items[0]['from_peer']['name'] == ''
+    assert items[0]['from_peer']['star_id'] == ''
+    assert items[0]['target'] is None
 
 
 @pytest.mark.asyncio
 async def test_sent_and_received_dont_cross() -> None:
     """A 发给 B: A 看到 sent, B 看到 received, 互不串。"""
     with patch(
-        'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.get_sent_pending_requests',
-        new=AsyncMock(return_value=[_request(303, SELF, PEER)]),
+        'backend.app.hasn.api.v1.app.contacts.hasn_contact_requests_dao.get_sent_pending',
+        new=AsyncMock(return_value=[_pending_request(303, SELF, PEER)]),
     ) as mock_sent, patch(
-        'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.get_pending_requests',
+        'backend.app.hasn.api.v1.app.contacts.hasn_contact_requests_dao.get_received_pending',
         new=AsyncMock(return_value=[]),
     ) as mock_received, patch(
         'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
@@ -219,15 +209,12 @@ async def test_invalid_direction_raises_422() -> None:
 
 @pytest.mark.asyncio
 async def test_sent_peer_resolution_falls_back_to_stub() -> None:
-    """peer_id 解析失败时返回 stub 占位, 不抛 500 (INV-15)。"""
+    """to_id 解析失败时返回 stub 占位, 不抛 500 (INV-15)。"""
     with patch(
-        'backend.app.hasn.api.v1.app.contacts.hasn_contacts_dao.get_sent_pending_requests',
-        new=AsyncMock(return_value=[_request(404, SELF, 'h_unknownxxxxxxxxxx')]),
+        'backend.app.hasn.api.v1.app.contacts.hasn_contact_requests_dao.get_sent_pending',
+        new=AsyncMock(return_value=[_pending_request(404, SELF, 'h_unknownxxxxxxxxxx')]),
     ), patch(
         'backend.app.hasn.api.v1.app.contacts.hasn_humans_dao.get_by_hasn_id',
-        new=AsyncMock(return_value=None),
-    ), patch(
-        'backend.app.hasn.api.v1.app.contacts.hasn_agents_dao.get_by_hasn_id',
         new=AsyncMock(return_value=None),
     ):
         resp = await list_pending_requests(

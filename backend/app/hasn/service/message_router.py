@@ -211,6 +211,25 @@ async def check_relation_permission(
     )
     relation = relation_result.scalar_one_or_none()
 
+    # 拉黑双向强制：对方是否拉黑了我（receiver → sender 方向，trust_level=0）。
+    # 现网历史只查发送方单向，导致"被拉黑方仍能发消息"。任一方向 blocked 一律拒绝，
+    # 且对 contact_request 类消息同样生效（被拉黑就不能再申请加好友）。
+    reverse_blocked = await db.execute(
+        select(HasnContacts.id).where(
+            HasnContacts.owner_id == receiver_lookup,
+            HasnContacts.peer_id == sender_lookup,
+            HasnContacts.trust_level == 0,
+        )
+    )
+    if reverse_blocked.scalar() is not None:
+        return {
+            'allowed': False,
+            'relation_type': relation.relation_type if relation else 'social',
+            'trust_level': 0,
+            'permission_state': 'deny',
+            'reason': '已被对方拉黑',
+        }
+
     if not relation:
         # 好友请求类消息不需要已有关系
         if msg_type in ('contact_request', 'contact_accept', 'contact_reject'):

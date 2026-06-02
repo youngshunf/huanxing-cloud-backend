@@ -1,6 +1,7 @@
-from typing import Sequence
+from collections.abc import Sequence
 
-from sqlalchemy import Select, select, update, or_, and_, func
+from sqlalchemy import Select, and_, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy_crud_plus import CRUDPlus
 
@@ -105,6 +106,57 @@ class CRUDHasnContacts(CRUDPlus[HasnContacts]):
         db.add(obj)
         await db.flush()
         return obj
+
+    @staticmethod
+    async def upsert_connected(
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        peer_id: str,
+        peer_type: str,
+        relation_type: str = 'social',
+        trust_level: int = 2,
+        peer_owner_id: str | None = None,
+        channel_source: str = 'manual',
+    ) -> HasnContacts:
+        """建立/复活一条 connected 关系边。
+
+        通过唯一约束 uq_hasn_contact_relation(owner_id,peer_id,relation_type) 做 UPSERT：
+        - 不存在则插入 connected；
+        - 已存在（含历史 archived / 之前被软删的好友）则翻回 connected 并刷新信任等级与连接时间。
+        这样 accept 时不会撞唯一约束，且重新加好友能复用历史行（保留 nickname/tags 等本地信息）。
+        """
+        stmt = (
+            pg_insert(HasnContacts)
+            .values(
+                owner_id=owner_id,
+                peer_id=peer_id,
+                peer_owner_id=peer_owner_id,
+                peer_type=peer_type,
+                relation_type=relation_type,
+                trust_level=trust_level,
+                status='connected',
+                channel_source=channel_source,
+                connected_at=func.now(),
+            )
+            .on_conflict_do_update(
+                index_elements=['owner_id', 'peer_id', 'relation_type'],
+                set_={
+                    'status': 'connected',
+                    'trust_level': trust_level,
+                    'peer_owner_id': peer_owner_id,
+                    'peer_type': peer_type,
+                    'connected_at': func.now(),
+                    'updated_time': func.now(),
+                },
+            )
+            .returning(HasnContacts)
+        )
+        # populate_existing：让 RETURNING 的新值覆盖 identity-map 里的旧行
+        # （否则复活 archived 行时返回对象仍是陈旧的 status='archived'）
+        result = await db.execute(stmt, execution_options={'populate_existing': True})
+        await db.flush()
+        return result.scalars().first()
 
     @staticmethod
     async def accept_request(db: AsyncSession, contact_id: int) -> None:
