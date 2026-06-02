@@ -20,20 +20,22 @@ from backend.app.hasn.api.v1.app.search import search_users
 
 
 def _human(hasn_id: str, star_id: str, name: str, avatar_url: str | None = None) -> SimpleNamespace:
+    # 忠实真实 schema：HasnHumans 用 nickname（不是 name），_make_item 据此取显示名。
     return SimpleNamespace(
         hasn_id=hasn_id,
         star_id=star_id,
-        name=name,
+        nickname=name,
         avatar_url=avatar_url,
         status='active',
     )
 
 
 def _agent(hasn_id: str, star_id: str, name: str) -> SimpleNamespace:
+    # 忠实真实 schema：HasnAgents 用 display_name（不是 name）。
     return SimpleNamespace(
         hasn_id=hasn_id,
         star_id=star_id,
-        name=name,
+        display_name=name,
         avatar_url=None,
     )
 
@@ -43,6 +45,19 @@ def _relation(status: str) -> SimpleNamespace:
 
 
 SELF = "h_selfaaaaaaaaaaaaaaaa"
+
+
+@pytest.fixture(autouse=True)
+def _mock_search_by_phone():
+    """auto 搜索现在也并入手机号精确命中；这些 star_id/昵称用例统一 mock 成无手机命中。
+
+    专门的手机号命中用例在 test_contact_requests_split_integration（打真实 DB）。
+    """
+    with patch(
+        'backend.app.hasn.api.v1.app.search.hasn_humans_dao.search_by_phone',
+        new=AsyncMock(return_value=None),
+    ):
+        yield
 
 
 @pytest.mark.asyncio
