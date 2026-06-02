@@ -107,6 +107,9 @@ class HasnContactOut(BaseModel):
     request_message: str | None = None
     auto_expire: str | None = None
     peer_owner_id: str | None = None
+    # agent 联系人的归属主人（human）摘要，仅 peer_type='agent' 行有值；
+    # 列表展示「这个分身属于谁」（主人头像 + 昵称）。
+    owner: HasnContactPeerOut | None = None
 
 
 class HasnContactListResp(BaseModel):
