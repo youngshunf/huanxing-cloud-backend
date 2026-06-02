@@ -6,19 +6,30 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Text, and_, cast, func, or_, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from backend.app.hasn.model import HasnAgents, HasnHumans
-from backend.app.hasn_community.model import HasnArticles, HasnCollectionItems, HasnCollections, HasnCommunityBlocks, HasnComments, HasnFollows, HasnLikes, HasnPosts
-from backend.common.dataclasses import AgentTokenPayload
+from backend.app.hasn_community.model import (
+    HasnArticles,
+    HasnCollectionItems,
+    HasnCollections,
+    HasnComments,
+    HasnCommunityBlocks,
+    HasnFollows,
+    HasnLikes,
+    HasnPosts,
+)
 from backend.common.exception import errors
 from backend.database.db import uuid4_str
 from backend.utils.timezone import timezone
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from backend.common.dataclasses import AgentTokenPayload
 
 # ==================== 引用卡片（reference_cards）====================
 # 社区文章/帖子可引用 Agent 技能 / 任务结果 / 聊天摘要，沿用 IM 卡片消息 HasnCardResource 形状。
@@ -358,6 +369,39 @@ class CommunityService:
             'items': items,
             'next_cursor': next_cursor,
         }
+
+    @staticmethod
+    async def search(
+        db: AsyncSession,
+        *,
+        query: str,
+        content_type: str | None = None,
+        tags: list[str] | None = None,
+        user_id: int | None = None,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """搜索社区内容（复用 feed 取数路径，零新增取数；零 fake）。
+
+        - content_type='article'：搜文章（标题/摘要/正文 ILIKE，hasn_articles）
+        - 否则（post / 缺省）：搜帖子（正文 ILIKE，hasn_posts）
+        - tags：可选话题过滤，取首个 tag 命中 tags 数组
+        - query 必填且非空；空查询直接返回空（不退化成全量 feed）
+
+        :return: {items, next_cursor}，item 形态与对应 feed 一致（content_type 标注 post/article）
+        """
+        q = (query or '').strip()
+        if not q:
+            return {'items': [], 'next_cursor': None}
+        tag = tags[0] if tags else None
+        if content_type == 'article':
+            viewer_hasn_id = await CommunityService._resolve_human_hasn_id(db, user_id)
+            return await CommunityService._get_articles_feed(
+                db, viewer_hasn_id=viewer_hasn_id, tag=tag, q=q, cursor=cursor, limit=limit,
+            )
+        return await CommunityService.get_feed(
+            db, user_id=user_id, feed_type='recommend', tag=tag, q=q, cursor=cursor, limit=limit,
+        )
 
     @staticmethod
     async def _get_articles_feed(
@@ -1010,21 +1054,27 @@ class CommunityService:
         *,
         target_type: str,
         target_id: str,
-        user_id: int,
         hasn_id: str,
         content: str,
         parent_id: str | None = None,
+        user_id: int | None = None,
+        author_type: str = 'human',
+        owner_hasn_id: str | None = None,
+        status: str = 'visible',
     ) -> dict[str, Any]:
         """
-        创建评论
+        创建评论（支持 human / agent 作者注入）
 
         :param db: 数据库会话
         :param target_type: 目标类型（post/article）
         :param target_id: 目标 ID
-        :param user_id: 用户 ID
-        :param hasn_id: 用户的 hasn_id
+        :param hasn_id: 评论作者的 hasn_id（human 本人 / agent 本人，恒取自认证）
         :param content: 评论内容
         :param parent_id: 父评论 ID（楼中楼回复）
+        :param user_id: human 作者的 user_id（agent 作者为 None）
+        :param author_type: 作者类型（human/agent）
+        :param owner_hasn_id: 内容归属主人 hasn_id（agent 评论=其主人；缺省=本人）
+        :param status: 初始状态（human=visible 直接可见；agent=pending_review 待审核）
         :return: 评论信息
         """
         comment_id = f"cmt_{uuid4_str()[:12]}"
@@ -1040,8 +1090,9 @@ class CommunityService:
                 root_id = parent_comment.root_id or parent_comment.comment_id
 
         # TODO: 获取当前 active workspace
+        resolved_owner = owner_hasn_id or hasn_id
         workspace_kind = 'personal'
-        workspace_id = str(user_id)
+        workspace_id = str(user_id) if user_id is not None else resolved_owner
 
         comment = HasnComments(
             comment_id=comment_id,
@@ -1049,20 +1100,22 @@ class CommunityService:
             target_id=target_id,
             parent_id=parent_id,
             root_id=root_id,
-            author_type='human',
+            author_type=author_type,
             author_hasn_id=hasn_id,
             author_user_id=user_id,
-            owner_hasn_id=hasn_id,
+            owner_hasn_id=resolved_owner,
             origin_workspace_kind=workspace_kind,
             origin_workspace_id=workspace_id,
             content=content,
-            status='visible',
+            status=status,
         )
 
         db.add(comment)
         await db.flush()
 
-        # 更新目标的评论计数 + 捕获内容作者信息（用于通知）
+        is_visible = status == 'visible'
+
+        # 更新目标的评论计数（仅可见评论计数）+ 捕获内容作者信息（用于通知）
         target_author_hasn_id = None
         target_author_type = None
         target_owner_hasn_id = None
@@ -1071,7 +1124,8 @@ class CommunityService:
             post_result = await db.execute(post_stmt)
             post = post_result.scalars().first()
             if post:
-                post.comment_count += 1
+                if is_visible:
+                    post.comment_count += 1
                 target_author_hasn_id = post.author_hasn_id
                 target_author_type = post.author_type
                 target_owner_hasn_id = post.owner_hasn_id
@@ -1080,23 +1134,24 @@ class CommunityService:
             article_result = await db.execute(article_stmt)
             article = article_result.scalars().first()
             if article:
-                article.comment_count += 1
+                if is_visible:
+                    article.comment_count += 1
                 target_author_hasn_id = article.author_hasn_id
                 target_author_type = article.author_type
                 target_owner_hasn_id = article.owner_hasn_id
 
         await db.flush()
 
-        # 触发通知：内容作者（+ Agent 主人 relay）+ 被回复评论作者
-        parent_author_hasn_id = None
-        if parent_id:
-            pa = (
-                await db.execute(
-                    select(HasnComments.author_hasn_id).where(HasnComments.comment_id == parent_id)
-                )
-            ).scalar_one_or_none()
-            parent_author_hasn_id = pa
-        if target_author_hasn_id:
+        # 触发通知：仅可见评论通知内容作者（+ Agent 主人 relay）+ 被回复评论作者。
+        # pending_review（Agent 评论待审）不公开，故不通知内容作者；draft-pending 通知由调用方处理。
+        if is_visible and target_author_hasn_id:
+            parent_author_hasn_id = None
+            if parent_id:
+                parent_author_hasn_id = (
+                    await db.execute(
+                        select(HasnComments.author_hasn_id).where(HasnComments.comment_id == parent_id)
+                    )
+                ).scalar_one_or_none()
             from backend.app.hasn_community.service.notification_service import notification_service
 
             await notification_service.notify_content_interaction(
@@ -1114,7 +1169,7 @@ class CommunityService:
 
         return {
             'comment_id': comment_id,
-            'status': 'visible',
+            'status': status,
             'created_time': comment.created_time.isoformat() if comment.created_time else None,
         }
 
@@ -1155,7 +1210,7 @@ class CommunityService:
     async def create_like(
         db: AsyncSession,
         *,
-        user_id: int,
+        user_id: int | None = None,
         hasn_id: str,
         target_type: str,
         target_id: str,
@@ -1247,7 +1302,7 @@ class CommunityService:
     async def delete_like(
         db: AsyncSession,
         *,
-        user_id: int,
+        user_id: int | None = None,
         hasn_id: str,
         target_type: str,
         target_id: str,
@@ -1302,7 +1357,7 @@ class CommunityService:
     async def create_follow(
         db: AsyncSession,
         *,
-        user_id: int,
+        user_id: int | None = None,
         hasn_id: str,
         target_type: str,
         target_hasn_id: str,
@@ -1359,7 +1414,7 @@ class CommunityService:
     async def delete_follow(
         db: AsyncSession,
         *,
-        user_id: int,
+        user_id: int | None = None,
         hasn_id: str,
         target_type: str,
         target_hasn_id: str,
@@ -1579,16 +1634,14 @@ class CommunityService:
         result = await db.execute(stmt)
         posts = result.scalars().all()
 
-        items = []
-        for post in posts:
-            items.append({
+        items = [{
                 'post_id': post.post_id,
                 'content': post.content,
                 'tags': post.tags or [],
                 'like_count': post.like_count,
                 'comment_count': post.comment_count,
                 'published_time': post.published_time.isoformat() if post.published_time else None,
-            })
+            } for post in posts]
 
         return {
             'items': items,
@@ -1627,9 +1680,7 @@ class CommunityService:
         result = await db.execute(stmt)
         articles = result.scalars().all()
 
-        items = []
-        for article in articles:
-            items.append({
+        items = [{
                 'article_id': article.article_id,
                 'title': article.title,
                 'summary': article.summary,
@@ -1638,7 +1689,7 @@ class CommunityService:
                 'like_count': article.like_count,
                 'comment_count': article.comment_count,
                 'published_time': article.published_time.isoformat() if article.published_time else None,
-            })
+            } for article in articles]
 
         return {
             'items': items,
@@ -1747,14 +1798,12 @@ class CommunityService:
         result = await db.execute(stmt)
         collections = result.scalars().all()
 
-        collection_list = []
-        for collection in collections:
-            collection_list.append({
+        collection_list = [{
                 'collection_id': collection.collection_id,
                 'name': collection.name,
                 'is_public': collection.is_public,
                 'item_count': collection.item_count,
-            })
+            } for collection in collections]
 
         return collection_list
 
@@ -2493,9 +2542,9 @@ class CommunityService:
         :param article_id: 文章 ID
         :return: 文章详情
         """
-        from backend.app.hasn_community.model.hasn_articles import HasnArticles
-        from backend.app.hasn.model.hasn_humans import HasnHumans
         from backend.app.hasn.model.hasn_agents import HasnAgents
+        from backend.app.hasn.model.hasn_humans import HasnHumans
+        from backend.app.hasn_community.model.hasn_articles import HasnArticles
 
         # 查询文章
         stmt = select(HasnArticles).where(HasnArticles.article_id == article_id)

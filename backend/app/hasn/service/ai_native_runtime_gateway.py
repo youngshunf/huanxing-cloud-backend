@@ -35,6 +35,43 @@ class _RuntimeDenialError(Exception):
         self.workspace = workspace
 
 
+# 社区工具入参声明式校验规则（gateway 二道防线；MCP tool.call 层另有 schema-on-error 主校验）。
+# required_str=必填非空字符串字段；enums=字段→允许值集合（必填且须命中）；maxlen=字段长度上界。
+# 未列工具默认通过。
+_COMMUNITY_INPUT_RULES: dict[str, dict[str, Any]] = {
+    'community.get_feed': {'enums': {'type': {'following', 'recommend', 'hot', 'articles'}}},
+    'community.get_post': {'required_str': ['post_id']},
+    'community.get_article': {'required_str': ['article_id']},
+    'community.get_comments': {'required_str': ['target_id'], 'enums': {'target_type': {'post', 'article'}}},
+    'community.search': {'required_str': ['query']},
+    'community.get_profile': {'required_str': ['hasn_id']},
+    'community.get_profile_content': {
+        'required_str': ['hasn_id'],
+        'enums': {'kind': {'posts', 'articles', 'collections', 'agents'}},
+    },
+    'community.get_trending_topics': {},
+    'community.get_recommended_agents': {},
+    'community.get_notifications': {},
+    'community.mark_notifications_read': {},
+    'community.create_post': {'required_str': ['content'], 'maxlen': {'content': 10000}},
+    'community.create_article': {
+        'required_str': ['title', 'content'],
+        'maxlen': {'title': 200, 'content': 100000},
+    },
+    'community.create_comment': {
+        'required_str': ['target_id', 'content'],
+        'enums': {'target_type': {'post', 'article'}},
+        'maxlen': {'content': 5000},
+    },
+    'community.like': {'required_str': ['target_id'], 'enums': {'target_type': {'post', 'article', 'comment'}}},
+    'community.unlike': {'required_str': ['target_id'], 'enums': {'target_type': {'post', 'article', 'comment'}}},
+    'community.follow': {'required_str': ['target_id'], 'enums': {'target_type': {'human', 'agent', 'topic'}}},
+    'community.unfollow': {'required_str': ['target_id'], 'enums': {'target_type': {'human', 'agent', 'topic'}}},
+    'community.collect': {'required_str': ['target_id'], 'enums': {'target_type': {'post', 'article'}}},
+    'community.uncollect': {'required_str': ['target_id'], 'enums': {'target_type': {'post', 'article'}}},
+}
+
+
 class AiNativeRuntimeGateway:
     async def get_capabilities(
         self, db: AsyncSession, *, request: Request, body: AiNativeRuntimeCapabilitiesRequest
@@ -267,6 +304,7 @@ class AiNativeRuntimeGateway:
     ) -> dict[str, Any]:
         from backend.app.hasn_community.service import community_tool_handlers as handlers
 
+        # 帖子/文章详情走专用资源取数（含可见性鉴权 + reference_cards），其余统一走 handlers 表。
         if tool_id == 'community.get_post':
             return await community_service.get_agent_post_resource(
                 db, agent=agent, post_id=str(input_payload['post_id'])
@@ -275,13 +313,35 @@ class AiNativeRuntimeGateway:
             return await community_service.get_agent_article_resource(
                 db, agent=agent, article_id=str(input_payload['article_id'])
             )
-        if tool_id == 'community.get_feed':
-            return await handlers.handle_community_get_feed(db, agent, input_payload)
-        if tool_id == 'community.create_post':
-            return await handlers.handle_community_create_post(db, agent, input_payload)
-        if tool_id == 'community.create_article':
-            return await handlers.handle_community_create_article(db, agent, input_payload)
-        raise errors.NotFoundError(msg='AI-Native 工具不存在')
+
+        handler_map = {
+            # 读取（community:read）
+            'community.get_feed': handlers.handle_community_get_feed,
+            'community.get_comments': handlers.handle_community_get_comments,
+            'community.search': handlers.handle_community_search,
+            'community.get_profile': handlers.handle_community_get_profile,
+            'community.get_profile_content': handlers.handle_community_get_profile_content,
+            'community.get_trending_topics': handlers.handle_community_get_trending_topics,
+            'community.get_recommended_agents': handlers.handle_community_get_recommended_agents,
+            'community.get_notifications': handlers.handle_community_get_notifications,
+            'community.mark_notifications_read': handlers.handle_community_mark_notifications_read,
+            # 发布（community:post）
+            'community.create_post': handlers.handle_community_create_post,
+            'community.create_article': handlers.handle_community_create_article,
+            # 评论（community:comment）
+            'community.create_comment': handlers.handle_community_create_comment,
+            # 互动（community:interact）
+            'community.like': handlers.handle_community_like,
+            'community.unlike': handlers.handle_community_unlike,
+            'community.follow': handlers.handle_community_follow,
+            'community.unfollow': handlers.handle_community_unfollow,
+            'community.collect': handlers.handle_community_collect,
+            'community.uncollect': handlers.handle_community_uncollect,
+        }
+        handler = handler_map.get(tool_id)
+        if handler is None:
+            raise errors.NotFoundError(msg='AI-Native 工具不存在')
+        return await handler(db, agent, input_payload)
 
     async def _deny(
         self,
@@ -519,32 +579,26 @@ class AiNativeRuntimeGateway:
     def _valid_tool_input(self, tool_id: str, data: dict[str, Any]) -> bool:
         if tool_id == 'knowledge.search':
             return self._valid_search_input(data)
-        if tool_id == 'community.get_feed':
-            feed_type = data.get('type')
-            if not isinstance(feed_type, str) or feed_type not in {'following', 'recommend', 'hot', 'articles'}:
+        rule = _COMMUNITY_INPUT_RULES.get(tool_id)
+        if rule is None:
+            return True
+        return self._check_community_rule(rule, data)
+
+    def _check_community_rule(self, rule: dict[str, Any], data: dict[str, Any]) -> bool:
+        """按声明式规则校验社区工具入参（必填字符串 / 枚举 / 长度上界 / limit）。"""
+        for field in rule.get('required_str', []):
+            val = data.get(field)
+            if not isinstance(val, str) or not val.strip():
                 return False
-            return self._valid_limit(data, default_max=50)
-        if tool_id == 'community.get_post':
-            post_id = data.get('post_id')
-            return isinstance(post_id, str) and bool(post_id.strip())
-        if tool_id == 'community.get_article':
-            article_id = data.get('article_id')
-            return isinstance(article_id, str) and bool(article_id.strip())
-        if tool_id == 'community.create_post':
-            content = data.get('content')
-            return isinstance(content, str) and bool(content.strip()) and len(content) <= 10000
-        if tool_id == 'community.create_article':
-            title = data.get('title')
-            content = data.get('content')
-            return (
-                isinstance(title, str)
-                and bool(title.strip())
-                and len(title) <= 200
-                and isinstance(content, str)
-                and bool(content.strip())
-                and len(content) <= 100000
-            )
-        return True
+        for field, allowed in rule.get('enums', {}).items():
+            val = data.get(field)
+            if not isinstance(val, str) or val not in allowed:
+                return False
+        for field, maxlen in rule.get('maxlen', {}).items():
+            val = data.get(field)
+            if isinstance(val, str) and len(val) > maxlen:
+                return False
+        return self._valid_limit(data, default_max=50)
 
     def _valid_limit(self, data: dict[str, Any], *, default_max: int) -> bool:
         if 'limit' not in data or data['limit'] is None:

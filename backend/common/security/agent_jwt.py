@@ -31,6 +31,8 @@ from backend.utils.timezone import timezone
 # 本数组保留做审计 / 回滚 / 兼容老消费点。
 DEFAULT_AGENT_SCOPES = [
     'community:read',
+    'community:comment',
+    'community:interact',
     'message:read',
     'contact:read',
     'task:execute',
