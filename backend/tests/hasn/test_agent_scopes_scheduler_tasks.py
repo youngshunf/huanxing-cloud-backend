@@ -129,17 +129,20 @@ async def test_agent_scopes_api_resolves_owner_and_delegates(monkeypatch: pytest
     monkeypatch.setattr(module.agent_scopes_service, 'get_scope_catalog', get_catalog)
 
     request = SimpleNamespace(user=SimpleNamespace(id=7))
-    assert await module.get_agent_scopes(request, 'a_agent', object()) == 'config'
-    assert (
-        await module.update_agent_scopes(
-            request,
-            'a_agent',
-            UpdateAgentScopesRequest(default_mode='deny', capability_modes={}),
-            object(),
-        )
-        == 'updated'
+    # API 一律走 fba 标准信封 ResponseModel（daemon envelope 解析依赖此约定）；
+    # service 结果落在 .data，不再裸返回。
+    get_resp = await module.get_agent_scopes(request, 'a_agent', object())
+    assert get_resp.code == 200
+    assert get_resp.data == 'config'
+    update_resp = await module.update_agent_scopes(
+        request,
+        'a_agent',
+        UpdateAgentScopesRequest(default_mode='deny', capability_modes={}),
+        object(),
     )
-    assert await module.get_scope_catalog(request, 'a_agent', object()) == 'catalog'
+    assert update_resp.data == 'updated'
+    catalog_resp = await module.get_scope_catalog(request, 'a_agent', object())
+    assert catalog_resp.data == 'catalog'
 
     # 身份从 Owner JWT 解析为 owner_hasn_id；D3 后不再透传 owner_user_id。
     assert captured[0][1]['owner_hasn_id'] == 'h_owner'

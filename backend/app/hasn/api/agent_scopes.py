@@ -2,6 +2,9 @@
 
 Q2 路由迁移：canonical 落到 Agent 资源域 `/agents/{id}/scopes`，
 旧 `/community/settings/agents/{id}` 保留为兼容别名（转发同一 service）。
+
+响应一律走 fba 标准信封 `ResponseModel`（`{code, msg, data}`）：daemon 的
+envelope 解析依赖此约定，裸返回 Pydantic 模型会让 daemon 解析失败。
 """
 
 from typing import Annotated
@@ -11,16 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.hasn.crud.crud_hasn_humans import hasn_humans_dao
 from backend.app.hasn.schema.agent_scopes import (
-    AgentScopesConfig,
     AskDecisionRequest,
     AskRequestItem,
     AskRequestsResponse,
-    ScopeCatalogResponse,
     UpdateAgentScopesRequest,
-    UpdateAgentScopesResponse,
 )
 from backend.app.hasn.service.agent_scopes_service import agent_scopes_service
 from backend.common.exception import errors
+from backend.common.response.response_schema import ResponseModel, response_base
 from backend.common.security.jwt import DependsJwtAuth
 from backend.database.db import get_db
 
@@ -48,13 +49,14 @@ async def get_agent_scopes(
     request: Request,
     agent_hasn_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> AgentScopesConfig:
+) -> ResponseModel:
     owner_hasn_id = await _owner_hasn_id(request, db)
-    return await agent_scopes_service.get_agent_scopes(
+    config = await agent_scopes_service.get_agent_scopes(
         db=db,
         agent_hasn_id=agent_hasn_id,
         owner_hasn_id=owner_hasn_id,
     )
+    return response_base.success(data=config)
 
 
 @router.put(
@@ -68,14 +70,15 @@ async def update_agent_scopes(
     agent_hasn_id: str,
     request_body: UpdateAgentScopesRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> UpdateAgentScopesResponse:
+) -> ResponseModel:
     owner_hasn_id = await _owner_hasn_id(request, db)
-    return await agent_scopes_service.update_agent_scopes(
+    result = await agent_scopes_service.update_agent_scopes(
         db=db,
         agent_hasn_id=agent_hasn_id,
         owner_hasn_id=owner_hasn_id,
         request=request_body,
     )
+    return response_base.success(data=result)
 
 
 @router.get(
@@ -88,13 +91,14 @@ async def get_scope_catalog(
     request: Request,
     agent_hasn_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> ScopeCatalogResponse:
+) -> ResponseModel:
     owner_hasn_id = await _owner_hasn_id(request, db)
-    return await agent_scopes_service.get_scope_catalog(
+    catalog = await agent_scopes_service.get_scope_catalog(
         db=db,
         agent_hasn_id=agent_hasn_id,
         owner_hasn_id=owner_hasn_id,
     )
+    return response_base.success(data=catalog)
 
 
 # ---------- ask 态批准请求（P6，主人侧列出/决定） ----------
@@ -110,12 +114,13 @@ async def list_ask_requests(
     request: Request,
     agent_hasn_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> AskRequestsResponse:
+) -> ResponseModel:
     owner_hasn_id = await _owner_hasn_id(request, db)
     pending = await agent_scopes_service.list_ask_requests(
         db=db, agent_hasn_id=agent_hasn_id, owner_hasn_id=owner_hasn_id
     )
-    return AskRequestsResponse(requests=[AskRequestItem(**item) for item in pending])
+    data = AskRequestsResponse(requests=[AskRequestItem(**item) for item in pending])
+    return response_base.success(data=data)
 
 
 @router.post(
@@ -130,7 +135,7 @@ async def decide_ask_request(
     request_id: str,
     request_body: AskDecisionRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> dict:
+) -> ResponseModel:
     owner_hasn_id = await _owner_hasn_id(request, db)
     await agent_scopes_service.decide_ask_request(
         db=db,
@@ -139,7 +144,7 @@ async def decide_ask_request(
         request_id=request_id,
         decision=request_body.decision,
     )
-    return {'request_id': request_id, 'decision': request_body.decision}
+    return response_base.success(data={'request_id': request_id, 'decision': request_body.decision})
 
 
 # ---------- 兼容别名：旧 /community/settings/agents/{id}（转发同一 service） ----------
@@ -156,7 +161,7 @@ async def get_agent_scopes_compat(
     request: Request,
     agent_hasn_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> AgentScopesConfig:
+) -> ResponseModel:
     return await get_agent_scopes(request, agent_hasn_id, db)
 
 
@@ -172,5 +177,5 @@ async def update_agent_scopes_compat(
     agent_hasn_id: str,
     request_body: UpdateAgentScopesRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> UpdateAgentScopesResponse:
+) -> ResponseModel:
     return await update_agent_scopes(request, agent_hasn_id, request_body, db)
