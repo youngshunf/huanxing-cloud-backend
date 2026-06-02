@@ -531,6 +531,7 @@ async def list_contacts(
                         avatar=getattr(a, 'avatar', None),
                         type=a.type or 'desktop',
                         role=a.role or 'specialist',
+                        bio=getattr(a, 'bio', None),
                     ) for a in agent_result.scalars().all())
 
         # HasnHumans 使用 nickname，HasnAgents 使用 display_name

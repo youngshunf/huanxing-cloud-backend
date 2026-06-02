@@ -56,6 +56,7 @@ class AgentPeerOut(BaseModel):
     avatar: str | None = None
     type: str = 'desktop'
     role: str = 'specialist'
+    bio: str | None = None
     online_status: str = 'unknown'
     last_seen_at: str | None = None
 

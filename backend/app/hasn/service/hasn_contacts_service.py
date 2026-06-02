@@ -141,6 +141,7 @@ class HasnContactsService:
                         "avatar": agent.avatar,
                         "type": agent.type,
                         "role": agent.role,
+                        "bio": agent.bio,
                         "online_status": runtime_status or "unknown",
                         "last_seen_at": last_seen_at.isoformat() if last_seen_at else None,
                     }
