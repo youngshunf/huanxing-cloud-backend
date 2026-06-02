@@ -25,8 +25,10 @@ class HasnContactPeerOut(BaseModel):
 
 
 # add_source「添加来源」合法取值（与 hasn_contact_requests.add_source 字典对齐）
+# search = 主动搜索（单输入框统一搜 唤星号/昵称/手机号，不再细分来源）；
+# search_star_id/nickname/phone 保留兼容旧数据，新数据统一用 search。
 ADD_SOURCE_VALUES = frozenset({
-    'search_star_id', 'search_nickname', 'search_phone',
+    'search', 'search_star_id', 'search_nickname', 'search_phone',
     'community', 'agent_discovery', 'qr_code', 'system', 'other',
 })
 
