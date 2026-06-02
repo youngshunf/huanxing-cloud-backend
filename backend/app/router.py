@@ -26,6 +26,9 @@ from backend.app.hasn_community.api.router import admin as community_admin
 from backend.app.hasn_community.api.router import agent as community_agent
 from backend.app.hasn_community.api.router import app as community_app
 from backend.app.hasn_community.api.router import open_api as community_open
+from backend.app.notification.api.router import admin as notification_admin
+from backend.app.notification.api.router import agent as notification_agent
+from backend.app.notification.api.router import app as notification_app
 from backend.app.hermes.api.router import app as hermes_app
 from backend.app.hermes.api.router import internal as hermes_internal
 from backend.app.hermes.api.router import v1 as hermes_v1
@@ -113,6 +116,11 @@ router.include_router(community_app)          # 社区 用户端 API（/api/v1/c
 router.include_router(community_agent)        # 社区 Agent API（/api/v1/community/agent，Agent JWT）
 router.include_router(community_open)         # 社区 公开 API（/api/v1/community/open，无鉴权只读）
 router.include_router(community_admin)        # 社区 管理端 API（/api/v1/community/admin，Admin JWT 只读审核）
+
+# 统一通知服务（§9，单一 emit 入口 + 通知中心权威视图 + 主人偏好）
+router.include_router(notification_app)        # 通知 用户端 API（/api/v1/notifications/app，Owner JWT）
+router.include_router(notification_agent)      # 通知 Agent API（/api/v1/notifications/agent，Agent JWT）
+router.include_router(notification_admin)      # 通知 管理端 API（/api/v1/notifications/admin，Admin JWT 只读运维）
 
 
 # Hermes（后台管理 CRUD；用户端 /hermes/app/agents 后续手写编排 API）

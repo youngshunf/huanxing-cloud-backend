@@ -1,0 +1,341 @@
+"""统一通知服务（§5）。
+
+唯一生产入口 emit()：解析投递策略 → 去重/聚合 → 落权威行 hasn_notifications（超集）→
+（P2 起）按策略 fanout 到各承载。本模块还承载读取/已读/未读 与 主人偏好 CRUD。
+
+承袭社区 notification_service 的读时聚合与未读分类语义（提升为通用），社区 notify_* 改为
+本服务 emit() 的薄封装（见 app/hasn_community/service/notification_service.py）。
+"""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import func, select
+
+from backend.app.hasn.model.hasn_notifications import HasnNotifications
+from backend.app.notification.model.hasn_notification_preferences import HasnNotificationPreferences
+from backend.app.notification.service.delivery_policy import default_priority, resolve_policy
+from backend.common.exception import errors
+from backend.utils.timezone import timezone as _tz
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+
+class NotificationService:
+    """统一通知服务（生产 + 读取 + 偏好）。"""
+
+    # ==================== 生产入口 ====================
+
+    @classmethod
+    async def emit(
+        cls,
+        db: AsyncSession,
+        *,
+        recipient_id: str,
+        source: dict[str, Any],
+        category: str,
+        type: str,
+        title: str,
+        body: str | None = None,
+        payload: dict[str, Any] | None = None,
+        priority: str | None = None,
+        dedupe_key: str | None = None,
+        group_key: str | None = None,
+        delivery_hint: dict[str, Any] | None = None,
+    ) -> int:
+        """落一条权威通知行，返回 notification_id（§5）。
+
+        P1：解析策略 → 去重/聚合 → 落权威行（delivery 记录策略意图）。
+        承载 fanout（卡片消息/toast/push）在 P2 接入；center 即权威行本身。
+        """
+        if not recipient_id:
+            raise errors.RequestError(msg='recipient_id 不能为空')
+        payload = dict(payload or {})
+        priority = priority or default_priority(category)
+
+        # 1) 解析投递策略 = category 默认 ⊕ 主人偏好 ⊕ delivery_hint
+        pref = await cls._get_effective_preference(db, owner_id=recipient_id, category=category)
+        policy = resolve_policy(
+            category=category,
+            priority=priority,
+            owner_pref=pref,
+            delivery_hint=delivery_hint,
+            now=_tz.now(),
+        )
+
+        # 2) group_key 默认 {type}:{target.id}
+        if not group_key:
+            target_id = (payload.get('target') or {}).get('id', '')
+            group_key = f'{type}:{target_id}'
+
+        # 3) 去重/聚合：dedupe_key 命中近窗未读行 → 聚合计数，不重复落行
+        if dedupe_key:
+            existing = (
+                await db.execute(
+                    select(HasnNotifications)
+                    .where(
+                        HasnNotifications.target_id == recipient_id,
+                        HasnNotifications.dedupe_key == dedupe_key,
+                        HasnNotifications.state == 'unread',
+                    )
+                    .order_by(HasnNotifications.id.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                merged = dict(existing.data or {})
+                merged.update(payload)
+                merged['aggregated_count'] = int(merged.get('aggregated_count', 1)) + 1
+                existing.data = merged
+                existing.title = title
+                if body is not None:
+                    existing.body = body
+                existing.updated_time = _tz.now()
+                await db.flush()
+                return existing.id
+
+        # 4) 落权威行
+        row = HasnNotifications(
+            target_id=recipient_id,
+            type=type,
+            title=title,
+            body=body,
+            data=payload,
+            read=False,
+            category=category,
+            priority=priority,
+            source=dict(source or {}),
+            dedupe_key=dedupe_key,
+            group_key=group_key,
+            delivery=policy,
+            state='unread',
+        )
+        db.add(row)
+        await db.flush()
+        return row.id
+
+    # ==================== 读取 / 已读（承袭社区语义，扩展 category） ====================
+
+    @staticmethod
+    async def list_notifications(
+        db: AsyncSession,
+        *,
+        recipient_hasn_id: str,
+        types: list[str] | None = None,
+        categories: list[str] | None = None,
+        unread_only: bool = False,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """通知列表（type/category/unread 过滤 + 游标分页 + 读时聚合）。"""
+        stmt = select(HasnNotifications).where(HasnNotifications.target_id == recipient_hasn_id)
+        if types:
+            stmt = stmt.where(HasnNotifications.type.in_(types))
+        if categories:
+            stmt = stmt.where(HasnNotifications.category.in_(categories))
+        if unread_only:
+            stmt = stmt.where(HasnNotifications.read.is_(False))
+        if cursor:
+            stmt = stmt.where(HasnNotifications.id < int(cursor))
+        stmt = stmt.order_by(HasnNotifications.id.desc()).limit(limit + 1)
+
+        rows = (await db.execute(stmt)).scalars().all()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+
+        # 读时聚合：同 group_key 折叠（缺省 group_key 等价 (type,target.id)）
+        seen: dict[str, dict[str, Any]] = {}
+        items: list[dict[str, Any]] = []
+        for n in rows:
+            data = n.data or {}
+            target = data.get('target', {})
+            key = n.group_key or f'{n.type}:{target.get("id", "")}'
+            agg_seed = int(data.get('aggregated_count', 1))
+            if key in seen and target.get('id') is not None:
+                seen[key]['aggregated_count'] += agg_seed
+                continue
+            entry = {
+                'id': n.id,
+                'type': n.type,
+                'category': n.category,
+                'priority': n.priority,
+                'source': n.source or {},
+                'state': n.state,
+                'title': n.title,
+                'actor': data.get('actor'),
+                'target': target,
+                'preview': data.get('preview'),
+                'link': data.get('link'),
+                'relay_from': data.get('relay_from'),
+                'read': n.read,
+                'aggregated_count': agg_seed,
+                'created_time': n.created_time.isoformat() if n.created_time else None,
+            }
+            items.append(entry)
+            if target.get('id') is not None:
+                seen[key] = entry
+
+        return {
+            'items': items,
+            'next_cursor': str(rows[-1].id) if has_more and rows else None,
+            'aggregated': True,
+        }
+
+    @staticmethod
+    async def unread_count(
+        db: AsyncSession,
+        *,
+        recipient_hasn_id: str,
+    ) -> dict[str, Any]:
+        """未读总数 + 按 type + 按 category 分组。"""
+        base = (
+            HasnNotifications.target_id == recipient_hasn_id,
+            HasnNotifications.read.is_(False),
+        )
+        total = (
+            await db.execute(select(func.count()).select_from(HasnNotifications).where(*base))
+        ).scalar() or 0
+        by_type_rows = (
+            await db.execute(
+                select(HasnNotifications.type, func.count()).where(*base).group_by(HasnNotifications.type)
+            )
+        ).all()
+        by_cat_rows = (
+            await db.execute(
+                select(HasnNotifications.category, func.count())
+                .where(*base)
+                .group_by(HasnNotifications.category)
+            )
+        ).all()
+        return {
+            'total': int(total),
+            'by_type': {row[0]: int(row[1]) for row in by_type_rows},
+            'by_category': {row[0]: int(row[1]) for row in by_cat_rows},
+        }
+
+    @staticmethod
+    async def mark_read(
+        db: AsyncSession,
+        *,
+        recipient_hasn_id: str,
+        notification_id: int,
+    ) -> None:
+        """标记单条已读（仅本人）。read 与 state 双写（§4.1）。"""
+        n = (
+            await db.execute(
+                select(HasnNotifications).where(
+                    HasnNotifications.id == notification_id,
+                    HasnNotifications.target_id == recipient_hasn_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if not n:
+            raise errors.NotFoundError(msg='通知不存在')
+        n.read = True
+        n.state = 'read'
+        await db.flush()
+
+    @staticmethod
+    async def mark_all_read(
+        db: AsyncSession,
+        *,
+        recipient_hasn_id: str,
+        types: list[str] | None = None,
+        categories: list[str] | None = None,
+    ) -> int:
+        """全部已读（可按 type/category 过滤），返回影响条数。"""
+        stmt = select(HasnNotifications).where(
+            HasnNotifications.target_id == recipient_hasn_id,
+            HasnNotifications.read.is_(False),
+        )
+        if types:
+            stmt = stmt.where(HasnNotifications.type.in_(types))
+        if categories:
+            stmt = stmt.where(HasnNotifications.category.in_(categories))
+        rows = (await db.execute(stmt)).scalars().all()
+        for n in rows:
+            n.read = True
+            n.state = 'read'
+        await db.flush()
+        return len(rows)
+
+    # ==================== 主人偏好 CRUD（§4.4） ====================
+
+    @staticmethod
+    async def _get_effective_preference(
+        db: AsyncSession, *, owner_id: str, category: str
+    ) -> HasnNotificationPreferences | None:
+        """取 category 专属偏好，缺失回退 '*' 全局默认，再缺失 None。"""
+        rows = (
+            await db.execute(
+                select(HasnNotificationPreferences).where(
+                    HasnNotificationPreferences.owner_id == owner_id,
+                    HasnNotificationPreferences.category.in_([category, '*']),
+                )
+            )
+        ).scalars().all()
+        specific = next((r for r in rows if r.category == category), None)
+        return specific or next((r for r in rows if r.category == '*'), None)
+
+    @staticmethod
+    async def list_preferences(db: AsyncSession, *, owner_id: str) -> list[dict[str, Any]]:
+        rows = (
+            await db.execute(
+                select(HasnNotificationPreferences).where(
+                    HasnNotificationPreferences.owner_id == owner_id
+                )
+            )
+        ).scalars().all()
+        return [
+            {
+                'category': r.category,
+                'channels': r.channels or {},
+                'dnd': r.dnd or {},
+                'updated_time': r.updated_time.isoformat() if r.updated_time else None,
+            }
+            for r in rows
+        ]
+
+    @classmethod
+    async def upsert_preference(
+        cls,
+        db: AsyncSession,
+        *,
+        owner_id: str,
+        category: str = '*',
+        channels: dict[str, Any] | None = None,
+        dnd: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """新增/更新一条偏好（按 owner_id+category 唯一）。"""
+        existing = (
+            await db.execute(
+                select(HasnNotificationPreferences).where(
+                    HasnNotificationPreferences.owner_id == owner_id,
+                    HasnNotificationPreferences.category == category,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            existing = HasnNotificationPreferences(
+                owner_id=owner_id,
+                category=category,
+                channels=dict(channels or {}),
+                dnd=dict(dnd or {}),
+            )
+            db.add(existing)
+        else:
+            if channels is not None:
+                existing.channels = dict(channels)
+            if dnd is not None:
+                existing.dnd = dict(dnd)
+            existing.updated_time = _tz.now()
+        await db.flush()
+        return {
+            'category': existing.category,
+            'channels': existing.channels or {},
+            'dnd': existing.dnd or {},
+        }
+
+
+notification_service = NotificationService()

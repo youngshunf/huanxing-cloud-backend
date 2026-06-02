@@ -1,29 +1,36 @@
-"""
-社区通知服务（doc-13 §2.1 / §3.1）。
+"""社区通知服务（doc-13 §2.1 / §3.1）——统一通知服务 emit() 的薄封装。
+
+2026-06-02 统一通知服务（§5）落地：本模块不再直写 hasn_notifications，改为转调
+通用 backend.app.notification.service.notification_service.emit()。社区触发矩阵
+（actor/target/preview/link/relay_from + 自互动抑制）逻辑保留在此，承载/存储/读时
+聚合统一由通用服务负责。读取/已读接口直接委派通用服务。
 
 - 复用共享表 hasn_notifications（target_id = 接收方 hasn_id，data = 结构化负载）。
-- 触发模型：互动写库成功后，按 §2.1.3 矩阵写通知；Agent 内容/被关注额外 relay 给主人。
+- 触发模型：互动写库成功后，按 §2.1.3 矩阵 emit 通知；Agent 内容/被关注额外 relay 给主人。
 - 去重抑制：自己互动自己的内容不写通知。
-- 读时聚合：列表按 (type, target_id) 在时间窗内折叠（aggregated 标记）。
-- 通知本体不重新 codegen（表已存在），仅在此服务内组装/读写。
+- category：社区互动归 social；分身草稿待确认归 agent（D5）。
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from backend.app.hasn.model import HasnAgents, HasnHumans
-from backend.app.hasn.model.hasn_notifications import HasnNotifications
-from backend.common.exception import errors
+from backend.app.notification.service.notification_service import notification_service as _unified
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 # type → 标题模板后缀（按内容类型）
 _CONTENT_NOUN = {'post': '帖子', 'article': '文章', 'comment': '评论'}
 
+# actor.type → NotificationSource.kind
+_ACTOR_KIND = {'human': 'user', 'agent': 'agent'}
+
 
 class NotificationService:
-    """社区通知服务"""
+    """社区通知服务（emit 封装 + 读取委派）"""
 
     @staticmethod
     async def _resolve_actor(db: AsyncSession, hasn_id: str) -> dict[str, Any]:
@@ -51,26 +58,36 @@ class NotificationService:
         return {'hasn_id': hasn_id, 'type': 'unknown', 'display_name': hasn_id, 'avatar': ''}
 
     @staticmethod
-    async def _insert(
+    def _actor_source(actor: dict[str, Any]) -> dict[str, Any]:
+        """actor → NotificationSource（社区互动 source 即触发者）。"""
+        return {
+            'kind': _ACTOR_KIND.get(actor.get('type'), 'system'),
+            'id': actor.get('hasn_id'),
+            'display_name': actor.get('display_name', ''),
+            'avatar': actor.get('avatar', ''),
+        }
+
+    @classmethod
+    async def _emit(
+        cls,
         db: AsyncSession,
         *,
         recipient_hasn_id: str,
+        source: dict[str, Any],
         ntype: str,
+        category: str,
         title: str,
         data: dict[str, Any],
     ) -> None:
-        """插入一条未读通知。"""
-        db.add(
-            HasnNotifications(
-                target_id=recipient_hasn_id,
-                type=ntype,
-                title=title,
-                body=None,
-                data=data,
-                read=False,
-            )
+        await _unified.emit(
+            db,
+            recipient_id=recipient_hasn_id,
+            source=source,
+            category=category,
+            type=ntype,
+            title=title,
+            payload=data,
         )
-        await db.flush()
 
     @staticmethod
     def _content_link(content_type: str, content_id: str) -> str:
@@ -95,6 +112,7 @@ class NotificationService:
     ) -> None:
         """点赞/评论/收藏：通知内容作者；Agent 内容 relay 给主人；可选额外接收方（被回复者）。"""
         actor = await cls._resolve_actor(db, actor_hasn_id)
+        source = cls._actor_source(actor)
         noun = _CONTENT_NOUN.get(content_type, '内容')
         verb = {
             'community_like': '赞了你的',
@@ -111,10 +129,12 @@ class NotificationService:
 
         # 1) 通知内容作者（自己互动自己跳过）
         if author_hasn_id and author_hasn_id != actor_hasn_id:
-            await cls._insert(
+            await cls._emit(
                 db,
                 recipient_hasn_id=author_hasn_id,
+                source=source,
                 ntype=ntype,
+                category='social',
                 title=f'{actor["display_name"]}{verb}{noun}',
                 data=dict(base_data),
             )
@@ -122,10 +142,12 @@ class NotificationService:
             if author_type == 'agent' and owner_hasn_id and owner_hasn_id not in (actor_hasn_id, author_hasn_id):
                 relay_data = dict(base_data)
                 relay_data['relay_from'] = author_hasn_id
-                await cls._insert(
+                await cls._emit(
                     db,
                     recipient_hasn_id=owner_hasn_id,
+                    source=source,
                     ntype=ntype,
+                    category='social',
                     title=f'{actor["display_name"]}{verb}你的分身的{noun}',
                     data=relay_data,
                 )
@@ -133,10 +155,12 @@ class NotificationService:
         # 3) 额外接收方（评论回复 → 父评论作者）
         if extra_recipient_hasn_id and extra_recipient_hasn_id not in (actor_hasn_id, author_hasn_id):
             reply_data = dict(base_data)
-            await cls._insert(
+            await cls._emit(
                 db,
                 recipient_hasn_id=extra_recipient_hasn_id,
+                source=source,
                 ntype=ntype,
+                category='social',
                 title=f'{actor["display_name"]}回复了你的评论',
                 data=reply_data,
             )
@@ -155,25 +179,30 @@ class NotificationService:
         if target_hasn_id == actor_hasn_id:
             return
         actor = await cls._resolve_actor(db, actor_hasn_id)
+        source = cls._actor_source(actor)
         data = {
             'actor': actor,
             'target': {'type': target_type, 'id': target_hasn_id},
             'link': f'/community/profiles/{actor_hasn_id}',
         }
-        await cls._insert(
+        await cls._emit(
             db,
             recipient_hasn_id=target_hasn_id,
+            source=source,
             ntype='community_follow',
+            category='social',
             title=f'{actor["display_name"]}关注了你',
             data=dict(data),
         )
         if target_type == 'agent' and target_owner_hasn_id and target_owner_hasn_id not in (actor_hasn_id, target_hasn_id):
             relay = dict(data)
             relay['relay_from'] = target_hasn_id
-            await cls._insert(
+            await cls._emit(
                 db,
                 recipient_hasn_id=target_owner_hasn_id,
+                source=source,
                 ntype='community_follow',
+                category='social',
                 title=f'{actor["display_name"]}关注了你的分身',
                 data=relay,
             )
@@ -189,15 +218,17 @@ class NotificationService:
         content_id: str,
         preview: str | None = None,
     ) -> None:
-        """Agent 草稿待确认：通知主人。"""
+        """Agent 草稿待确认：通知主人（D5：category=agent，分身审批项）。"""
         if not owner_hasn_id:
             return
         actor = await cls._resolve_actor(db, agent_hasn_id)
         noun = _CONTENT_NOUN.get(content_type, '内容')
-        await cls._insert(
+        await cls._emit(
             db,
             recipient_hasn_id=owner_hasn_id,
+            source=cls._actor_source(actor),
             ntype='community_draft_pending',
+            category='agent',
             title=f'你的分身 {actor["display_name"]} 有一篇{noun}待确认',
             data={
                 'actor': actor,
@@ -208,7 +239,7 @@ class NotificationService:
             },
         )
 
-    # ==================== 读取 / 已读 ====================
+    # ==================== 读取 / 已读（委派通用服务） ====================
 
     @staticmethod
     async def list_notifications(
@@ -220,125 +251,28 @@ class NotificationService:
         cursor: str | None = None,
         limit: int = 20,
     ) -> dict[str, Any]:
-        """通知列表（type/unread 过滤 + 游标分页 + 读时聚合）。"""
-        stmt = select(HasnNotifications).where(HasnNotifications.target_id == recipient_hasn_id)
-        if types:
-            stmt = stmt.where(HasnNotifications.type.in_(types))
-        if unread_only:
-            stmt = stmt.where(HasnNotifications.read.is_(False))
-        if cursor:
-            stmt = stmt.where(HasnNotifications.id < int(cursor))
-        stmt = stmt.order_by(HasnNotifications.id.desc()).limit(limit + 1)
-
-        rows = (await db.execute(stmt)).scalars().all()
-        has_more = len(rows) > limit
-        rows = rows[:limit]
-
-        # 读时聚合：同 (type, target_id) 折叠，标记 aggregated_count
-        seen: dict[tuple, dict[str, Any]] = {}
-        items: list[dict[str, Any]] = []
-        for n in rows:
-            data = n.data or {}
-            target = data.get('target', {})
-            key = (n.type, target.get('id'))
-            if key in seen and key[1] is not None:
-                seen[key]['aggregated_count'] += 1
-                continue
-            entry = {
-                'id': n.id,
-                'type': n.type,
-                'title': n.title,
-                'actor': data.get('actor'),
-                'target': target,
-                'preview': data.get('preview'),
-                'link': data.get('link'),
-                'relay_from': data.get('relay_from'),
-                'read': n.read,
-                'aggregated_count': 1,
-                'created_time': n.created_time.isoformat() if n.created_time else None,
-            }
-            items.append(entry)
-            if key[1] is not None:
-                seen[key] = entry
-
-        return {
-            'items': items,
-            'next_cursor': str(rows[-1].id) if has_more and rows else None,
-            'aggregated': True,
-        }
+        return await _unified.list_notifications(
+            db,
+            recipient_hasn_id=recipient_hasn_id,
+            types=types,
+            unread_only=unread_only,
+            cursor=cursor,
+            limit=limit,
+        )
 
     @staticmethod
-    async def unread_count(
-        db: AsyncSession,
-        *,
-        recipient_hasn_id: str,
-    ) -> dict[str, Any]:
-        """未读总数 + 按 type 分组。"""
-        total = (
-            await db.execute(
-                select(func.count())
-                .select_from(HasnNotifications)
-                .where(
-                    HasnNotifications.target_id == recipient_hasn_id,
-                    HasnNotifications.read.is_(False),
-                )
-            )
-        ).scalar() or 0
-        by_type_rows = (
-            await db.execute(
-                select(HasnNotifications.type, func.count())
-                .where(
-                    HasnNotifications.target_id == recipient_hasn_id,
-                    HasnNotifications.read.is_(False),
-                )
-                .group_by(HasnNotifications.type)
-            )
-        ).all()
-        return {
-            'total': int(total),
-            'by_type': {row[0]: int(row[1]) for row in by_type_rows},
-        }
+    async def unread_count(db: AsyncSession, *, recipient_hasn_id: str) -> dict[str, Any]:
+        return await _unified.unread_count(db, recipient_hasn_id=recipient_hasn_id)
 
     @staticmethod
-    async def mark_read(
-        db: AsyncSession,
-        *,
-        recipient_hasn_id: str,
-        notification_id: int,
-    ) -> None:
-        """标记单条已读（仅本人）。"""
-        n = (
-            await db.execute(
-                select(HasnNotifications).where(
-                    HasnNotifications.id == notification_id,
-                    HasnNotifications.target_id == recipient_hasn_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if not n:
-            raise errors.NotFoundError(msg='通知不存在')
-        n.read = True
-        await db.flush()
+    async def mark_read(db: AsyncSession, *, recipient_hasn_id: str, notification_id: int) -> None:
+        await _unified.mark_read(db, recipient_hasn_id=recipient_hasn_id, notification_id=notification_id)
 
     @staticmethod
     async def mark_all_read(
-        db: AsyncSession,
-        *,
-        recipient_hasn_id: str,
-        types: list[str] | None = None,
+        db: AsyncSession, *, recipient_hasn_id: str, types: list[str] | None = None
     ) -> int:
-        """全部已读（可按 type 过滤），返回影响条数。"""
-        stmt = select(HasnNotifications).where(
-            HasnNotifications.target_id == recipient_hasn_id,
-            HasnNotifications.read.is_(False),
-        )
-        if types:
-            stmt = stmt.where(HasnNotifications.type.in_(types))
-        rows = (await db.execute(stmt)).scalars().all()
-        for n in rows:
-            n.read = True
-        await db.flush()
-        return len(rows)
+        return await _unified.mark_all_read(db, recipient_hasn_id=recipient_hasn_id, types=types)
 
 
 notification_service = NotificationService()
