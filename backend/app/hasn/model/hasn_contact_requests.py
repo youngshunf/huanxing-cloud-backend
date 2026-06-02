@@ -13,16 +13,16 @@ class HasnContactRequests(Base):
     __tablename__ = 'hasn_contact_requests'
 
     id: Mapped[id_key] = mapped_column(init=False)
-    from_id: Mapped[str] = mapped_column(sa.String(36), default='', comment='发起方 hasn_id（恒 human）')
+    from_id: Mapped[str] = mapped_column(sa.String(40), default='', comment='发起方 hasn_id（恒 human）')
     from_type: Mapped[str] = mapped_column(
         sa.String(10), default='', comment='发起方类型 (human:人类:blue/agent:代理:green)'
     )
-    to_id: Mapped[str] = mapped_column(sa.String(36), default='', comment='目标 hasn_id（解析后恒 human）')
+    to_id: Mapped[str] = mapped_column(sa.String(40), default='', comment='目标 hasn_id（解析后恒 human）')
     to_type: Mapped[str] = mapped_column(
         sa.String(10), default='', comment='目标类型 (human:人类:blue/agent:代理:green)'
     )
     to_owner_id: Mapped[str] = mapped_column(
-        sa.String(36), default='', comment='审批人 hasn_id（=目标本人，agent 目标则解析为其主人）'
+        sa.String(40), default='', comment='审批人 hasn_id（=目标本人，agent 目标则解析为其主人）'
     )
     relation_type: Mapped[str] = mapped_column(
         sa.String(20),
@@ -38,7 +38,7 @@ class HasnContactRequests(Base):
         default='',
         comment='状态 (pending:待处理:blue/accepted:已通过:green/rejected:已拒绝:red/withdrawn:已撤回:gray/expired:已过期:gray)',
     )
-    decided_by: Mapped[str | None] = mapped_column(sa.String(36), default=None, comment='回应人 hasn_id')
+    decided_by: Mapped[str | None] = mapped_column(sa.String(40), default=None, comment='回应人 hasn_id')
     decided_at: Mapped[datetime | None] = mapped_column(TimeZone, default=None, comment='回应时间')
     resulting_contact_id: Mapped[int | None] = mapped_column(
         sa.BIGINT(), default=None, comment='通过后建立的 hasn_contacts 行 ID（审计链）'

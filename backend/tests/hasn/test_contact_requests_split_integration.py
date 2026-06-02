@@ -35,9 +35,12 @@ from backend.database.db import SQLALCHEMY_DATABASE_URL
 
 pytestmark = pytest.mark.asyncio
 
-# 独立测试身份（避免与真实数据/部分唯一索引碰撞；均 ≤36 字符）
-A = 'h_creqit_aaaaaaaaaaaa'
-B = 'h_creqit_bbbbbbbbbbbb'
+# 独立测试身份：用真实长度 HASN id（'h_' + 36 字符 UUID = 38 字符）。
+# 兼作 id 列宽回归哨兵——id 列若再被收窄到 <38，create_request 会触发 varchar 截断而 fail
+# （历史 bug：列建成 varchar(36)，真实 38 字符 id 溢出，旧测试用短 id 把它绕过了）。
+# 全 a / 全 b 的 UUID 形态既合法又几乎不可能与真实数据碰撞。
+A = 'h_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+B = 'h_bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
 REL = 'social'
 
 
