@@ -126,14 +126,16 @@ class TestDiscoveryAlias:
         registry.register(ToolSearchTool(directory))
         registry.register_alias("hasn.tool.search", "hasn.cloud.tool.search")
 
-        assert frozenset({"hasn.cloud.tool.search"}) == BOOTSTRAP_TOOL_NAMES
+        # bootstrap 集 = 发现 + 调用两个元工具（03 §9）。
+        assert frozenset({"hasn.cloud.tool.search", "hasn.cloud.tool.call"}) == BOOTSTRAP_TOOL_NAMES
 
         canonical = registry.get_tool("hasn.cloud.tool.search")
         alias = registry.get_tool("hasn.tool.search")
         assert canonical is not None
         assert alias is canonical  # alias resolves to the same instance
 
-        # Bootstrap exposes only the canonical, never the alias.
+        # Bootstrap exposes only registered canonical bootstrap tools, never the alias.
+        # 本用例只注册了 tool.search，故 bootstrap 仅含它（tool.call 未注册）。
         bootstrap_names = {tool.name for tool in registry.list_bootstrap_tools()}
         assert bootstrap_names == {"hasn.cloud.tool.search"}
 

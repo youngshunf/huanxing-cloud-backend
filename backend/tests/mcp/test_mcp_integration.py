@@ -104,18 +104,18 @@ class TestMcpIntegration:
         assert "tools" in data
         assert isinstance(data["tools"], list)
 
-        # 验证内置工具存在
+        # 渐进式暴露（设计 03 §9）：tools/list 只回 bootstrap 元工具，长尾经 tool.call 调用。
         tool_names = [tool["name"] for tool in data["tools"]]
-        assert "hasn.message.send" in tool_names
-        assert "hasn.message.list" in tool_names
-        assert "hasn.contact.list" in tool_names
+        assert "hasn.cloud.tool.search" in tool_names
+        assert "hasn.cloud.tool.call" in tool_names
+        assert "hasn.message.send" not in tool_names  # 长尾工具不进清单
 
         print(f"✅ Found {len(data['tools'])} tools")
         for tool in data["tools"]:
             print(f"  - {tool['name']}: {tool['description']}")
 
     async def test_list_tools_with_namespace_filter(self, agent_token_for_db_agent, active_agent_from_db):
-        """测试命名空间过滤"""
+        """namespace 参数被忽略，tools/list 始终返回 bootstrap 元工具集（03 §9）"""
         app = make_test_app()
         client = TestClient(app)
 
@@ -135,11 +135,12 @@ class TestMcpIntegration:
         data = response.json()
         tools = data["tools"]
 
-        # 验证只返回 message 命名空间的工具
-        for tool in tools:
-            assert tool["name"].startswith("hasn.message.")
+        # namespace 不收窄：返回 bootstrap 元工具集（不含长尾 hasn.message.*）。
+        tool_names = [tool["name"] for tool in tools]
+        assert "hasn.cloud.tool.search" in tool_names
+        assert "hasn.cloud.tool.call" in tool_names
 
-        print(f"✅ Found {len(tools)} message tools")
+        print(f"✅ Found {len(tools)} bootstrap tools")
 
     async def test_call_contact_list_tool(self, agent_token_for_db_agent, active_agent_from_db):
         """测试调用联系人列表工具"""

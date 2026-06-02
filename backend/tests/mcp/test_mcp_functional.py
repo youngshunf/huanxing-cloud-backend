@@ -102,10 +102,11 @@ class TestMcpFunctional:
             assert 'tools' in data
             assert isinstance(data['tools'], list)
 
-            # legacy_all 暴露（设计 08 §6.2）：tools/list 直接列出全部可见工具。
+            # 渐进式暴露（设计 03 §9）：tools/list 只回 bootstrap 元工具；长尾经 tool.call 调用。
             tool_names = [tool['name'] for tool in data['tools']]
             assert 'hasn.cloud.tool.search' in tool_names
-            assert 'hasn.message.send' in tool_names
+            assert 'hasn.cloud.tool.call' in tool_names
+            assert 'hasn.message.send' not in tool_names  # 长尾工具不进清单
             search_tool = next(t for t in data['tools'] if t['name'] == 'hasn.cloud.tool.search')
             assert search_tool['input_schema']['required'] == ['query']
 
@@ -114,7 +115,7 @@ class TestMcpFunctional:
                 print(f'  - {tool["name"]}: {tool["description"]}')
 
     def test_list_tools_ignores_namespace_filter(self, valid_agent_token, mock_agent) -> None:
-        """legacy_all：namespace 参数被忽略，tools/list 始终返回全部可见工具"""
+        """namespace 参数被忽略，tools/list 始终返回 bootstrap 元工具集（03 §9）"""
         app = make_test_app()
         client = TestClient(app)
 
@@ -137,10 +138,11 @@ class TestMcpFunctional:
             data = response.json()
             tools = data['tools']
 
-            # legacy_all：namespace 不收窄暴露集合，仍返回全部可见工具（含非 hasn.message 域）。
+            # 渐进式暴露（设计 03 §9）：namespace 不收窄；始终返回 bootstrap 元工具集（不含长尾）。
             tool_names = [tool['name'] for tool in tools]
             assert 'hasn.cloud.tool.search' in tool_names
-            assert 'hasn.contact.list' in tool_names
+            assert 'hasn.cloud.tool.call' in tool_names
+            assert 'hasn.contact.list' not in tool_names
 
             print(f'✅ Found {len(tools)} bootstrap tools')
 

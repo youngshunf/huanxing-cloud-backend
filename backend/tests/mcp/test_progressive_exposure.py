@@ -142,13 +142,14 @@ class TestMcpProgressiveExposure:
         assert ('platform', 'hasn.contact') in sources
         assert ('platform', 'hasn.message') in sources
 
-    def test_list_tools_exposes_all_visible_tools(
+    def test_list_tools_returns_only_bootstrap(
         self,
         valid_agent_token: str,
         mock_agent: MagicMock,
     ) -> None:
-        # legacy_all 暴露（设计 08 §6.2）：function-calling Runtime 不支持轮内二次注入，
-        # 故 tools/list 直接列出全部可见工具（不止 bootstrap 的 search）。
+        # 渐进式暴露（设计 03 §9，legacy_all 已退役）：tools/list 只回 bootstrap 元工具
+        # （tool.search + tool.call）；长尾工具不进清单，经 tool.call 直调（见
+        # test_direct_call_does_not_require_prior_exposure）。
         app = make_test_app()
         client = TestClient(app)
 
@@ -167,8 +168,9 @@ class TestMcpProgressiveExposure:
         assert response.status_code == 200
         tool_names = [tool['name'] for tool in response.json()['tools']]
         assert 'hasn.cloud.tool.search' in tool_names
-        assert 'hasn.message.send' in tool_names
-        assert 'hasn.contact.list' in tool_names
+        assert 'hasn.cloud.tool.call' in tool_names
+        assert 'hasn.message.send' not in tool_names  # 长尾不进清单
+        assert 'hasn.contact.list' not in tool_names
 
     def test_tool_search_returns_builtin_schema(
         self,

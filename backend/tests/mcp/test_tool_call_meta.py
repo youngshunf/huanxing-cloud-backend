@@ -1,0 +1,180 @@
+"""元工具 hasn.cloud.tool.call 单测（设计 03 §9）。
+
+覆盖：
+- list_tools 默认只回 bootstrap（tool.search + tool.call），长尾工具不进清单；
+- 直调成功 → 委托内层执行；
+- 参数 schema 校验失败 → 回吐内层完整 schema + missing/invalid（schema-on-error，§9.4）；
+- 递归护栏 → DIRECT_CALL_DENIED；未知工具 → TOOL_NOT_FOUND；
+- 内层三态：deny → PermissionError；ask → 走批准闸门（approved 执行 / rejected raise）。
+
+零外部依赖：_load_app_tools / _log_tool_call / ask 闸门全 monkeypatch，不连 DB/Redis。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from backend.app.mcp.auth import AgentContext
+from backend.app.mcp.errors import McpErrorCode, McpToolError
+from backend.app.mcp.server import HasnCloudMcpServer
+from backend.app.mcp.tools.base import BaseTool
+
+
+class _StubTool(BaseTool):
+    @property
+    def source(self) -> str:
+        return 'platform'
+
+    @property
+    def name(self) -> str:
+        return 'hasn.stub.act'
+
+    @property
+    def description(self) -> str:
+        return 'stub tool for tool.call tests'
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            'type': 'object',
+            'properties': {'content': {'type': 'string'}, 'n': {'type': 'integer'}},
+            'required': ['content'],
+            'additionalProperties': False,
+        }
+
+    @property
+    def required_scopes(self) -> list[str]:
+        return ['stub:act']
+
+    async def execute(self, agent_context: AgentContext, arguments: dict[str, Any]) -> dict[str, Any]:
+        return {'echo': arguments}
+
+
+def _ctx(*, default_mode: str = 'allow', capability_modes: dict | None = None) -> AgentContext:
+    return AgentContext(
+        hasn_id='a_call_test',
+        owner_id=0,
+        scopes=[],
+        agent_status='active',
+        metadata={},
+        owner_hasn_id='h_call_test',
+        session_uuid='amk_call_test',
+        default_mode=default_mode,
+        capability_modes=capability_modes or {},
+    )
+
+
+def _server(monkeypatch: pytest.MonkeyPatch) -> HasnCloudMcpServer:
+    server = HasnCloudMcpServer()
+    server.tool_registry.register(_StubTool())
+
+    async def _noop(*args: object, **kwargs: object) -> None:  # noqa: RUF029
+        return None
+
+    monkeypatch.setattr(server, '_load_app_tools', _noop)
+    monkeypatch.setattr(server, '_log_tool_call', _noop)
+    return server
+
+
+def _call_tool(server: HasnCloudMcpServer) -> BaseTool:
+    tool = server.tool_registry.get_tool('hasn.cloud.tool.call')
+    assert tool is not None
+    return tool
+
+
+@pytest.mark.asyncio
+async def test_list_tools_returns_only_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = _server(monkeypatch)
+    tools = await server.list_tools(_ctx())
+    names = sorted(t['name'] for t in tools)
+    assert names == ['hasn.cloud.tool.call', 'hasn.cloud.tool.search']
+    assert 'hasn.stub.act' not in names  # 长尾工具不进清单
+
+
+@pytest.mark.asyncio
+async def test_tool_call_valid_delegates_to_inner(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = _server(monkeypatch)
+    result = await _call_tool(server).execute(_ctx(), {'name': 'hasn.stub.act', 'params': {'content': 'hi', 'n': 3}})
+    assert result == {'echo': {'content': 'hi', 'n': 3}}
+
+
+@pytest.mark.asyncio
+async def test_tool_call_missing_required_returns_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = _server(monkeypatch)
+    result = await _call_tool(server).execute(_ctx(), {'name': 'hasn.stub.act', 'params': {}})
+    assert result['ok'] is False
+    assert result['error'] == 'input_validation_failed'
+    assert result['tool'] == 'hasn.stub.act'
+    assert 'content' in result['missing']
+    assert result['input_schema']['required'] == ['content']  # 回吐完整内层 schema
+    assert result['schema_hash'].startswith('sha256:')
+
+
+@pytest.mark.asyncio
+async def test_tool_call_type_error_reports_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = _server(monkeypatch)
+    result = await _call_tool(server).execute(
+        _ctx(), {'name': 'hasn.stub.act', 'params': {'content': 'ok', 'n': 'not-int'}}
+    )
+    assert result['ok'] is False
+    assert 'n' in result['invalid']
+
+
+@pytest.mark.asyncio
+async def test_tool_call_recursion_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = _server(monkeypatch)
+    with pytest.raises(McpToolError) as exc:
+        await _call_tool(server).execute(_ctx(), {'name': 'hasn.cloud.tool.call', 'params': {}})
+    assert exc.value.code == McpErrorCode.DIRECT_CALL_DENIED
+
+
+@pytest.mark.asyncio
+async def test_tool_call_unknown_tool_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = _server(monkeypatch)
+    with pytest.raises(McpToolError) as exc:
+        await _call_tool(server).execute(_ctx(), {'name': 'hasn.nope.x', 'params': {}})
+    assert exc.value.code == McpErrorCode.TOOL_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_tool_call_inner_deny_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = _server(monkeypatch)
+    ctx = _ctx(capability_modes={'hasn.stub.act': 'deny'})
+    with pytest.raises(PermissionError):
+        await _call_tool(server).execute(ctx, {'name': 'hasn.stub.act', 'params': {'content': 'hi'}})
+
+
+@pytest.mark.asyncio
+async def test_tool_call_inner_ask_approved_executes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.mcp import ask_gate as ask_gate_module
+
+    server = _server(monkeypatch)
+    gated: dict[str, Any] = {}
+
+    async def _gate(*, agent_hasn_id: str, owner_hasn_id: str | None, tool_name: str, arguments: dict) -> None:  # noqa: RUF029
+        gated['tool'] = tool_name  # 批准（不抛）
+
+    monkeypatch.setattr(ask_gate_module.ask_approval_gate, 'gate', _gate)
+
+    ctx = _ctx(capability_modes={'hasn.stub.act': 'ask'})
+    result = await _call_tool(server).execute(ctx, {'name': 'hasn.stub.act', 'params': {'content': 'hi'}})
+    assert result == {'echo': {'content': 'hi'}}
+    assert gated['tool'] == 'hasn.stub.act'  # 内层工具走了 ask 闸门
+
+
+@pytest.mark.asyncio
+async def test_tool_call_inner_ask_rejected_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.app.mcp import ask_gate as ask_gate_module
+
+    server = _server(monkeypatch)
+
+    async def _gate_reject(*args: object, **kwargs: object) -> None:  # noqa: RUF029
+        raise PermissionError('rejected')
+
+    monkeypatch.setattr(ask_gate_module.ask_approval_gate, 'gate', _gate_reject)
+
+    ctx = _ctx(capability_modes={'hasn.stub.act': 'ask'})
+    with pytest.raises(PermissionError):
+        await _call_tool(server).execute(ctx, {'name': 'hasn.stub.act', 'params': {'content': 'hi'}})
